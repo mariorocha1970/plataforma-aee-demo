@@ -1077,7 +1077,7 @@ export default function Home() {
       <aside className="sidebar">
         <div className="brand">
           <span className="brand-mark">AEE</span>
-          <div><strong>Plataforma de análise</strong><small>Demonstração protegida · dados fictícios</small></div>
+          <div><strong>Plataforma de análise</strong><small>Piloto privado · dados fictícios</small></div>
         </div>
         <nav aria-label="Fluxo de trabalho">
           {nav.map((item) => (
@@ -1145,6 +1145,20 @@ export default function Home() {
             <article><span>Painéis</span><strong>{new Set(interviews.map((item) => item.panel)).size}</strong><small>{interviews.length} registos</small></article>
             <article className="warning"><span>A rever</span><strong>{pendingCount}</strong><small>juízos ou contradições</small></article>
           </div>
+
+          <section className="ethics-panel" aria-labelledby="ethics-title">
+            <div className="ethics-intro">
+              <p className="eyebrow">Utilização responsável</p>
+              <h3 id="ethics-title">Princípios éticos</h3>
+              <p>Instrumento de apoio à análise. O juízo avaliativo e a decisão permanecem sob responsabilidade da equipa.</p>
+            </div>
+            <ul>
+              <li><strong>Proteger</strong><span>Minimizar e anonimizar dados pessoais e sensíveis.</span></li>
+              <li><strong>Validar</strong><span>Confirmar fontes, interpretações e conclusões antes de as utilizar.</span></li>
+              <li><strong>Contextualizar</strong><span>Considerar contradições, limites, diversidade e possíveis enviesamentos.</span></li>
+              <li><strong>Responsabilizar</strong><span>Não automatizar juízos nem decisões sobre pessoas ou escolas.</span></li>
+            </ul>
+          </section>
 
           <div className="section-heading"><div><p className="eyebrow">Estrutura oficial</p><h3>Cobertura por domínio</h3></div><span className="source-note">Referencial AEE · 3.º ciclo</span></div>
           <div className="domain-grid">

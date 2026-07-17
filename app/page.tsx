@@ -2,7 +2,7 @@
 
 import { ChangeEvent, useEffect, useMemo, useState } from "react";
 
-type View = "visao" | "documentos" | "analise" | "estatistica" | "evidencias" | "entrevistas" | "triangulacao" | "relatorio";
+type View = "visao" | "documentos" | "privacidade" | "analise" | "estatistica" | "evidencias" | "entrevistas" | "triangulacao" | "relatorio";
 type EvidenceStatus = "Confirmada" | "Por triangular" | "Contraditória" | "Ausente";
 type Strength = "Forte" | "Moderada" | "Insuficiente";
 
@@ -39,13 +39,31 @@ type Interview = {
 };
 
 type FileAnalysis = {
-  status: "A aguardar" | "A ler" | "Lido" | "OCR necessário" | "Erro";
+  status: "A aguardar" | "A ler" | "Privacidade" | "Lido" | "OCR necessário" | "Erro";
   extractedChars: number;
   candidates: number;
   detail: string;
 };
 
 type TextChunk = { text: string; location: string };
+
+type PrivacyCategory = "Institucional público" | "Estatístico agregado" | "Interno" | "Contém dados pessoais";
+type PrivacyRisk = "Baixo" | "Moderado" | "Elevado";
+type PrivacyFinding = {
+  id: string;
+  kind: "Contacto" | "Identificador" | "Nome possível" | "Informação sensível";
+  value: string;
+  location: string;
+  redacted: boolean;
+};
+type PrivacyReview = {
+  source: string;
+  category: PrivacyCategory;
+  risk: PrivacyRisk;
+  findings: PrivacyFinding[];
+  originalChunks: TextChunk[];
+  sanitizedChunks: TextChunk[];
+};
 
 type StatisticalRecord = {
   id: number;
@@ -519,6 +537,47 @@ async function extractFile(file: File): Promise<TextChunk[]> {
   throw new Error("Formato não suportado para leitura local");
 }
 
+const privacyPatterns: Array<{ kind: PrivacyFinding["kind"]; pattern: RegExp; replacement?: string }> = [
+  { kind: "Contacto", pattern: /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, replacement: "[EMAIL REMOVIDO]" },
+  { kind: "Contacto", pattern: /(?<!\d)(?:\+351[ .-]?)?(?:2\d{8}|9[1236]\d{7})(?!\d)/g, replacement: "[TELEFONE REMOVIDO]" },
+  { kind: "Identificador", pattern: /\bPT50(?:[ .-]?\d){21}\b/gi, replacement: "[IBAN REMOVIDO]" },
+  { kind: "Identificador", pattern: /\b(?:NIF|NIPC|NISS|CC|BI|n[úu]mero de aluno|n\.?[ºo] de aluno)\s*[:#-]?\s*[A-Z0-9][A-Z0-9 .-]{4,20}/gi, replacement: "[IDENTIFICADOR REMOVIDO]" },
+  { kind: "Nome possível", pattern: /\b(?:Nome|Aluno|Aluna|Encarregado de Educa[cç][aã]o|Representante legal)\s*:\s*[A-ZÁÀÂÃÉÊÍÓÔÕÚÇ][\p{L}'’-]+(?:\s+(?:d[aeo]s?|e|[A-ZÁÀÂÃÉÊÍÓÔÕÚÇ][\p{L}'’-]+)){1,5}/gu, replacement: "[NOME REMOVIDO]" },
+];
+
+const sensitivePattern = /\b(?:sa[úu]de|diagn[óo]stico|defici[êe]ncia|incapacidade|medica[cç][aã]o|doen[cç]a|necessidades? educativas? espec[ií]ficas?|medidas? seletivas?|medidas? adicionais?|processo disciplinar|san[cç][aã]o disciplinar|viol[êe]ncia|bullying|contexto familiar|tribunal|comiss[aã]o de prote[cç][aã]o)\b/gi;
+
+function defaultPrivacyCategory(source: string): PrivacyCategory {
+  const normalized = source.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  if (/infoescolas|resultado|estatistic|questionario|taxa|indicador/.test(normalized)) return "Estatístico agregado";
+  if (/projeto educativo|regulamento|plano anual|relatorio de autoavaliacao|plano de melhoria/.test(normalized)) return "Institucional público";
+  return "Interno";
+}
+
+function privacyReview(source: string, chunks: TextChunk[]): PrivacyReview {
+  const findings: PrivacyFinding[] = [];
+  const sanitizedChunks = chunks.map((chunk, chunkIndex) => {
+    let text = chunk.text;
+    privacyPatterns.forEach((definition, patternIndex) => {
+      definition.pattern.lastIndex = 0;
+      text = text.replace(definition.pattern, (value) => {
+        findings.push({ id: `${chunkIndex}-${patternIndex}-${findings.length}`, kind: definition.kind, value: value.slice(0, 120), location: chunk.location, redacted: true });
+        return definition.replacement ?? "[DADO REMOVIDO]";
+      });
+    });
+    sensitivePattern.lastIndex = 0;
+    for (const match of chunk.text.matchAll(sensitivePattern)) {
+      findings.push({ id: `${chunkIndex}-s-${findings.length}`, kind: "Informação sensível", value: match[0], location: chunk.location, redacted: false });
+      if (findings.length >= 80) break;
+    }
+    return { ...chunk, text };
+  });
+  const sensitive = findings.some((finding) => finding.kind === "Informação sensível");
+  const direct = findings.filter((finding) => finding.redacted).length;
+  const risk: PrivacyRisk = sensitive || direct >= 5 ? "Elevado" : direct > 0 ? "Moderado" : "Baixo";
+  return { source, category: defaultPrivacyCategory(source), risk, findings: findings.slice(0, 80), originalChunks: chunks, sanitizedChunks };
+}
+
 function getField(id: string) {
   return fields.find((field) => field.id === id) ?? fields[0];
 }
@@ -683,6 +742,8 @@ export default function Home() {
   const [interviews, setInterviews] = useState<Interview[]>(initialInterviews);
   const [files, setFiles] = useState<string[]>(["Projeto educativo — demonstração.pdf", "Relatório de autoavaliação — demonstração.docx", "Resultados académicos — demonstração.xlsx"]);
   const [fileAnalysis, setFileAnalysis] = useState<Record<string, FileAnalysis>>({});
+  const [privacyReviews, setPrivacyReviews] = useState<PrivacyReview[]>([]);
+  const [privacyConfirmed, setPrivacyConfirmed] = useState<string[]>([]);
   const [filterDomain, setFilterDomain] = useState("Todos");
   const [filterStatus, setFilterStatus] = useState("Todos");
   const [interviewPanel, setInterviewPanel] = useState("Docentes");
@@ -735,7 +796,7 @@ export default function Home() {
 
   const coveredFields = new Set(evidence.filter((record) => record.validated).map((record) => record.fieldId)).size;
   const validatedCount = evidence.filter((record) => record.validated).length;
-  const pendingCount = evidence.filter((record) => !record.validated).length + documentCandidates.length + statisticalRecords.length;
+  const pendingCount = evidence.filter((record) => !record.validated).length + privacyReviews.length + documentCandidates.length + statisticalRecords.length;
   const allCandidatesSelected = documentCandidates.length > 0 && documentCandidates.every((candidate) => selectedCandidates.includes(candidate.id));
   const allStatisticalSelected = statisticalRecords.length > 0 && statisticalRecords.every((record) => selectedStatisticalIds.includes(record.id));
   const allTreatmentsSelected = statisticalTreatments.length > 0 && statisticalTreatments.every((treatment) => selectedTreatmentIds.includes(treatment.id));
@@ -793,6 +854,8 @@ export default function Home() {
     setInterviews(emptyProcess.interviews);
     setFiles(emptyProcess.files);
     setFileAnalysis(emptyProcess.fileAnalysis);
+    setPrivacyReviews([]);
+    setPrivacyConfirmed([]);
     setReport(emptyProcess.report);
     setNarratives(emptyProcess.narratives);
     setLastUpdated(emptyProcess.lastUpdated);
@@ -819,13 +882,44 @@ export default function Home() {
           setFileAnalysis((current) => ({ ...current, [file.name]: { status: file.name.toLowerCase().endsWith(".pdf") ? "OCR necessário" : "Lido", extractedChars, candidates: 0, detail: file.name.toLowerCase().endsWith(".pdf") ? "O PDF não contém texto pesquisável." : "Não foi encontrado texto utilizável." } }));
           continue;
         }
-        const candidates = candidateEvidence(file.name, chunks);
-        setDocumentCandidates((current) => [...current.filter((item) => item.source !== file.name), ...candidates]);
-        setFileAnalysis((current) => ({ ...current, [file.name]: { status: "Lido", extractedChars, candidates: candidates.length, detail: candidates.length ? `${candidates.length} excertos aguardam análise documental.` : "Texto extraído, mas sem correspondências suficientes com o referencial." } }));
+        const review = privacyReview(file.name, chunks);
+        setPrivacyReviews((current) => [...current.filter((item) => item.source !== file.name), review]);
+        setPrivacyConfirmed((current) => current.filter((source) => source !== file.name));
+        setDocumentCandidates((current) => current.filter((item) => item.source !== file.name));
+        setFileAnalysis((current) => ({ ...current, [file.name]: { status: "Privacidade", extractedChars, candidates: 0, detail: `${review.findings.length} sinalizações · risco ${review.risk.toLocaleLowerCase("pt-PT")} · aguarda validação de privacidade.` } }));
+        setView("privacidade");
       } catch (error) {
         setFileAnalysis((current) => ({ ...current, [file.name]: { status: "Erro", extractedChars: 0, candidates: 0, detail: error instanceof Error ? error.message : "Não foi possível ler o ficheiro." } }));
       }
     }
+  }
+
+  function updatePrivacyCategory(source: string, category: PrivacyCategory) {
+    setPrivacyReviews((current) => current.map((review) => review.source === source ? { ...review, category } : review));
+    setPrivacyConfirmed((current) => current.filter((item) => item !== source));
+  }
+
+  function approvePrivacy(source: string) {
+    const review = privacyReviews.find((item) => item.source === source);
+    if (!review || !privacyConfirmed.includes(source)) return;
+    const candidates = candidateEvidence(source, review.sanitizedChunks);
+    setDocumentCandidates((current) => [...current.filter((item) => item.source !== source), ...candidates]);
+    setFileAnalysis((current) => ({ ...current, [source]: { status: "Lido", extractedChars: review.sanitizedChunks.reduce((total, chunk) => total + chunk.text.length, 0), candidates: candidates.length, detail: candidates.length ? `Privacidade validada · ${candidates.length} excertos aguardam análise documental.` : "Privacidade validada, sem correspondências suficientes com o referencial." } }));
+    setPrivacyReviews((current) => current.filter((item) => item.source !== source));
+    setPrivacyConfirmed((current) => current.filter((item) => item !== source));
+    setChangesPending(true);
+    if (privacyReviews.length === 1) setView("analise");
+  }
+
+  function discardPrivacyReview(source: string) {
+    setPrivacyReviews((current) => current.filter((item) => item.source !== source));
+    setPrivacyConfirmed((current) => current.filter((item) => item !== source));
+    setFiles((current) => current.filter((item) => item !== source));
+    setFileAnalysis((current) => {
+      const next = { ...current };
+      delete next[source];
+      return next;
+    });
   }
 
   function toggleCandidate(id: number) {
@@ -1064,12 +1158,13 @@ export default function Home() {
   const nav: { id: View; label: string; step: string }[] = [
     { id: "visao", label: "Visão geral", step: "00" },
     { id: "documentos", label: "Documentos", step: "01" },
-    { id: "analise", label: "Análise documental", step: "02" },
-    { id: "estatistica", label: "Análise estatística", step: "03" },
-    { id: "evidencias", label: "Evidências", step: "04" },
-    { id: "entrevistas", label: "Entrevistas", step: "05" },
-    { id: "triangulacao", label: "Triangulação", step: "06" },
-    { id: "relatorio", label: "Relatório", step: "07" },
+    { id: "privacidade", label: "Privacidade", step: "02" },
+    { id: "analise", label: "Análise documental", step: "03" },
+    { id: "estatistica", label: "Análise estatística", step: "04" },
+    { id: "evidencias", label: "Evidências", step: "05" },
+    { id: "entrevistas", label: "Entrevistas", step: "06" },
+    { id: "triangulacao", label: "Triangulação", step: "07" },
+    { id: "relatorio", label: "Relatório", step: "08" },
   ];
 
   return (
@@ -1129,7 +1224,7 @@ export default function Home() {
               <p className="eyebrow">Quadro de referência carregado</p>
               <h2>Da fonte ao juízo, com rastreabilidade.</h2>
               <p>A plataforma organiza o trabalho pelos quatro domínios e doze campos de análise do referencial fornecido, mantendo separadas evidência, inferência e avaliação.</p>
-              <div className="action-row"><button className="button primary" onClick={() => setView(documentCandidates.length ? "analise" : "evidencias")}>{documentCandidates.length ? "Rever análise documental" : "Abrir matriz de evidências"}</button><button className="button ghost" onClick={generateReport}>Gerar minuta</button></div>
+              <div className="action-row"><button className="button primary" onClick={() => setView(privacyReviews.length ? "privacidade" : documentCandidates.length ? "analise" : "evidencias")}>{privacyReviews.length ? "Validar privacidade" : documentCandidates.length ? "Rever análise documental" : "Abrir matriz de evidências"}</button><button className="button ghost" onClick={generateReport}>Gerar minuta</button></div>
             </div>
             <div className="progress-panel">
               <span className="progress-value">{Math.round((coveredFields / fields.length) * 100)}%</span>
@@ -1192,7 +1287,7 @@ export default function Home() {
         </section>}
 
         {view === "documentos" && <section className="view">
-          <div className="page-heading"><div><p className="eyebrow">Agente 1 · Diagnóstico</p><h2>Mapa de fontes</h2><p>Os ficheiros são lidos no navegador e originam excertos candidatos para o agente de análise documental.</p></div><label className="button primary file-button">Ler documentos localmente<input type="file" multiple accept=".pdf,.docx,.xls,.xlsx,.csv,.txt" onChange={handleFiles} /></label></div>
+          <div className="page-heading"><div><p className="eyebrow">Agente 1 · Diagnóstico</p><h2>Mapa de fontes</h2><p>Os ficheiros são lidos no navegador e passam primeiro pelo Agente de Privacidade. Só o texto validado segue para análise documental.</p></div><label className="button primary file-button">Ler documentos localmente<input type="file" multiple accept=".pdf,.docx,.xls,.xlsx,.csv,.txt" onChange={handleFiles} /></label></div>
           <section className="limitation-panel" aria-labelledby="limitation-title">
             <div className="limitation-header">
               <div>
@@ -1233,6 +1328,26 @@ export default function Home() {
           <div className="source-list">
             {files.map((file, index) => { const analysis = fileAnalysis[file]; return <article key={`${file}-${index}`}><span className="file-icon">{file.split(".").pop()?.toUpperCase()}</span><div><strong>{file}</strong><small>{analysis ? analysis.detail : index < 3 ? "Fonte fictícia de demonstração" : "A aguardar leitura"}</small>{analysis && <span className="file-meta">{analysis.extractedChars.toLocaleString("pt-PT")} caracteres · {analysis.candidates} candidatas</span>}</div><span className={`badge file-status ${analysis?.status.toLowerCase().replaceAll(" ", "-").normalize("NFD").replace(/[\u0300-\u036f]/g, "") ?? "inventariado"}`}>{analysis?.status ?? "Demonstração"}</span></article>; })}
           </div>
+        </section>}
+
+        {view === "privacidade" && <section className="view">
+          <div className="page-heading"><div><p className="eyebrow">Agente de Privacidade · Validação prévia</p><h2>Triagem e minimização de dados</h2><p>A deteção é efetuada localmente. Reveja as sinalizações e confirme a versão minimizada antes de permitir a análise documental.</p></div><span className="badge">{privacyReviews.length} por validar</span></div>
+          <div className="privacy-warning"><strong>Limite da deteção automática</strong><span>Podem existir nomes, imagens, tabelas ou referências indiretas que não sejam reconhecidos. A confirmação humana é obrigatória. O texto original desta etapa permanece apenas na memória da sessão e não é incluído em “Guardar localmente”.</span></div>
+          {privacyReviews.length === 0 ? <div className="empty-analysis"><strong>Não existem documentos a aguardar validação de privacidade.</strong><p>Carregue novos documentos ou prossiga para a análise documental.</p><div className="action-row"><button className="button secondary" onClick={() => setView("documentos")}>Carregar documentos</button><button className="button primary" onClick={() => setView("analise")}>Abrir análise documental</button></div></div> : <div className="privacy-review-list">
+            {privacyReviews.map((review) => {
+              const directCount = review.findings.filter((finding) => finding.redacted).length;
+              const sensitiveCount = review.findings.filter((finding) => finding.kind === "Informação sensível").length;
+              const preview = review.sanitizedChunks.map((chunk) => `${chunk.location}\n${chunk.text}`).join("\n\n").slice(0, 5000);
+              return <article className="privacy-review-card" key={review.source}>
+                <div className="privacy-review-head"><div><p className="eyebrow">Documento em memória</p><h3>{review.source}</h3></div><span className={`risk-badge risk-${review.risk.toLocaleLowerCase("pt-PT")}`}>Risco {review.risk.toLocaleLowerCase("pt-PT")}</span></div>
+                <div className="privacy-controls"><label>Natureza do documento<select value={review.category} onChange={(event) => updatePrivacyCategory(review.source, event.target.value as PrivacyCategory)}><option>Institucional público</option><option>Estatístico agregado</option><option>Interno</option><option>Contém dados pessoais</option></select></label><div><strong>{directCount}</strong><span>dados ocultados automaticamente</span></div><div><strong>{sensitiveCount}</strong><span>referências sensíveis a rever</span></div></div>
+                {review.findings.length ? <div className="privacy-findings">{review.findings.map((finding) => <div key={finding.id}><span className={finding.redacted ? "finding-state redacted" : "finding-state review"}>{finding.redacted ? "Ocultado" : "Rever"}</span><strong>{finding.kind}</strong><code>{finding.value}</code><small>{finding.location}</small></div>)}</div> : <p className="privacy-clear">Não foram detetados identificadores diretos nem expressões sensíveis. Confirme, ainda assim, o conteúdo do documento.</p>}
+                <details className="sanitized-preview"><summary>Pré-visualizar texto que seguirá para análise</summary><pre>{preview}{preview.length >= 5000 ? "\n\n[Pré-visualização limitada; a validação aplica-se ao texto completo.]" : ""}</pre></details>
+                <label className="privacy-confirm"><input type="checkbox" checked={privacyConfirmed.includes(review.source)} onChange={() => setPrivacyConfirmed((current) => current.includes(review.source) ? current.filter((item) => item !== review.source) : [...current, review.source])} /><span>Verifiquei o documento e confirmo que a versão proposta não contém dados pessoais desnecessários para a avaliação.</span></label>
+                <div className="action-row privacy-actions"><button className="button danger-ghost" onClick={() => discardPrivacyReview(review.source)}>Eliminar documento</button><button className="button primary" disabled={!privacyConfirmed.includes(review.source)} onClick={() => approvePrivacy(review.source)}>Validar e enviar para análise documental</button></div>
+              </article>;
+            })}
+          </div>}
         </section>}
 
         {view === "analise" && <section className="view">

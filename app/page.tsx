@@ -47,6 +47,24 @@ type FileAnalysis = {
 
 type TextChunk = { text: string; location: string };
 
+type PreparedDocument = {
+  source: string;
+  chunks: TextChunk[];
+  status: "Pronto" | "A analisar" | "Concluído" | "Erro";
+  message: string;
+};
+
+type AiFieldAnalysis = {
+  campo: string;
+  pertinente: boolean;
+  sintese: string;
+  evidencias: string[];
+  pontosFortes: string[];
+  areasMelhoria: string[];
+  reservas: string[];
+  robustez: "sem evidência" | "fraca" | "moderada" | "forte";
+};
+
 type PrivacyCategory = "Institucional público" | "Estatístico agregado" | "Interno" | "Contém dados pessoais";
 type PrivacyRisk = "Baixo" | "Moderado" | "Elevado";
 type PrivacyFinding = {
@@ -744,6 +762,7 @@ export default function Home() {
   const [fileAnalysis, setFileAnalysis] = useState<Record<string, FileAnalysis>>({});
   const [privacyReviews, setPrivacyReviews] = useState<PrivacyReview[]>([]);
   const [privacyConfirmed, setPrivacyConfirmed] = useState<string[]>([]);
+  const [preparedDocuments, setPreparedDocuments] = useState<PreparedDocument[]>([]);
   const [filterDomain, setFilterDomain] = useState("Todos");
   const [filterStatus, setFilterStatus] = useState("Todos");
   const [interviewPanel, setInterviewPanel] = useState("Docentes");
@@ -856,6 +875,7 @@ export default function Home() {
     setFileAnalysis(emptyProcess.fileAnalysis);
     setPrivacyReviews([]);
     setPrivacyConfirmed([]);
+    setPreparedDocuments([]);
     setReport(emptyProcess.report);
     setNarratives(emptyProcess.narratives);
     setLastUpdated(emptyProcess.lastUpdated);
@@ -902,13 +922,63 @@ export default function Home() {
   function approvePrivacy(source: string) {
     const review = privacyReviews.find((item) => item.source === source);
     if (!review || !privacyConfirmed.includes(source)) return;
-    const candidates = candidateEvidence(source, review.sanitizedChunks);
-    setDocumentCandidates((current) => [...current.filter((item) => item.source !== source), ...candidates]);
-    setFileAnalysis((current) => ({ ...current, [source]: { status: "Lido", extractedChars: review.sanitizedChunks.reduce((total, chunk) => total + chunk.text.length, 0), candidates: candidates.length, detail: candidates.length ? `Privacidade validada · ${candidates.length} excertos aguardam análise documental.` : "Privacidade validada, sem correspondências suficientes com o referencial." } }));
+    setPreparedDocuments((current) => [
+      ...current.filter((item) => item.source !== source),
+      { source, chunks: review.sanitizedChunks, status: "Pronto", message: "Texto minimizado validado e pronto para interpretação por IA." },
+    ]);
+    setDocumentCandidates((current) => current.filter((item) => item.source !== source));
+    setFileAnalysis((current) => ({ ...current, [source]: { status: "Lido", extractedChars: review.sanitizedChunks.reduce((total, chunk) => total + chunk.text.length, 0), candidates: 0, detail: "Privacidade validada · aguarda análise documental por IA." } }));
     setPrivacyReviews((current) => current.filter((item) => item.source !== source));
     setPrivacyConfirmed((current) => current.filter((item) => item !== source));
     setChangesPending(true);
     if (privacyReviews.length === 1) setView("analise");
+  }
+
+  async function analyzePreparedDocument(source: string) {
+    const document = preparedDocuments.find((item) => item.source === source);
+    if (!document || document.status === "A analisar") return;
+    setPreparedDocuments((current) => current.map((item) => item.source === source ? { ...item, status: "A analisar", message: "A interpretar o documento como um todo…" } : item));
+    try {
+      const response = await fetch("/api/analyze-document", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          fileName: source,
+          extractedText: document.chunks.map((chunk) => `[${chunk.location}]\n${chunk.text}`).join("\n\n"),
+        }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || payload?.ok === false) throw new Error(payload?.error || `O servidor devolveu o estado ${response.status}.`);
+      const result = payload.analysis ?? payload.result ?? payload.data ?? payload;
+      const analyses: AiFieldAnalysis[] = Array.isArray(result?.analises) ? result.analises : [];
+      const generated = analyses
+        .filter((item) => item.pertinente && item.sintese?.trim())
+        .map((item, index): CandidateEvidence => {
+          const field = fields.find((candidate) => normalizeText(candidate.name) === normalizeText(item.campo)) ?? fields[0];
+          const strength: Strength = item.robustez === "forte" ? "Forte" : item.robustez === "moderada" ? "Moderada" : "Insuficiente";
+          return {
+            id: Date.now() + index,
+            fieldId: field.id,
+            claim: item.sintese.trim(),
+            source,
+            sourceType: "Documental",
+            location: "síntese do documento integral",
+            status: "Por triangular",
+            strength,
+            validated: false,
+            matchedTerms: [],
+            analysis: item.sintese.trim(),
+          };
+        });
+      if (!generated.length) throw new Error("A IA não identificou sínteses suficientemente sustentadas para os campos de análise.");
+      setDocumentCandidates((current) => [...current.filter((item) => item.source !== source), ...generated]);
+      setPreparedDocuments((current) => current.map((item) => item.source === source ? { ...item, status: "Concluído", message: `${generated.length} síntese(s) interpretativa(s) produzida(s).` } : item));
+      setFileAnalysis((current) => ({ ...current, [source]: { ...(current[source] ?? { status: "Lido", extractedChars: 0, candidates: 0, detail: "" }), candidates: generated.length, detail: `Análise por IA concluída · ${generated.length} síntese(s) aguardam validação humana.` } }));
+      setChangesPending(true);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Não foi possível concluir a análise por IA.";
+      setPreparedDocuments((current) => current.map((item) => item.source === source ? { ...item, status: "Erro", message } : item));
+    }
   }
 
   function discardPrivacyReview(source: string) {
@@ -1351,15 +1421,22 @@ export default function Home() {
         </section>}
 
         {view === "analise" && <section className="view">
-          <div className="page-heading"><div><p className="eyebrow">Agente 2 · Análise documental</p><h2>Seleção e validação das evidências</h2><p>Selecione os excertos pertinentes para os validar. A formulação analítica pode ser editada quando pretender precisar a interpretação, mas deixou de ser obrigatória.</p></div><div className="analysis-actions"><span className="badge">{documentCandidates.length} candidatas</span><button className="button secondary" disabled={!documentCandidates.length} onClick={toggleAllCandidates}>{allCandidatesSelected ? "Desmarcar todos" : "Selecionar todos"}</button><button className="button primary" disabled={!selectedCandidates.length} onClick={promoteCandidates}>Validar {selectedCandidates.length || ""} e promover</button></div></div>
-          <div className="quality-gate"><strong>Validação simplificada</strong><span>Selecionar confirma a pertinência do excerto. Ao promover, o registo entra na matriz como evidência validada; se existir uma formulação editada, esta substitui o excerto na análise posterior.</span></div>
-          {documentCandidates.length === 0 ? <div className="empty-analysis"><strong>Não existem excertos para rever.</strong><p>Leia documentos na etapa anterior ou descarte os resultados que não tenham valor probatório.</p><button className="button secondary" onClick={() => setView("documentos")}>Voltar aos documentos</button></div> : <div className="candidate-list">
+          <div className="page-heading"><div><p className="eyebrow">Agente 2 · Análise documental por IA</p><h2>Interpretação e síntese por campo</h2><p>O agente lê o texto minimizado como um todo, distingue intenção, execução, resultado e impacto e produz apenas sínteses com utilidade probatória.</p></div><div className="analysis-actions"><span className="badge">{documentCandidates.length} sínteses</span><button className="button secondary" disabled={!documentCandidates.length} onClick={toggleAllCandidates}>{allCandidatesSelected ? "Desmarcar todos" : "Selecionar todos"}</button><button className="button primary" disabled={!selectedCandidates.length} onClick={promoteCandidates}>Validar {selectedCandidates.length || ""} e promover</button></div></div>
+          <div className="quality-gate"><strong>Documentos prontos para interpretação</strong><span>Apenas o texto previamente validado no Agente de Privacidade será enviado. O documento original não é transmitido nem guardado por esta etapa.</span></div>
+          <div className="ai-document-list">
+            {preparedDocuments.map((document) => <article className="ai-document-card" key={document.source}>
+              <div><strong>{document.source}</strong><small>{document.chunks.length} secções ou páginas · {document.chunks.reduce((total, chunk) => total + chunk.text.length, 0).toLocaleString("pt-PT")} caracteres</small><span className={`ai-state ${document.status.toLowerCase().replace(" ", "-")}`}>{document.message}</span></div>
+              <button className="button primary" disabled={document.status === "A analisar"} onClick={() => analyzePreparedDocument(document.source)}>{document.status === "A analisar" ? "A analisar…" : document.status === "Concluído" ? "Reanalisar documento" : "Analisar documento integralmente"}</button>
+            </article>)}
+          </div>
+          {preparedDocuments.length === 0 && documentCandidates.length === 0 && <div className="empty-analysis"><strong>Não existem documentos prontos para interpretação.</strong><p>Carregue um documento, valide a minimização dos dados na etapa Privacidade e regresse a esta área.</p><button className="button secondary" onClick={() => setView("documentos")}>Voltar aos documentos</button></div>}
+          {documentCandidates.length > 0 && <><div className="quality-gate human-gate"><strong>Validação humana obrigatória</strong><span>Cada cartão corresponde a uma síntese interpretativa, não a um excerto. Reveja a formulação, o campo e a robustez antes de promover a informação para a matriz.</span></div><div className="candidate-list">
             {documentCandidates.map((candidate) => { const field = getField(candidate.fieldId); return <article className={selectedCandidates.includes(candidate.id) ? "candidate-card selected" : "candidate-card"} key={candidate.id}>
               <label className="candidate-check"><input type="checkbox" checked={selectedCandidates.includes(candidate.id)} onChange={() => toggleCandidate(candidate.id)} /><span>Validar</span></label>
               <div className="candidate-main"><div className="original-excerpt"><strong>Excerto identificado</strong><p>{candidate.claim}</p><div className="candidate-source"><span>{candidate.source} · {candidate.location}</span></div></div>{candidate.matchedTerms.length > 0 && <div className="matched-terms">{candidate.matchedTerms.map((term) => <span key={term}>{term}</span>)}</div>}<label className="analysis-editor">Formulação analítica — opcional<textarea value={candidate.analysis} onChange={(event) => updateCandidateAnalysis(candidate.id, event.target.value)} placeholder="Se necessário, reformule ou clarifique a interpretação deste excerto antes de o validar." /><small className={candidate.analysis.trim() ? "analysis-ready" : "analysis-neutral"}>{candidate.analysis.trim() ? "Será usada a formulação editada" : "Será usado o excerto selecionado"}</small></label></div>
               <div className="candidate-classification"><label>Campo proposto<select value={candidate.fieldId} onChange={(event) => updateCandidateField(candidate.id, event.target.value)}>{fields.map((option) => <option value={option.id} key={option.id}>{option.section} · {option.name}</option>)}</select></label><small>{field.domain}</small><button className="text-button danger-text" onClick={() => discardCandidate(candidate.id)}>Descartar</button></div>
             </article>; })}
-          </div>}
+          </div></>}
         </section>}
 
         {view === "estatistica" && <section className="view">

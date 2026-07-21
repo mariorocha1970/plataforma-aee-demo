@@ -38,6 +38,16 @@ type Interview = {
   summary: string;
 };
 
+type InterviewCandidate = {
+  id: number;
+  panel: string;
+  fieldId: string;
+  synthesis: string;
+  support: string[];
+  reservations: string[];
+  questions: string[];
+};
+
 type FileAnalysis = {
   status: "A aguardar" | "A ler" | "Privacidade" | "Lido" | "OCR necessário" | "Erro";
   extractedChars: number;
@@ -768,6 +778,10 @@ export default function Home() {
   const [interviewPanel, setInterviewPanel] = useState("Docentes");
   const [interviewField, setInterviewField] = useState(fields[0].id);
   const [interviewText, setInterviewText] = useState("");
+  const [interviewCandidates, setInterviewCandidates] = useState<InterviewCandidate[]>([]);
+  const [selectedInterviewCandidates, setSelectedInterviewCandidates] = useState<number[]>([]);
+  const [interviewAnalysisStatus, setInterviewAnalysisStatus] = useState("");
+  const [interviewAnalyzing, setInterviewAnalyzing] = useState(false);
   const [report, setReport] = useState("");
   const [narratives, setNarratives] = useState<Record<string, string>>({});
   const [saved, setSaved] = useState(false);
@@ -791,6 +805,7 @@ export default function Home() {
           else if (legacyCandidates.length) setDocumentCandidates(legacyCandidates.map((item: Evidence) => ({ ...item, matchedTerms: [], analysis: "" })));
         }
         if (Array.isArray(data.interviews)) setInterviews(data.interviews);
+        if (Array.isArray(data.interviewCandidates)) setInterviewCandidates(data.interviewCandidates);
         if (Array.isArray(data.statisticalRecords)) setStatisticalRecords(data.statisticalRecords);
         if (Array.isArray(data.statisticalTreatments)) setStatisticalTreatments(data.statisticalTreatments.filter((item: StatisticalTreatment) => Array.isArray(item.points) && Array.isArray(item.strengths) && Array.isArray(item.improvements)));
         if (Array.isArray(data.questionnaireComments)) setQuestionnaireComments(data.questionnaireComments);
@@ -821,7 +836,7 @@ export default function Home() {
   const allTreatmentsSelected = statisticalTreatments.length > 0 && statisticalTreatments.every((treatment) => selectedTreatmentIds.includes(treatment.id));
 
   function saveLocal() {
-    window.localStorage.setItem("aee-piloto-v2", JSON.stringify({ schoolName, evidence, documentCandidates, statisticalRecords, statisticalTreatments, questionnaireComments, questionnaireReport, interviews, files, fileAnalysis, narratives, report, lastUpdated }));
+    window.localStorage.setItem("aee-piloto-v2", JSON.stringify({ schoolName, evidence, documentCandidates, statisticalRecords, statisticalTreatments, questionnaireComments, questionnaireReport, interviews, interviewCandidates, files, fileAnalysis, narratives, report, lastUpdated }));
     setSaved(true);
     window.setTimeout(() => setSaved(false), 1800);
   }
@@ -840,7 +855,7 @@ export default function Home() {
     setNarratives(refreshedNarratives);
     setLastUpdated(timestamp);
     setChangesPending(false);
-    window.localStorage.setItem("aee-piloto-v2", JSON.stringify({ schoolName, evidence, documentCandidates, statisticalRecords, statisticalTreatments, questionnaireComments, questionnaireReport, interviews, files, fileAnalysis, narratives: refreshedNarratives, report: refreshedReport, lastUpdated: timestamp }));
+    window.localStorage.setItem("aee-piloto-v2", JSON.stringify({ schoolName, evidence, documentCandidates, statisticalRecords, statisticalTreatments, questionnaireComments, questionnaireReport, interviews, interviewCandidates, files, fileAnalysis, narratives: refreshedNarratives, report: refreshedReport, lastUpdated: timestamp }));
     window.setTimeout(() => setUpdating(false), 650);
   }
 
@@ -871,6 +886,9 @@ export default function Home() {
     setQuestionnaireComments([]);
     setQuestionnaireReport("");
     setInterviews(emptyProcess.interviews);
+    setInterviewCandidates([]);
+    setSelectedInterviewCandidates([]);
+    setInterviewAnalysisStatus("");
     setFiles(emptyProcess.files);
     setFileAnalysis(emptyProcess.fileAnalysis);
     setPrivacyReviews([]);
@@ -1185,6 +1203,87 @@ export default function Home() {
     setChangesPending(true);
   }
 
+  async function analyzeInterviewNotes() {
+    const text = interviewText.trim();
+    if (text.length < 40 || interviewAnalyzing) {
+      setInterviewAnalysisStatus(text.length < 40 ? "Introduza um relato suficientemente desenvolvido antes de iniciar a análise." : "");
+      return;
+    }
+    setInterviewAnalyzing(true);
+    setInterviewAnalysisStatus("A analisar o relato integral e a organizar a informação pelos campos da AEE…");
+    try {
+      const response = await fetch("/api/analyze-interview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ panel: interviewPanel, text }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || payload?.ok === false) throw new Error(payload?.error || `O servidor devolveu o estado ${response.status}.`);
+      const result = payload.analysis ?? payload.result ?? payload.data ?? payload;
+      const proposals = Array.isArray(result?.analises) ? result.analises : [];
+      const generated: InterviewCandidate[] = proposals
+        .filter((item: any) => item.pertinente && typeof item.sintese === "string" && item.sintese.trim())
+        .map((item: any, index: number) => {
+          const field = fields.find((candidate) => normalizeText(candidate.name) === normalizeText(item.campo ?? "")) ?? fields[0];
+          return {
+            id: Date.now() + index,
+            panel: interviewPanel,
+            fieldId: field.id,
+            synthesis: item.sintese.trim(),
+            support: Array.isArray(item.suporte) ? item.suporte.filter((value: unknown) => typeof value === "string") : [],
+            reservations: Array.isArray(item.reservas) ? item.reservas.filter((value: unknown) => typeof value === "string") : [],
+            questions: Array.isArray(item.questoesAprofundar) ? item.questoesAprofundar.filter((value: unknown) => typeof value === "string") : [],
+          };
+        });
+      if (!generated.length) throw new Error("O relato não contém informação suficientemente sustentada para produzir sínteses por campo.");
+      setInterviewCandidates(generated);
+      setSelectedInterviewCandidates(generated.map((item) => item.id));
+      setInterviewAnalysisStatus(`${generated.length} proposta(s) produzida(s). Reveja e valide antes de enviar para as Evidências.`);
+      setChangesPending(true);
+    } catch (error) {
+      setInterviewAnalysisStatus(error instanceof Error ? error.message : "Não foi possível analisar o relato da entrevista.");
+    } finally {
+      setInterviewAnalyzing(false);
+    }
+  }
+
+  function toggleInterviewCandidate(id: number) {
+    setSelectedInterviewCandidates((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
+  }
+
+  function toggleAllInterviewCandidates() {
+    const allSelected = interviewCandidates.length > 0 && interviewCandidates.every((item) => selectedInterviewCandidates.includes(item.id));
+    setSelectedInterviewCandidates(allSelected ? [] : interviewCandidates.map((item) => item.id));
+  }
+
+  function updateInterviewCandidate(id: number, changes: Partial<InterviewCandidate>) {
+    setInterviewCandidates((current) => current.map((item) => item.id === id ? { ...item, ...changes } : item));
+    setChangesPending(true);
+  }
+
+  function promoteInterviewCandidates() {
+    const selected = interviewCandidates.filter((item) => selectedInterviewCandidates.includes(item.id));
+    if (!selected.length) return;
+    setInterviews((current) => [...current, ...selected.map((item) => ({ id: item.id, panel: item.panel, fieldId: item.fieldId, summary: item.synthesis }))]);
+    setEvidence((current) => [...current, ...selected.map((item): Evidence => ({
+      id: item.id,
+      fieldId: item.fieldId,
+      claim: item.synthesis,
+      source: `Painel — ${item.panel}`,
+      sourceType: "Testemunhal",
+      location: "análise de relato integral · validação humana",
+      status: "Por triangular",
+      strength: "Insuficiente",
+      validated: true,
+    }))]);
+    setInterviewCandidates((current) => current.filter((item) => !selectedInterviewCandidates.includes(item.id)));
+    setSelectedInterviewCandidates([]);
+    setInterviewText("");
+    setInterviewAnalysisStatus(`${selected.length} síntese(s) validada(s) e enviadas para as Evidências.`);
+    setChangesPending(true);
+    setView("evidencias");
+  }
+
   function generateReport() {
     const completedNarratives = preserveReviewedNarratives(evidence, narratives);
     setNarratives(completedNarratives);
@@ -1487,18 +1586,23 @@ export default function Home() {
         </section>}
 
         {view === "entrevistas" && <section className="view">
-          <div className="page-heading"><div><p className="eyebrow">Agente 5 · Painéis</p><h2>Relatos das entrevistas</h2><p>Registe sínteses objetivas e associe cada excerto ao campo de análise relevante.</p></div></div>
-          <div className="split-layout">
-            <div className="form-card">
-              <label>Painel<select value={interviewPanel} onChange={(event) => setInterviewPanel(event.target.value)}><option>Direção</option><option>Conselho Geral</option><option>Elementos do Conselho Pedagógico</option><option>Equipa de Autoavaliação</option><option>Diretores de Turma</option><option>Docentes</option><option>Alunos</option><option>Encarregados de educação</option><option>Pessoal não docente</option><option>Parceiros</option></select></label>
-              <label>Campo de análise<select value={interviewField} onChange={(event) => setInterviewField(event.target.value)}>{fields.map((field) => <option value={field.id} key={field.id}>{field.section} · {field.name}</option>)}</select></label>
-              <label>Síntese do relato<textarea value={interviewText} onChange={(event) => setInterviewText(event.target.value)} placeholder="Registe a ideia essencial, sem identificação nominal…" /></label>
-              <button className="button primary" onClick={addInterview}>Adicionar à matriz</button>
-            </div>
-            <div className="interview-list">
-              {interviews.map((item) => { const field = getField(item.fieldId); return <article key={item.id}><div><span className="badge">{item.panel}</span><small>{field.section} · {field.name}</small></div><p>{item.summary}</p></article>; })}
-            </div>
+          <div className="page-heading"><div><p className="eyebrow">Agente 5 · Análise dos painéis por IA</p><h2>Relatos integrais das entrevistas</h2><p>Introduza as notas completas de cada painel. A plataforma propõe a organização pelos campos da AEE; a equipa revê, corrige e valida antes de enviar para as Evidências.</p></div></div>
+          <div className="interview-workflow-note"><strong>Menos classificação manual</strong><span>Não é necessário dividir antecipadamente o relato pelos campos de análise. Evite apenas nomes e outros dados pessoais desnecessários.</span></div>
+          <div className="interview-import-card">
+            <label>Painel entrevistado<select value={interviewPanel} onChange={(event) => setInterviewPanel(event.target.value)}><option>Direção</option><option>Conselho Geral</option><option>Elementos do Conselho Pedagógico</option><option>Equipa de Autoavaliação</option><option>Diretores de Turma</option><option>Docentes</option><option>Alunos</option><option>Encarregados de educação</option><option>Pessoal não docente</option><option>Parceiros</option></select></label>
+            <label className="interview-full-text">Notas completas ou síntese global da entrevista<textarea value={interviewText} onChange={(event) => setInterviewText(event.target.value)} placeholder="Cole aqui as notas da entrevista, sem identificação nominal. A organização por campos será proposta automaticamente…" /></label>
+            <div className="interview-import-actions"><small>{interviewText.trim().length.toLocaleString("pt-PT")} caracteres</small><button className="button primary" disabled={interviewAnalyzing || interviewText.trim().length < 40} onClick={analyzeInterviewNotes}>{interviewAnalyzing ? "A analisar…" : "Analisar relato integralmente"}</button></div>
           </div>
+          {interviewAnalysisStatus && <div className="statistics-status" role="status">{interviewAnalysisStatus}</div>}
+          {interviewCandidates.length > 0 && <section className="interview-review-panel">
+            <div className="section-heading"><div><p className="eyebrow">Validação humana obrigatória</p><h3>Propostas por campo de análise</h3><p>Reveja a interpretação, o campo atribuído, as reservas e as questões a aprofundar.</p></div><div className="action-row"><button className="button secondary" onClick={toggleAllInterviewCandidates}>{interviewCandidates.every((item) => selectedInterviewCandidates.includes(item.id)) ? "Desmarcar todas" : "Selecionar todas"}</button><button className="button primary" disabled={!selectedInterviewCandidates.length} onClick={promoteInterviewCandidates}>Validar e enviar ({selectedInterviewCandidates.length})</button></div></div>
+            <div className="interview-candidate-list">{interviewCandidates.map((candidate) => { const field = getField(candidate.fieldId); return <article className={selectedInterviewCandidates.includes(candidate.id) ? "interview-candidate selected" : "interview-candidate"} key={candidate.id}>
+              <label className="candidate-check"><input type="checkbox" checked={selectedInterviewCandidates.includes(candidate.id)} onChange={() => toggleInterviewCandidate(candidate.id)} /><span>Validar</span></label>
+              <div className="interview-candidate-main"><label>Síntese interpretativa<textarea value={candidate.synthesis} onChange={(event) => updateInterviewCandidate(candidate.id, { synthesis: event.target.value })} /></label>{candidate.support.length > 0 && <div className="interview-detail"><strong>Elementos de suporte</strong><ul>{candidate.support.map((item) => <li key={item}>{item}</li>)}</ul></div>}{candidate.reservations.length > 0 && <div className="interview-detail warning"><strong>Reservas ou contradições</strong><ul>{candidate.reservations.map((item) => <li key={item}>{item}</li>)}</ul></div>}{candidate.questions.length > 0 && <div className="interview-detail question"><strong>Questões a aprofundar</strong><ul>{candidate.questions.map((item) => <li key={item}>{item}</li>)}</ul></div>}</div>
+              <div className="candidate-classification"><label>Campo proposto<select value={candidate.fieldId} onChange={(event) => updateInterviewCandidate(candidate.id, { fieldId: event.target.value })}>{fields.map((option) => <option value={option.id} key={option.id}>{option.section} · {option.name}</option>)}</select></label><small>{field.domain}</small><button className="text-button danger-text" onClick={() => { setInterviewCandidates((current) => current.filter((item) => item.id !== candidate.id)); setSelectedInterviewCandidates((current) => current.filter((id) => id !== candidate.id)); }}>Descartar</button></div>
+            </article>; })}</div>
+          </section>}
+          {interviews.length > 0 && <section className="validated-interviews"><div className="section-heading"><div><p className="eyebrow">Histórico validado</p><h3>Sínteses já integradas</h3></div></div><div className="interview-list">{interviews.map((item) => { const field = getField(item.fieldId); return <article key={item.id}><div><span className="badge">{item.panel}</span><small>{field.section} · {field.name}</small></div><p>{item.summary}</p></article>; })}</div></section>}
         </section>}
 
         {view === "triangulacao" && <section className="view">

@@ -43,6 +43,8 @@ type InterviewCandidate = {
   panel: string;
   fieldId: string;
   synthesis: string;
+  location: string;
+  nature: "perceção" | "prática relatada" | "resultado referido" | "impacto alegado";
   support: string[];
   reservations: string[];
   questions: string[];
@@ -1289,7 +1291,7 @@ export default function Home() {
       return;
     }
     setInterviewAnalyzing(true);
-    setInterviewAnalysisStatus("A analisar o relato integral e a organizar a informação pelos campos da AEE…");
+    setInterviewAnalysisStatus("A extrair evidências testemunhais numa única chamada, sem consolidações…");
     try {
       const response = await fetch("/api/analyze-interview", {
         method: "POST",
@@ -1298,26 +1300,27 @@ export default function Home() {
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok || payload?.ok === false) throw new Error(payload?.error || `O servidor devolveu o estado ${response.status}.`);
-      const result = payload.analysis ?? payload.result ?? payload.data ?? payload;
-      const proposals = Array.isArray(result?.analises) ? result.analises : [];
+      const proposals = Array.isArray(payload?.evidence) ? payload.evidence : [];
       const generated: InterviewCandidate[] = proposals
-        .filter((item: any) => item.pertinente && typeof item.sintese === "string" && item.sintese.trim())
+        .filter((item: any) => typeof item.afirmacao === "string" && item.afirmacao.trim())
         .map((item: any, index: number) => {
           const field = fields.find((candidate) => normalizeText(candidate.name) === normalizeText(item.campo ?? "")) ?? fields[0];
           return {
             id: Date.now() + index,
             panel: interviewPanel,
             fieldId: field.id,
-            synthesis: item.sintese.trim(),
-            support: Array.isArray(item.suporte) ? item.suporte.filter((value: unknown) => typeof value === "string") : [],
-            reservations: Array.isArray(item.reservas) ? item.reservas.filter((value: unknown) => typeof value === "string") : [],
-            questions: Array.isArray(item.questoesAprofundar) ? item.questoesAprofundar.filter((value: unknown) => typeof value === "string") : [],
+            synthesis: item.afirmacao.trim(),
+            location: typeof item.localizacao === "string" && item.localizacao.trim() ? item.localizacao.trim() : "relato de entrevista",
+            nature: ["perceção", "prática relatada", "resultado referido", "impacto alegado"].includes(item.natureza) ? item.natureza : "perceção",
+            support: [],
+            reservations: typeof item.reserva === "string" && item.reserva.trim() ? [item.reserva.trim()] : [],
+            questions: [],
           };
         });
       if (!generated.length) throw new Error("O relato não contém informação suficientemente sustentada para produzir sínteses por campo.");
       setInterviewCandidates(generated);
       setSelectedInterviewCandidates(generated.map((item) => item.id));
-      setInterviewAnalysisStatus(`${generated.length} proposta(s) produzida(s). Reveja e valide antes de enviar para as Evidências.`);
+      setInterviewAnalysisStatus(`${generated.length} evidência(s) testemunhal(is) extraída(s) numa única chamada. Reveja antes de promover.`);
       setChangesPending(true);
     } catch (error) {
       setInterviewAnalysisStatus(error instanceof Error ? error.message : "Não foi possível analisar o relato da entrevista.");
@@ -1350,7 +1353,7 @@ export default function Home() {
       claim: item.synthesis,
       source: `Painel — ${item.panel}`,
       sourceType: "Testemunhal",
-      location: "análise de relato integral · validação humana",
+      location: `${item.location} · ${item.nature} · validação humana`,
       status: "Por triangular",
       strength: "Insuficiente",
       validated: true,
@@ -1665,7 +1668,7 @@ export default function Home() {
         </section>}
 
         {view === "entrevistas" && <section className="view">
-          <div className="page-heading"><div><p className="eyebrow">Agente 5 · Análise dos painéis por IA</p><h2>Relatos integrais das entrevistas</h2><p>Introduza as notas completas de cada painel. A plataforma propõe a organização pelos campos da AEE; a equipa revê, corrige e valida antes de enviar para as Evidências.</p></div></div>
+          <div className="page-heading"><div><p className="eyebrow">Agente 5 · Extração testemunhal por IA</p><h2>Evidências dos painéis</h2><p>Introduza as notas de cada painel. A IA extrai apenas evidências testemunhais para os campos pertinentes, sem formular juízos nem realizar consolidações; a equipa revê e valida antes de as enviar para a Matriz.</p></div></div>
           <div className="interview-workflow-note"><strong>Menos classificação manual</strong><span>Não é necessário dividir antecipadamente o relato pelos campos de análise. Evite apenas nomes e outros dados pessoais desnecessários.</span></div>
           <div className="interview-import-card">
             <label>Painel entrevistado<select value={interviewPanel} onChange={(event) => setInterviewPanel(event.target.value)}><option>Direção</option><option>Conselho Geral</option><option>Elementos do Conselho Pedagógico</option><option>Equipa de Autoavaliação</option><option>Diretores de Turma</option><option>Docentes</option><option>Alunos</option><option>Encarregados de educação</option><option>Pessoal não docente</option><option>Parceiros</option></select></label>
@@ -1674,10 +1677,10 @@ export default function Home() {
           </div>
           {interviewAnalysisStatus && <div className="statistics-status" role="status">{interviewAnalysisStatus}</div>}
           {interviewCandidates.length > 0 && <section className="interview-review-panel">
-            <div className="section-heading"><div><p className="eyebrow">Validação humana obrigatória</p><h3>Propostas por campo de análise</h3><p>Reveja a interpretação, o campo atribuído, as reservas e as questões a aprofundar.</p></div><div className="action-row"><button className="button secondary" onClick={toggleAllInterviewCandidates}>{interviewCandidates.every((item) => selectedInterviewCandidates.includes(item.id)) ? "Desmarcar todas" : "Selecionar todas"}</button><button className="button primary" disabled={!selectedInterviewCandidates.length} onClick={promoteInterviewCandidates}>Validar e enviar ({selectedInterviewCandidates.length})</button></div></div>
+            <div className="section-heading"><div><p className="eyebrow">Validação humana obrigatória</p><h3>Evidências testemunhais propostas</h3><p>Reveja a afirmação, o campo, a natureza e a reserva. Uma declaração do painel permanece por triangular, mesmo depois de validada.</p></div><div className="action-row"><button className="button secondary" onClick={toggleAllInterviewCandidates}>{interviewCandidates.every((item) => selectedInterviewCandidates.includes(item.id)) ? "Desmarcar todas" : "Selecionar todas"}</button><button className="button primary" disabled={!selectedInterviewCandidates.length} onClick={promoteInterviewCandidates}>Validar e enviar ({selectedInterviewCandidates.length})</button></div></div>
             <div className="interview-candidate-list">{interviewCandidates.map((candidate) => { const field = getField(candidate.fieldId); return <article className={selectedInterviewCandidates.includes(candidate.id) ? "interview-candidate selected" : "interview-candidate"} key={candidate.id}>
               <label className="candidate-check"><input type="checkbox" checked={selectedInterviewCandidates.includes(candidate.id)} onChange={() => toggleInterviewCandidate(candidate.id)} /><span>Validar</span></label>
-              <div className="interview-candidate-main"><label>Síntese interpretativa<textarea value={candidate.synthesis} onChange={(event) => updateInterviewCandidate(candidate.id, { synthesis: event.target.value })} /></label>{candidate.support.length > 0 && <div className="interview-detail"><strong>Elementos de suporte</strong><ul>{candidate.support.map((item) => <li key={item}>{item}</li>)}</ul></div>}{candidate.reservations.length > 0 && <div className="interview-detail warning"><strong>Reservas ou contradições</strong><ul>{candidate.reservations.map((item) => <li key={item}>{item}</li>)}</ul></div>}{candidate.questions.length > 0 && <div className="interview-detail question"><strong>Questões a aprofundar</strong><ul>{candidate.questions.map((item) => <li key={item}>{item}</li>)}</ul></div>}</div>
+              <div className="interview-candidate-main"><label>Afirmação testemunhal<textarea value={candidate.synthesis} onChange={(event) => updateInterviewCandidate(candidate.id, { synthesis: event.target.value })} /></label><small>{candidate.location} · {candidate.nature}</small>{candidate.reservations.length > 0 && <div className="interview-detail warning"><strong>Reserva ou necessidade de triangulação</strong><ul>{candidate.reservations.map((item) => <li key={item}>{item}</li>)}</ul></div>}</div>
               <div className="candidate-classification"><label>Campo proposto<select value={candidate.fieldId} onChange={(event) => updateInterviewCandidate(candidate.id, { fieldId: event.target.value })}>{fields.map((option) => <option value={option.id} key={option.id}>{option.section} · {option.name}</option>)}</select></label><small>{field.domain}</small><button className="text-button danger-text" onClick={() => { setInterviewCandidates((current) => current.filter((item) => item.id !== candidate.id)); setSelectedInterviewCandidates((current) => current.filter((id) => id !== candidate.id)); }}>Descartar</button></div>
             </article>; })}</div>
           </section>}

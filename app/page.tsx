@@ -992,150 +992,89 @@ export default function Home() {
   async function analyzePreparedDocument(source: string) {
     const document = preparedDocuments.find((item) => item.source === source);
     if (!document || document.status === "A analisar") return;
-    const blocks = createAnalysisBlocks(document.chunks);
-    setPreparedDocuments((current) => current.map((item) => item.source === source ? { ...item, status: "A analisar", message: `Preparados ${blocks.length} bloco(s) com sobreposição…` } : item));
+
+    // Segmentos maiores reduzem o número de chamadas. Não existe qualquer
+    // consolidação posterior por IA: cada resposta gera evidências autónomas.
+    const blocks = createAnalysisBlocks(document.chunks, 14_000, 0);
+    setPreparedDocuments((current) => current.map((item) => item.source === source ? {
+      ...item,
+      status: "A analisar",
+      message: `${blocks.length} segmento(s) · extração direta de evidências, sem consolidações…`,
+    } : item));
+
     try {
-      async function requestAnalysis(body: Record<string, unknown>, label: string) {
-        let lastError = "";
-        for (let attempt = 1; attempt <= 2; attempt += 1) {
-          try {
-            const response = await fetch("/api/analyze-document", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-            const payload = await response.json().catch(() => ({}));
-            if (!response.ok || payload?.ok === false) {
-              const requestError = new Error(payload?.error || `O servidor devolveu o estado ${response.status}.`) as Error & { status?: number };
-              requestError.status = response.status;
-              throw requestError;
-            }
-            return payload.analysis ?? payload.result ?? payload.data ?? payload;
-          } catch (error) {
-            lastError = error instanceof Error ? error.message : "erro desconhecido";
-            const status = typeof error === "object" && error && "status" in error ? Number((error as { status?: number }).status) : 0;
-            // Um timeout não melhora repetindo o mesmo pedido. O chamador subdivide o bloco.
-            if (status === 504 || /estado 504|timeout|timed out/i.test(lastError)) throw error;
-            if (attempt === 1) setPreparedDocuments((current) => current.map((item) => item.source === source ? { ...item, message: `${label}: primeira tentativa falhou; repetição automática…` } : item));
-          }
-        }
-        throw new Error(`${label} não foi concluído após duas tentativas: ${lastError}`);
-      }
-
-      async function analyzeBlockAdaptively(block: AnalysisBlock, label: string, depth = 0): Promise<any[]> {
-        try {
-          const result = await requestAnalysis({ mode: "block", fileName: source, blockLabel: block.label, text: block.text }, label);
-          return [{ localizacao: block.label, ...result }];
-        } catch (error) {
-          const message = error instanceof Error ? error.message : "erro desconhecido";
-          const isTimeout = /estado 504|timeout|timed out/i.test(message);
-          if (!isTimeout || block.text.length <= 2_500 || depth >= 3) throw error;
-          const middle = Math.floor(block.text.length / 2);
-          const boundary = block.text.lastIndexOf("\n", middle);
-          const cut = boundary > Math.floor(block.text.length * 0.35) ? boundary : middle;
-          const overlap = 300;
-          const parts: AnalysisBlock[] = [
-            { text: block.text.slice(0, Math.min(block.text.length, cut + overlap)), label: `${block.label} · parte A` },
-            { text: block.text.slice(Math.max(0, cut - overlap)), label: `${block.label} · parte B` },
-          ];
-          setPreparedDocuments((current) => current.map((item) => item.source === source ? { ...item, message: `${label} excedeu o tempo; subdivisão automática em ${parts[0].text.length.toLocaleString("pt-PT")} e ${parts[1].text.length.toLocaleString("pt-PT")} caracteres…` } : item));
-          const results: any[] = [];
-          for (let partIndex = 0; partIndex < parts.length; partIndex += 1) {
-            results.push(...await analyzeBlockAdaptively(parts[partIndex], `${label}.${partIndex + 1}`, depth + 1));
-          }
-          return results;
-        }
-      }
-
-      function mergeLocally(items: any[]) {
-        const byField = new Map<string, any[]>();
-        items.forEach((partial) => (Array.isArray(partial?.analises) ? partial.analises : []).forEach((analysis: any) => {
-          if (!analysis?.pertinente || !analysis?.campo) return;
-          byField.set(analysis.campo, [...(byField.get(analysis.campo) || []), analysis]);
-        }));
-        const unique = (values: any[], limit: number) => Array.from(new Set(values.filter(Boolean).map((value) => String(value).trim()))).slice(0, limit);
-        const rank: Record<string, number> = { "sem evidência": 0, fraca: 1, moderada: 2, forte: 3 };
-        return {
-          enquadramento: "Consolidação técnica das análises parciais do documento.",
-          sinteseGlobal: "Síntese integral organizada por campo de análise, sujeita a validação humana.",
-          analises: Array.from(byField.entries()).map(([campo, analyses]) => ({
-            campo,
-            pertinente: true,
-            sintese: unique(analyses.map((item) => item.sintese), 3).join(" "),
-            evidencias: unique(analyses.flatMap((item) => item.evidencias || []), 6),
-            pontosFortes: unique(analyses.flatMap((item) => item.pontosFortes || []), 4),
-            areasMelhoria: unique(analyses.flatMap((item) => item.areasMelhoria || []), 4),
-            reservas: unique(analyses.flatMap((item) => item.reservas || []), 4),
-            robustez: analyses.map((item) => item.robustez || "sem evidência").sort((a, b) => (rank[b] || 0) - (rank[a] || 0))[0] || "sem evidência",
-          })),
-        };
-      }
-
-      const partialAnalyses: any[] = [];
+      const collected: CandidateEvidence[] = [];
       for (let index = 0; index < blocks.length; index += 1) {
         const block = blocks[index];
-        setPreparedDocuments((current) => current.map((item) => item.source === source ? { ...item, message: `A analisar o bloco ${index + 1} de ${blocks.length} · ${block.label}` } : item));
-        const results = await analyzeBlockAdaptively(block, `Bloco ${index + 1} de ${blocks.length}`);
-        results.forEach((result, subIndex) => partialAnalyses.push({ bloco: index + 1, subbloco: subIndex + 1, ...result }));
-      }
+        setPreparedDocuments((current) => current.map((item) => item.source === source ? {
+          ...item,
+          message: `Segmento ${index + 1} de ${blocks.length} · as evidências anteriores já estão preservadas…`,
+        } : item));
 
-      let consolidationLevel: any[] = partialAnalyses;
-      let round = 1;
-      while (consolidationLevel.length > 1) {
-        const nextLevel: any[] = [];
-        const groups = Math.ceil(consolidationLevel.length / 2);
-        for (let start = 0; start < consolidationLevel.length; start += 2) {
-          const groupNumber = Math.floor(start / 2) + 1;
-          setPreparedDocuments((current) => current.map((item) => item.source === source ? { ...item, message: `Consolidação global · ronda ${round}, grupo ${groupNumber} de ${groups}…` } : item));
-          const group = consolidationLevel.slice(start, start + 2);
-          let consolidated: any;
-          if (group.length === 1) consolidated = group[0];
-          else {
-            try {
-              consolidated = await requestAnalysis({ mode: "consolidate", fileName: source, partialAnalyses: group }, `Consolidação ${round}.${groupNumber}`);
-            } catch (error) {
-              const message = error instanceof Error ? error.message : "erro desconhecido";
-              // A consolidação é uma melhoria semântica, não pode ser um ponto único
-              // de falha. Os resultados parciais já contêm toda a informação necessária.
-              // Se a IA exceder o tempo, truncar o JSON ou devolver uma estrutura
-              // inesperada, preservamos o grupo por combinação local e continuamos.
-              setPreparedDocuments((current) => current.map((item) => item.source === source ? {
-                ...item,
-                message: `Consolidação ${round}.${groupNumber} não foi concluída (${message}); preservação local dos resultados e continuação…`,
-              } : item));
-              consolidated = mergeLocally(group);
-            }
-          }
-          nextLevel.push(consolidated);
-        }
-        consolidationLevel = nextLevel;
-        round += 1;
-      }
-      const result = consolidationLevel[0];
-      const analyses: AiFieldAnalysis[] = Array.isArray(result?.analises) ? result.analises : [];
-      const generated = analyses
-        .filter((item) => item.pertinente && item.sintese?.trim())
-        .map((item, index): CandidateEvidence => {
-          const field = fields.find((candidate) => normalizeText(candidate.name) === normalizeText(item.campo)) ?? fields[0];
-          const strength: Strength = item.robustez === "forte" ? "Forte" : item.robustez === "moderada" ? "Moderada" : "Insuficiente";
-          return {
-            id: Date.now() + index,
+        const response = await fetch("/api/analyze-document", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ fileName: source, location: block.label, text: block.text }),
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || payload?.ok === false) throw new Error(payload?.error || `O servidor devolveu o estado ${response.status}.`);
+        const extracted = Array.isArray(payload?.evidence) ? payload.evidence : [];
+
+        extracted.forEach((item: any) => {
+          const claim = String(item?.afirmacao || "").trim();
+          if (!claim) return;
+          const field = fields.find((candidate) => normalizeText(candidate.name) === normalizeText(String(item?.campo || "")));
+          if (!field) return;
+          const location = String(item?.localizacao || block.label).trim();
+          const reservation = String(item?.reserva || "").trim();
+          const nature = String(item?.natureza || "").trim();
+          const duplicate = collected.some((candidate) => candidate.fieldId === field.id && normalizeText(candidate.claim) === normalizeText(claim));
+          if (duplicate) return;
+          collected.push({
+            id: Date.now() + collected.length,
             fieldId: field.id,
-            claim: item.sintese.trim(),
+            claim,
             source,
             sourceType: "Documental",
-            location: `síntese integral consolidada de ${blocks.length} bloco(s)`,
+            location,
             status: "Por triangular",
-            strength,
+            strength: "Insuficiente",
             validated: false,
-            matchedTerms: [],
-            analysis: item.sintese.trim(),
-          };
+            matchedTerms: nature ? [nature] : [],
+            analysis: reservation ? `${claim} Reserva: ${reservation}` : claim,
+          });
         });
-      if (!generated.length) throw new Error("A IA não identificou sínteses suficientemente sustentadas para os campos de análise.");
-      setDocumentCandidates((current) => [...current.filter((item) => item.source !== source), ...generated]);
-      setPreparedDocuments((current) => current.map((item) => item.source === source ? { ...item, status: "Concluído", message: `Documento integral analisado em ${blocks.length} bloco(s) · ${generated.length} síntese(s) produzida(s).` } : item));
-      setFileAnalysis((current) => ({ ...current, [source]: { ...(current[source] ?? { status: "Lido", extractedChars: 0, candidates: 0, detail: "" }), candidates: generated.length, detail: `Análise por IA concluída · ${generated.length} síntese(s) aguardam validação humana.` } }));
+
+        // Ponto de recuperação imediato: mesmo que um segmento posterior falhe,
+        // o trabalho pago até aqui fica disponível na interface e no autosave.
+        setDocumentCandidates((current) => [
+          ...current.filter((item) => item.source !== source),
+          ...collected,
+        ]);
+        setFileAnalysis((current) => ({
+          ...current,
+          [source]: {
+            ...(current[source] ?? { status: "Lido", extractedChars: 0, candidates: 0, detail: "" }),
+            candidates: collected.length,
+            detail: `${index + 1}/${blocks.length} segmento(s) concluído(s) · ${collected.length} evidência(s) preservada(s).`,
+          },
+        }));
+      }
+
+      if (!collected.length) throw new Error("Não foram identificadas evidências documentais materialmente relevantes.");
+      setPreparedDocuments((current) => current.map((item) => item.source === source ? {
+        ...item,
+        status: "Concluído",
+        message: `${collected.length} evidência(s) extraída(s) em ${blocks.length} chamada(s), sem consolidação paga.`,
+      } : item));
       setChangesPending(true);
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Não foi possível concluir a análise por IA.";
-      setPreparedDocuments((current) => current.map((item) => item.source === source ? { ...item, status: "Erro", message } : item));
+      const message = error instanceof Error ? error.message : "Não foi possível concluir a extração.";
+      setPreparedDocuments((current) => current.map((item) => item.source === source ? {
+        ...item,
+        status: "Erro",
+        message: `${message} As evidências dos segmentos já concluídos foram preservadas.`,
+      } : item));
     }
   }
 
@@ -1660,16 +1599,16 @@ export default function Home() {
         </section>}
 
         {view === "analise" && <section className="view">
-          <div className="page-heading"><div><p className="eyebrow">Agente 2 · Análise documental por IA</p><h2>Interpretação e síntese por campo</h2><p>O texto minimizado é analisado integralmente em blocos sobrepostos e consolidado numa leitura global, distinguindo intenção, execução, resultado e impacto.</p></div><div className="analysis-actions"><span className="badge">{documentCandidates.length} sínteses</span><button className="button secondary" disabled={!documentCandidates.length} onClick={toggleAllCandidates}>{allCandidatesSelected ? "Desmarcar todos" : "Selecionar todos"}</button><button className="button primary" disabled={!selectedCandidates.length} onClick={promoteCandidates}>Validar {selectedCandidates.length || ""} e promover</button></div></div>
+          <div className="page-heading"><div><p className="eyebrow">Agente 2 · Extração documental por IA</p><h2>Evidências documentais por campo</h2><p>A IA extrai apenas evidências factuais, com localização, natureza e reservas. Não produz juízos nem realiza consolidações pagas; a triangulação ocorre depois da validação humana.</p></div><div className="analysis-actions"><span className="badge">{documentCandidates.length} evidências</span><button className="button secondary" disabled={!documentCandidates.length} onClick={toggleAllCandidates}>{allCandidatesSelected ? "Desmarcar todos" : "Selecionar todos"}</button><button className="button primary" disabled={!selectedCandidates.length} onClick={promoteCandidates}>Validar {selectedCandidates.length || ""} e promover</button></div></div>
           <div className="quality-gate"><strong>Documentos prontos para interpretação</strong><span>Apenas o texto previamente validado no Agente de Privacidade será enviado. O documento original não é transmitido nem guardado por esta etapa.</span></div>
           <div className="ai-document-list">
             {preparedDocuments.map((document) => <article className="ai-document-card" key={document.source}>
               <div><strong>{document.source}</strong><small>{document.chunks.length} secções ou páginas · {document.chunks.reduce((total, chunk) => total + chunk.text.length, 0).toLocaleString("pt-PT")} caracteres</small><span className={`ai-state ${document.status.toLowerCase().replace(" ", "-")}`}>{document.message}</span></div>
-              <button className="button primary" disabled={document.status === "A analisar"} onClick={() => analyzePreparedDocument(document.source)}>{document.status === "A analisar" ? "Análise por blocos em curso…" : document.status === "Concluído" ? "Reanalisar documento" : "Analisar documento integralmente"}</button>
+              <button className="button primary" disabled={document.status === "A analisar"} onClick={() => analyzePreparedDocument(document.source)}>{document.status === "A analisar" ? "Extração em curso…" : document.status === "Concluído" ? "Reextrair evidências" : "Extrair evidências"}</button>
             </article>)}
           </div>
           {preparedDocuments.length === 0 && documentCandidates.length === 0 && <div className="empty-analysis"><strong>Não existem documentos prontos para interpretação.</strong><p>Carregue um documento, valide a minimização dos dados na etapa Privacidade e regresse a esta área.</p><button className="button secondary" onClick={() => setView("documentos")}>Voltar aos documentos</button></div>}
-          {documentCandidates.length > 0 && <><div className="quality-gate human-gate"><strong>Validação humana obrigatória</strong><span>Cada cartão corresponde a uma síntese interpretativa, não a um excerto. Reveja a formulação, o campo e a robustez antes de promover a informação para a matriz.</span></div><div className="candidate-list">
+          {documentCandidates.length > 0 && <><div className="quality-gate human-gate"><strong>Validação humana obrigatória</strong><span>Cada cartão corresponde a uma evidência proposta, ainda não triangulada. Reveja o facto, a localização, o campo e a reserva antes de o promover para a matriz.</span></div><div className="candidate-list">
             {documentCandidates.map((candidate) => { const field = getField(candidate.fieldId); return <article className={selectedCandidates.includes(candidate.id) ? "candidate-card selected" : "candidate-card"} key={candidate.id}>
               <label className="candidate-check"><input type="checkbox" checked={selectedCandidates.includes(candidate.id)} onChange={() => toggleCandidate(candidate.id)} /><span>Validar</span></label>
               <div className="candidate-main"><div className="original-excerpt"><strong>Excerto identificado</strong><p>{candidate.claim}</p><div className="candidate-source"><span>{candidate.source} · {candidate.location}</span></div></div>{candidate.matchedTerms.length > 0 && <div className="matched-terms">{candidate.matchedTerms.map((term) => <span key={term}>{term}</span>)}</div>}<label className="analysis-editor">Formulação analítica — opcional<textarea value={candidate.analysis} onChange={(event) => updateCandidateAnalysis(candidate.id, event.target.value)} placeholder="Se necessário, reformule ou clarifique a interpretação deste excerto antes de o validar." /><small className={candidate.analysis.trim() ? "analysis-ready" : "analysis-neutral"}>{candidate.analysis.trim() ? "Será usada a formulação editada" : "Será usado o excerto selecionado"}</small></label></div>

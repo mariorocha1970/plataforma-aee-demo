@@ -9,77 +9,130 @@ const CAMPOS_AEE = [
   "Desenvolvimento pessoal e bem-estar das crianças e dos alunos", "Oferta educativa e gestão curricular",
   "Ensino, aprendizagem e avaliação", "Planificação e acompanhamento das práticas educativa e letiva",
   "Resultados académicos", "Resultados sociais", "Reconhecimento da comunidade",
-];
+] as const;
 
-function outputText(data: any) {
+const ANALISE_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    analises: {
+      type: "array",
+      maxItems: 8,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          campo: { type: "string", enum: CAMPOS_AEE },
+          pertinente: { type: "boolean" },
+          sintese: { type: "string" },
+          suporte: { type: "array", maxItems: 4, items: { type: "string" } },
+          reservas: { type: "array", maxItems: 3, items: { type: "string" } },
+          questoesAprofundar: { type: "array", maxItems: 3, items: { type: "string" } },
+        },
+        required: ["campo", "pertinente", "sintese", "suporte", "reservas", "questoesAprofundar"],
+      },
+    },
+  },
+  required: ["analises"],
+};
+
+function outputText(data: any): string {
   if (typeof data?.output_text === "string") return data.output_text;
-  return Array.isArray(data?.output) ? data.output.flatMap((item: any) => item?.content ?? []).filter((item: any) => item?.type === "output_text").map((item: any) => item?.text ?? "").join("") : "";
+  if (!Array.isArray(data?.output)) return "";
+  return data.output.flatMap((item: any) => Array.isArray(item?.content) ? item.content : [])
+    .filter((item: any) => item?.type === "output_text")
+    .map((item: any) => item?.text ?? "")
+    .join("");
 }
 
 export async function GET() {
-  return NextResponse.json({ ok: true, configured: Boolean(process.env.OPENAI_API_KEY), route: "/api/analyze-interview" });
+  return NextResponse.json({
+    ok: true,
+    configured: Boolean(process.env.OPENAI_API_KEY),
+    route: "/api/analyze-interview",
+  });
 }
 
 export async function POST(request: NextRequest) {
   try {
     const apiKey = process.env.OPENAI_API_KEY?.trim();
-    if (!apiKey) return NextResponse.json({ ok: false, error: "O Agente de IA ainda não está configurado." }, { status: 503 });
-    const body = await request.json();
-    const panel = typeof body?.panel === "string" ? body.panel.trim() : "Painel não identificado";
-    const text = typeof body?.text === "string" ? body.text.trim() : "";
-    if (text.length < 40) return NextResponse.json({ ok: false, error: "O relato é insuficiente para análise." }, { status: 400 });
-    let model = process.env.OPENAI_MODEL?.trim() || "gpt-5.6-sol";
-    if (model === "gpt-5.6") model = "gpt-5.6-sol";
+    if (!apiKey) {
+      return NextResponse.json({ ok: false, error: "O Agente de IA ainda não está configurado." }, { status: 503 });
+    }
 
+    const body = await request.json().catch(() => null) as any;
+    if (!body) return NextResponse.json({ ok: false, error: "O pedido não contém JSON válido." }, { status: 400 });
+
+    const panel = typeof body.panel === "string" ? body.panel.trim() : "Painel não identificado";
+    const interviewText = typeof body.text === "string" ? body.text.trim() : "";
+    if (interviewText.length < 40) {
+      return NextResponse.json({ ok: false, error: "O relato é insuficiente para análise." }, { status: 400 });
+    }
+
+    // A análise de entrevistas tem configuração própria para não herdar um
+    // OPENAI_MODEL mais lento usado noutras funções da plataforma.
+    const model = process.env.OPENAI_INTERVIEW_MODEL?.trim() || "gpt-5-mini";
+    const campos = CAMPOS_AEE.map((campo, index) => `${index + 1}. ${campo}`).join("\n");
     const prompt = `Atue como especialista em Avaliação Externa das Escolas em Portugal.
-Analise as notas integrais de uma entrevista ao painel «${panel}» e organize apenas a informação probatoriamente útil pelos campos do referencial.
+Analise o relato da entrevista ao painel «${panel}» e devolva apenas os campos do referencial efetivamente sustentados.
 
-Regras:
-1. Não copie frases soltas nem produza uma ata da entrevista.
-2. Formule sínteses interpretativas coesas, em português europeu, distinguindo declaração, prática, resultado e impacto.
-3. Não trate a afirmação de um entrevistado como facto comprovado; use linguagem prudente e indique necessidade de triangulação.
-4. Não invente informação nem causalidade.
-5. Registe elementos concretos de suporte, sem nomes de pessoas.
-6. Sinalize contradições internas, reservas, generalizações e ausência de demonstração de impacto.
-7. Converta lacunas em questões objetivas para outros painéis ou pedidos documentais.
-8. Marque como pertinente apenas os campos efetivamente sustentados pelo relato.
-9. Atribua cada ideia ao campo principal, evitando repetição entre campos.
+REGRAS:
+- Não produza uma ata nem copie frases soltas.
+- Redija, no máximo, 120 palavras de síntese por campo, em português europeu.
+- Distinga declarações, práticas, resultados e impacto; não trate perceções como factos comprovados.
+- Não invente informação, causalidade ou juízos.
+- Atribua cada ideia apenas ao campo principal e elimine repetições.
+- Inclua no máximo 4 elementos de suporte, 3 reservas e 3 questões a aprofundar por campo.
+- Devolva somente campos pertinentes. Não crie objetos vazios para os restantes campos.
+- Assinale necessidade de triangulação, contradições e insuficiência de demonstração de impacto.
 
-Campos:
-${CAMPOS_AEE.map((campo, index) => `${index + 1}. ${campo}`).join("\n")}
+CAMPOS DO REFERENCIAL:
+${campos}
 
-Relato integral:
+RELATO:
 ---
-${text.slice(0, 100_000)}
+${interviewText.slice(0, 30_000)}
 ---`;
 
     const response = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
       headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
       body: JSON.stringify({
-        model, store: false, input: prompt,
-        text: { format: { type: "json_schema", name: "analise_entrevista_aee", strict: true, schema: {
-          type: "object", additionalProperties: false,
-          properties: { analises: { type: "array", items: { type: "object", additionalProperties: false,
-            properties: {
-              campo: { type: "string", enum: CAMPOS_AEE }, pertinente: { type: "boolean" }, sintese: { type: "string" },
-              suporte: { type: "array", items: { type: "string" } }, reservas: { type: "array", items: { type: "string" } },
-              questoesAprofundar: { type: "array", items: { type: "string" } },
-            }, required: ["campo", "pertinente", "sintese", "suporte", "reservas", "questoesAprofundar"],
-          } } }, required: ["analises"],
-        } } },
+        model,
+        store: false,
+        input: prompt,
+        reasoning: { effort: "low" },
+        max_output_tokens: 2_500,
+        text: {
+          format: {
+            type: "json_schema",
+            name: "analise_entrevista_aee",
+            strict: true,
+            schema: ANALISE_SCHEMA,
+          },
+        },
       }),
     });
-    const data = await response.json();
+
+    const data = await response.json().catch(() => ({}));
     if (!response.ok) {
       const quota = data?.error?.code === "insufficient_quota" || /quota|billing/i.test(data?.error?.message ?? "");
-      return NextResponse.json({ ok: false, error: quota ? "A conta da API não tem saldo disponível ou atingiu o limite de utilização." : data?.error?.message || "A IA não conseguiu analisar o relato." }, { status: response.status });
+      const message = quota
+        ? "A conta da API não tem saldo disponível ou atingiu o limite de utilização."
+        : data?.error?.message || "A IA não conseguiu analisar o relato.";
+      return NextResponse.json({ ok: false, error: message }, { status: response.status });
     }
+
     const raw = outputText(data);
     if (!raw) return NextResponse.json({ ok: false, error: "A resposta da IA não contém uma análise utilizável." }, { status: 502 });
+
     const analysis = JSON.parse(raw);
     return NextResponse.json({ ok: true, model, analysis, result: analysis, data: analysis });
   } catch (error) {
-    return NextResponse.json({ ok: false, error: error instanceof Error ? error.message : "Erro interno na análise da entrevista." }, { status: 500 });
+    console.error("Erro na análise da entrevista:", error);
+    return NextResponse.json({
+      ok: false,
+      error: error instanceof Error ? error.message : "Erro interno na análise da entrevista.",
+    }, { status: 500 });
   }
 }

@@ -829,6 +829,9 @@ export default function Home() {
   const [updating, setUpdating] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [exportStatus, setExportStatus] = useState("");
+  const [aiTriangulatingField, setAiTriangulatingField] = useState("");
+  const [aiTriangulationStatus, setAiTriangulationStatus] = useState("");
+  const [aiReportWriting, setAiReportWriting] = useState(false);
 
   useEffect(() => {
     const stored = window.localStorage.getItem("aee-piloto-v2");
@@ -1378,6 +1381,69 @@ export default function Home() {
     setChangesPending(true);
   }
 
+  async function triangulateFieldWithAi(field: Field) {
+    const records = evidence.filter((record) => record.fieldId === field.id && record.validated);
+    if (!records.length) {
+      setAiTriangulationStatus(`${field.section}: não existem evidências validadas para triangular.`);
+      return;
+    }
+    if (!window.confirm(`Esta operação utiliza IA e faz 1 chamada à API para o campo ${field.section}. Pretende continuar?`)) return;
+    setAiTriangulatingField(field.id);
+    setAiTriangulationStatus(`${field.section}: triangulação por IA em curso · 1 chamada…`);
+    try {
+      const response = await fetch("/api/triangulate-field", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ field, evidence: records }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || payload?.ok === false) throw new Error(payload?.error || `O servidor devolveu o estado ${response.status}.`);
+      const narrative = String(payload?.narrative || "").trim();
+      if (!narrative) throw new Error("A IA não devolveu uma narrativa utilizável.");
+      setNarratives((current) => ({ ...current, [field.id]: narrative }));
+      setChangesPending(true);
+      setAiTriangulationStatus(`${field.section}: triangulação concluída numa chamada. Reveja e valide o texto.`);
+    } catch (error) {
+      setAiTriangulationStatus(`${field.section}: ${error instanceof Error ? error.message : "Não foi possível triangular."} Não foi feita repetição automática paga.`);
+    } finally {
+      setAiTriangulatingField("");
+    }
+  }
+
+  async function improveReportWithAi() {
+    const completedNarratives = preserveReviewedNarratives(evidence, narratives);
+    const localDraft = report.trim() || buildReport(evidence, completedNarratives);
+    const usable = fields.filter((field) => completedNarratives[field.id]?.trim()).map((field) => ({
+      section: field.section, domain: field.domain, name: field.name, narrative: completedNarratives[field.id].trim(),
+    }));
+    if (!usable.length) {
+      setExportStatus("Valide e reveja primeiro as narrativas da triangulação.");
+      return;
+    }
+    if (!window.confirm("Esta operação utiliza IA e faz 1 chamada à API para aprimorar a redação integral do relatório. Pretende continuar?")) return;
+    setAiReportWriting(true);
+    setExportStatus("Aprimoramento do relatório por IA em curso · 1 chamada…");
+    try {
+      const response = await fetch("/api/write-report", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ schoolName, narratives: usable, localDraft }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || payload?.ok === false) throw new Error(payload?.error || `O servidor devolveu o estado ${response.status}.`);
+      const improved = String(payload?.report || "").trim();
+      if (!improved) throw new Error("A IA não devolveu um relatório utilizável.");
+      setReport(improved);
+      setChangesPending(true);
+      setExportStatus("Relatório aprimorado numa chamada. A validação humana continua obrigatória.");
+    } catch (error) {
+      setReport(localDraft);
+      setExportStatus(`${error instanceof Error ? error.message : "Não foi possível aprimorar o relatório."} A minuta local foi preservada e não houve repetição automática paga.`);
+    } finally {
+      setAiReportWriting(false);
+    }
+  }
+
   function openExportCenter(content: string, filename: string, format: "docx" | "txt", setStatus: (value: string) => void) {
     if (!content.trim()) return;
     try {
@@ -1688,7 +1754,8 @@ export default function Home() {
         </section>}
 
         {view === "triangulacao" && <section className="view">
-          <div className="page-heading"><div><p className="eyebrow">Agente 6 · Cruzamento de fontes</p><h2>Triangulação e narrativa avaliativa</h2><p>A robustez considera apenas evidências validadas. Cada síntese articula constatação, dados quantitativos, interpretação, limites e proposta de juízo.</p></div><div className="action-row"><span className="badge auto-badge">Só evidência validada</span><button className="button primary" onClick={refreshNarratives}>Atualizar narrativas</button></div></div>
+          <div className="page-heading"><div><p className="eyebrow">Agente 6 · Cruzamento de fontes</p><h2>Triangulação e narrativa avaliativa</h2><p>A atualização local é imediata e gratuita. A triangulação semântica por IA é opcional e faz exatamente uma chamada por campo.</p></div><div className="action-row"><span className="badge auto-badge">Só evidência validada</span><button className="button secondary" onClick={refreshNarratives}>Atualizar localmente · sem API</button></div></div>
+          {aiTriangulationStatus && <div className="statistics-status" role="status">{aiTriangulationStatus}</div>}
           <div className="narrative-guidance"><strong>Do dado ao juízo</strong><span>As narrativas são propostas de trabalho editáveis. Reveja o alcance, confirme as referências e não transforme previsão, atividade ou testemunho isolado em impacto demonstrado.</span></div>
           <div className="triangulation-grid narrative-grid">
             {fields.map((field) => {
@@ -1701,6 +1768,7 @@ export default function Home() {
                 <div className="tri-top"><span>{field.section}</span><span className={`strength ${strength.toLowerCase()}`}>{strength}</span></div>
                 <h3>{field.name}</h3><small>{field.domain}</small>
                 <div className="tri-stats"><span><strong>{records.length}</strong> validadas</span><span><strong>{types.size}</strong> tipos de fonte</span><span><strong>{waiting}</strong> pendentes</span></div>
+                <button className="button primary" disabled={!records.length || Boolean(aiTriangulatingField)} onClick={() => triangulateFieldWithAi(field)}>{aiTriangulatingField === field.id ? "A triangular…" : "Triangular este campo com IA · 1 chamada"}</button>
                 <label className="narrative-editor">Síntese avaliativa<textarea value={narrative} onChange={(event) => { setNarratives((current) => ({ ...current, [field.id]: event.target.value })); setChangesPending(true); }} /></label>
                 <div className="source-evidence"><strong>Base probatória</strong>{records.length ? <ul>{records.map((record) => <li key={record.id}>{record.source} · {record.location} · {record.status}</li>)}</ul> : <span>Lacuna documental: preparar pedido de evidência e questões para os painéis.</span>}</div>
               </article>;
@@ -1709,7 +1777,7 @@ export default function Home() {
         </section>}
 
         {view === "relatorio" && <section className="view">
-          <div className="page-heading"><div><p className="eyebrow">Agente 7 · Redação avaliativa</p><h2>Minuta do relatório</h2><p>Cada campo de análise recebe um texto contínuo construído diretamente a partir da interpretação revista na triangulação.</p></div><div className="action-row"><button className="button primary" onClick={generateReport}>Gerar narrativa</button><button className="button secondary" disabled={!report} onClick={downloadReport}>Guardar Word (.docx)</button><button className="button secondary" disabled={!report} onClick={downloadReportText}>Guardar texto (.txt)</button></div></div>
+          <div className="page-heading"><div><p className="eyebrow">Agente 7 · Redação avaliativa</p><h2>Minuta do relatório</h2><p>Gere primeiro a minuta local sem custo. O aprimoramento por IA é opcional e usa uma única chamada para o relatório completo.</p></div><div className="action-row"><button className="button secondary" onClick={generateReport}>Gerar minuta local · sem API</button><button className="button primary" disabled={aiReportWriting} onClick={improveReportWithAi}>{aiReportWriting ? "A aprimorar…" : "Aprimorar com IA · 1 chamada"}</button><button className="button secondary" disabled={!report} onClick={downloadReport}>Guardar Word (.docx)</button><button className="button secondary" disabled={!report} onClick={downloadReportText}>Guardar texto (.txt)</button></div></div>
           {exportStatus && <div className="export-status" role="status">{exportStatus}</div>}
           <div className="report-layout">
             <aside><strong>Controlo de qualidade</strong><ul><li>Estrutura 5.1–5.4 preservada</li><li>Texto contínuo em cada campo</li><li>Interpretação revista na triangulação preservada</li><li>Sem nomes de documentos ou páginas no corpo</li><li>Distinção entre prática, resultado e impacto</li><li>Validação humana obrigatória</li></ul></aside>

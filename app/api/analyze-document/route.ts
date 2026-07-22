@@ -42,14 +42,14 @@ function outputText(data: any): string {
     .filter((item: any) => item?.type === "output_text").map((item: any) => item?.text ?? "").join("");
 }
 
-async function invoke(apiKey: string, model: string, prompt: string) {
+async function invoke(apiKey: string, model: string, prompt: string, maxOutputTokens: number) {
   const response = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify({
       model, store: false, input: prompt,
       reasoning: { effort: "low" },
-      max_output_tokens: 6_000,
+      max_output_tokens: maxOutputTokens,
       text: { format: { type: "json_schema", name: "analise_documental_aee", strict: true, schema: ANALISE_SCHEMA } },
     }),
   });
@@ -80,14 +80,28 @@ export async function POST(request: NextRequest) {
 
     if (body.mode === "consolidate") {
       if (!Array.isArray(body.partialAnalyses) || !body.partialAnalyses.length) return NextResponse.json({ ok: false, error: "Não foram recebidas análises parciais para consolidar." }, { status: 400 });
-      prompt = `Atue como especialista em Avaliação Externa das Escolas, em Portugal. Consolide as análises parciais do documento ${fileName}.\n\nREGRAS: produza uma leitura global por campo; elimine repetições; não conte a sobreposição entre blocos como fontes independentes; preserve convergências, contradições, lacunas, reservas e localização das evidências; distinga intenção, execução, resultado e impacto; não invente; não aumente a robustez pela mera repetição dentro do mesmo documento; escreva em português europeu; assinale como não pertinente o campo sem suporte suficiente. A síntese deve ser narrativa, não uma colagem.\n\nCampos:\n${campos}\n\nAnálises parciais:\n${JSON.stringify(body.partialAnalyses)}`;
+      const compactAnalyses = body.partialAnalyses.map((partial: any) => ({
+        localizacao: partial?.localizacao || partial?.bloco || "",
+        analises: (Array.isArray(partial?.analises) ? partial.analises : [])
+          .filter((item: any) => item?.pertinente && item?.sintese)
+          .map((item: any) => ({
+            campo: item.campo,
+            sintese: String(item.sintese).slice(0, 900),
+            evidencias: (item.evidencias || []).slice(0, 4).map((value: any) => String(value).slice(0, 350)),
+            pontosFortes: (item.pontosFortes || []).slice(0, 3).map((value: any) => String(value).slice(0, 250)),
+            areasMelhoria: (item.areasMelhoria || []).slice(0, 3).map((value: any) => String(value).slice(0, 250)),
+            reservas: (item.reservas || []).slice(0, 3).map((value: any) => String(value).slice(0, 250)),
+            robustez: item.robustez,
+          })),
+      }));
+      prompt = `Atue como especialista em Avaliação Externa das Escolas, em Portugal. Consolide as análises parciais do documento ${fileName}.\n\nREGRAS: inclua apenas campos com suporte; síntese máxima de 120 palavras por campo; no máximo 4 evidências e 3 itens em cada lista; elimine repetições; não conte a sobreposição como fontes independentes; preserve contradições, lacunas, reservas e localização; distinga intenção, execução, resultado e impacto; não invente; não aumente a robustez pela repetição; escreva em português europeu.\n\nCampos:\n${campos}\n\nAnálises parciais compactadas:\n${JSON.stringify(compactAnalyses)}`;
     } else {
       const text = typeof body.text === "string" ? body.text.trim() : typeof body.extractedText === "string" ? body.extractedText.trim() : "";
       if (!text) return NextResponse.json({ ok: false, error: "Não foi recebido texto do bloco." }, { status: 400 });
       prompt = `Atue como especialista em Avaliação Externa das Escolas, em Portugal. Analise apenas este bloco do documento ${fileName} (${body.blockLabel || "localização não indicada"}).\n\nREGRAS: não copie excertos extensos; conserve nas evidências a página/secção indicada; não transforme títulos ou frases isoladas em conclusões; diferencie intenções, práticas, monitorização, resultados e impacto; não invente causalidades nem juízos; declare insuficiência; produza sínteses fluidas em português europeu; distribua informação apenas por campos pertinentes; pontos fortes e áreas de melhoria exigem suporte; tenha em conta que há sobreposição com blocos adjacentes.\n\nCampos:\n${campos}\n\n--- INÍCIO DO BLOCO ---\n${text}\n--- FIM DO BLOCO ---`;
     }
 
-    const result = await invoke(apiKey, model, prompt);
+    const result = await invoke(apiKey, model, prompt, body.mode === "consolidate" ? 3_200 : 4_000);
     return NextResponse.json({ ok: true, configured: true, model, mode: body.mode === "consolidate" ? "consolidate" : "block", analysis: result, result, data: result });
   } catch (error: any) {
     console.error("Erro na análise documental:", error);

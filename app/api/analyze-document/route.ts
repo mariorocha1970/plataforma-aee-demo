@@ -56,9 +56,20 @@ async function invoke(apiKey: string, model: string, prompt: string, maxOutputTo
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw Object.assign(new Error(data?.error?.message || "A OpenAI não conseguiu concluir a análise."), { status: response.status, type: data?.error?.type });
   const raw = outputText(data);
-  if (!raw) throw Object.assign(new Error("A resposta da IA não contém uma análise utilizável."), { status: 502 });
-  try { return JSON.parse(raw); }
-  catch { throw Object.assign(new Error("A resposta da IA não pôde ser convertida para a matriz."), { status: 502 }); }
+  if (!raw) {
+    const reason = data?.incomplete_details?.reason;
+    const detail = reason === "max_output_tokens" ? " A resposta atingiu o limite de extensão." : "";
+    throw Object.assign(new Error(`A resposta da IA não contém uma análise utilizável.${detail}`), { status: 502 });
+  }
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || !Array.isArray(parsed.analises)) throw new Error("estrutura sem análises");
+    return parsed;
+  } catch {
+    const reason = data?.incomplete_details?.reason;
+    const detail = reason === "max_output_tokens" ? " A resposta foi interrompida pelo limite de extensão." : "";
+    throw Object.assign(new Error(`A resposta da IA não pôde ser convertida para a matriz.${detail}`), { status: 502 });
+  }
 }
 
 export async function GET() {
@@ -101,7 +112,7 @@ export async function POST(request: NextRequest) {
       prompt = `Atue como especialista em Avaliação Externa das Escolas, em Portugal. Analise apenas este bloco do documento ${fileName} (${body.blockLabel || "localização não indicada"}).\n\nREGRAS: não copie excertos extensos; conserve nas evidências a página/secção indicada; não transforme títulos ou frases isoladas em conclusões; diferencie intenções, práticas, monitorização, resultados e impacto; não invente causalidades nem juízos; declare insuficiência; produza sínteses fluidas em português europeu; distribua informação apenas por campos pertinentes; pontos fortes e áreas de melhoria exigem suporte; tenha em conta que há sobreposição com blocos adjacentes.\n\nCampos:\n${campos}\n\n--- INÍCIO DO BLOCO ---\n${text}\n--- FIM DO BLOCO ---`;
     }
 
-    const result = await invoke(apiKey, model, prompt, body.mode === "consolidate" ? 3_200 : 4_000);
+    const result = await invoke(apiKey, model, prompt, body.mode === "consolidate" ? 5_000 : 4_000);
     return NextResponse.json({ ok: true, configured: true, model, mode: body.mode === "consolidate" ? "consolidate" : "block", analysis: result, result, data: result });
   } catch (error: any) {
     console.error("Erro na análise documental:", error);

@@ -2,9 +2,18 @@
 
 import { ChangeEvent, useEffect, useMemo, useState } from "react";
 
-type View = "visao" | "documentos" | "privacidade" | "analise" | "estatistica" | "evidencias" | "entrevistas" | "triangulacao" | "relatorio";
+type View = "visao" | "documentos" | "privacidade" | "analise" | "estatistica" | "evidencias" | "entrevistas" | "triangulacao" | "relatorio" | "conclusoes";
 type EvidenceStatus = "Confirmada" | "Por triangular" | "Contraditória" | "Ausente";
 type Strength = "Forte" | "Moderada" | "Insuficiente";
+type Rating = "Excelente" | "Muito bom" | "Bom" | "Suficiente" | "Insuficiente" | "Por definir";
+
+type DomainConclusion = {
+  domain: string;
+  strengths: string[];
+  improvements: string[];
+  rating: Rating;
+  rationale: string;
+};
 
 type Field = {
   id: string;
@@ -754,6 +763,46 @@ function buildReport(evidence: Evidence[], narratives: Record<string, string> = 
   return lines.join("\n");
 }
 
+const negativeConclusionPattern = /\b(?:não|sem|insuficiente|limitad[ao]s?|fragilidad|desigual|irregular|carece|lacuna|contradit|abaixo|reduzid[ao]s?|não permite|não demonstra|por consolidar|necessita|requer)\b/i;
+const boilerplateConclusionPattern = /\b(?:evidência validada|base probatória|formulação do juízo|validação da equipa|fontes? independente|não demonstram?, por si só)\b/i;
+
+function conclusionSentence(value: string) {
+  return completeSentence(value.replace(/^No campo [^,]+,\s*/i, "").replace(/^A informação (?:validada|disponível) (?:permite identificar|evidencia|aponta para)\s*/i, "").trim());
+}
+
+function localDomainConclusions(narratives: Record<string, string>, evidence: Evidence[]): DomainConclusion[] {
+  return domainOrder.map((domain) => {
+    const domainFields = fields.filter((field) => field.domain === domain);
+    const domainRecords = evidence.filter((record) => record.validated && domainFields.some((field) => field.id === record.fieldId));
+    const sentences = domainFields.flatMap((field) => (narratives[field.id] || composeFieldNarrative(field, domainRecords.filter((record) => record.fieldId === field.id)))
+      .split(/(?<=[.!?])\s+/).map((item) => item.trim()).filter((item) => item.length >= 45 && !boilerplateConclusionPattern.test(item)));
+    const improvements = sentences.filter((item) => negativeConclusionPattern.test(item)).slice(0, 4).map(conclusionSentence);
+    const strengths = sentences.filter((item) => !negativeConclusionPattern.test(item)).slice(0, 4).map(conclusionSentence);
+    const covered = domainFields.filter((field) => domainRecords.some((record) => record.fieldId === field.id)).length;
+    const strongFields = domainFields.filter((field) => strengthFor(domainRecords.filter((record) => record.fieldId === field.id)) === "Forte").length;
+    let rating: Rating = "Por definir";
+    if (covered === domainFields.length && strengths.length > improvements.length && strongFields >= Math.ceil(domainFields.length / 2)) rating = "Muito bom";
+    else if (covered >= Math.ceil(domainFields.length / 2) && strengths.length > improvements.length) rating = "Bom";
+    else if (covered > 0 && strengths.length && improvements.length) rating = "Suficiente";
+    else if (covered > 0 && improvements.length > strengths.length) rating = "Insuficiente";
+    const rationale = rating === "Por definir"
+      ? "A cobertura ou a robustez da evidência ainda não permite propor uma menção com segurança."
+      : `Proposta local baseada na cobertura de ${covered}/${domainFields.length} campos e no equilíbrio entre pontos fortes e áreas de melhoria; requer validação da equipa.`;
+    return { domain, strengths, improvements, rating, rationale };
+  });
+}
+
+function conclusionsExport(conclusions: DomainConclusion[]) {
+  const lines = ["QUADRO-RESUMO DAS CLASSIFICAÇÕES", ""];
+  conclusions.forEach((item) => lines.push(`${item.domain}: ${item.rating}`, item.rationale, ""));
+  lines.push("PONTOS FORTES", "");
+  conclusions.forEach((item) => lines.push(item.domain, ...(item.strengths.length ? item.strengths.map((value) => `• ${value}`) : ["[A validar]" ]), ""));
+  lines.push("ÁREAS DE MELHORIA", "");
+  conclusions.forEach((item) => lines.push(item.domain, ...(item.improvements.length ? item.improvements.map((value) => `• ${value}`) : ["[A validar]" ]), ""));
+  lines.push("NOTA", "As classificações, os pontos fortes e as áreas de melhoria constituem propostas de trabalho sujeitas a validação pela equipa de avaliação.");
+  return lines.join("\n");
+}
+
 function createAnalysisBlocks(chunks: TextChunk[], targetSize = 8_000, overlapSize = 800): AnalysisBlock[] {
   const units: TextChunk[] = [];
   chunks.forEach((chunk) => {
@@ -833,6 +882,9 @@ export default function Home() {
   const [aiTriangulationStatus, setAiTriangulationStatus] = useState("");
   const [aiReportWriting, setAiReportWriting] = useState(false);
   const [backupStatus, setBackupStatus] = useState("");
+  const [conclusions, setConclusions] = useState<DomainConclusion[]>([]);
+  const [aiConclusionsWriting, setAiConclusionsWriting] = useState(false);
+  const [conclusionsStatus, setConclusionsStatus] = useState("");
 
   useEffect(() => {
     const stored = window.localStorage.getItem("aee-piloto-v2");
@@ -857,6 +909,7 @@ export default function Home() {
         if (data.fileAnalysis && typeof data.fileAnalysis === "object") setFileAnalysis(data.fileAnalysis);
         if (typeof data.report === "string") setReport(data.report);
         if (data.narratives && typeof data.narratives === "object") setNarratives(data.narratives);
+        if (Array.isArray(data.conclusions)) setConclusions(data.conclusions);
         if (typeof data.lastUpdated === "string") setLastUpdated(data.lastUpdated);
         if (typeof data.schoolName === "string") setSchoolName(data.schoolName);
       } catch {
@@ -879,13 +932,13 @@ export default function Home() {
   const allTreatmentsSelected = statisticalTreatments.length > 0 && statisticalTreatments.every((treatment) => selectedTreatmentIds.includes(treatment.id));
 
   function saveLocal() {
-    window.localStorage.setItem("aee-piloto-v2", JSON.stringify({ schoolName, evidence, documentCandidates, statisticalRecords, statisticalTreatments, questionnaireComments, questionnaireReport, interviews, interviewCandidates, files, fileAnalysis, narratives, report, lastUpdated }));
+    window.localStorage.setItem("aee-piloto-v2", JSON.stringify({ schoolName, evidence, documentCandidates, statisticalRecords, statisticalTreatments, questionnaireComments, questionnaireReport, interviews, interviewCandidates, files, fileAnalysis, narratives, report, conclusions, lastUpdated }));
     setSaved(true);
     window.setTimeout(() => setSaved(false), 1800);
   }
 
   function exportBackup() {
-    const payload = { schoolName, evidence, documentCandidates, statisticalRecords, statisticalTreatments, questionnaireComments, questionnaireReport, interviews, interviewCandidates, files, fileAnalysis, narratives, report, lastUpdated };
+    const payload = { schoolName, evidence, documentCandidates, statisticalRecords, statisticalTreatments, questionnaireComments, questionnaireReport, interviews, interviewCandidates, files, fileAnalysis, narratives, report, conclusions, lastUpdated };
     const backup = {
       format: "plataforma-aee-backup",
       version: 1,
@@ -938,6 +991,7 @@ export default function Home() {
       setFileAnalysis(data.fileAnalysis);
       setNarratives(data.narratives && typeof data.narratives === "object" ? data.narratives : {});
       setReport(typeof data.report === "string" ? data.report : "");
+      setConclusions(Array.isArray(data.conclusions) ? data.conclusions : []);
       setLastUpdated(typeof data.lastUpdated === "string" ? data.lastUpdated : "");
       setPrivacyReviews([]);
       setPrivacyConfirmed([]);
@@ -965,7 +1019,7 @@ export default function Home() {
     setNarratives(refreshedNarratives);
     setLastUpdated(timestamp);
     setChangesPending(false);
-    window.localStorage.setItem("aee-piloto-v2", JSON.stringify({ schoolName, evidence, documentCandidates, statisticalRecords, statisticalTreatments, questionnaireComments, questionnaireReport, interviews, interviewCandidates, files, fileAnalysis, narratives: refreshedNarratives, report: refreshedReport, lastUpdated: timestamp }));
+    window.localStorage.setItem("aee-piloto-v2", JSON.stringify({ schoolName, evidence, documentCandidates, statisticalRecords, statisticalTreatments, questionnaireComments, questionnaireReport, interviews, interviewCandidates, files, fileAnalysis, narratives: refreshedNarratives, report: refreshedReport, conclusions, lastUpdated: timestamp }));
     window.setTimeout(() => setUpdating(false), 650);
   }
 
@@ -983,6 +1037,7 @@ export default function Home() {
       fileAnalysis: {} as Record<string, FileAnalysis>,
       report: "",
       narratives: {} as Record<string, string>,
+      conclusions: [] as DomainConclusion[],
       lastUpdated: "",
     };
     setSchoolName(emptyProcess.schoolName);
@@ -1006,6 +1061,7 @@ export default function Home() {
     setPreparedDocuments([]);
     setReport(emptyProcess.report);
     setNarratives(emptyProcess.narratives);
+    setConclusions(emptyProcess.conclusions);
     setLastUpdated(emptyProcess.lastUpdated);
     setChangesPending(false);
     setFilterDomain("Todos");
@@ -1540,6 +1596,64 @@ export default function Home() {
     openExportCenter(report, "minuta-relatorio-aee", "txt", setExportStatus);
   }
 
+  function generateConclusions() {
+    const completedNarratives = preserveReviewedNarratives(evidence, narratives);
+    setNarratives(completedNarratives);
+    setConclusions(localDomainConclusions(completedNarratives, evidence));
+    setConclusionsStatus("Proposta local gerada sem utilização da API. Reveja todos os enunciados e menções.");
+    setChangesPending(true);
+    setView("conclusoes");
+  }
+
+  function updateConclusion(domain: string, changes: Partial<DomainConclusion>) {
+    setConclusions((current) => current.map((item) => item.domain === domain ? { ...item, ...changes } : item));
+    setChangesPending(true);
+  }
+
+  async function improveConclusionsWithAi() {
+    const completedNarratives = preserveReviewedNarratives(evidence, narratives);
+    const base = conclusions.length ? conclusions : localDomainConclusions(completedNarratives, evidence);
+    const payloadDomains = domainOrder.map((domain) => ({
+      domain,
+      fields: fields.filter((field) => field.domain === domain).map((field) => ({ section: field.section, name: field.name, narrative: completedNarratives[field.id] || "" })),
+      evidenceProfile: fields.filter((field) => field.domain === domain).map((field) => {
+        const records = evidence.filter((record) => record.validated && record.fieldId === field.id);
+        return { section: field.section, count: records.length, strength: strengthFor(records), sourceTypes: [...new Set(records.map((record) => record.sourceType))] };
+      }),
+      currentProposal: base.find((item) => item.domain === domain),
+    }));
+    if (!payloadDomains.some((item) => item.fields.some((field) => field.narrative.trim()))) {
+      setConclusionsStatus("Ainda não existem narrativas trianguladas suficientes para formular conclusões.");
+      return;
+    }
+    if (!window.confirm("Esta operação utiliza IA e faz 1 chamada à API para rever os Pontos Fortes, as Áreas de Melhoria e propor as quatro menções. Pretende continuar?")) return;
+    setAiConclusionsWriting(true);
+    setConclusionsStatus("Revisão por IA em curso · 1 chamada…");
+    try {
+      const response = await fetch("/api/write-conclusions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ schoolName, domains: payloadDomains }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || payload?.ok === false) throw new Error(payload?.error || `O servidor devolveu o estado ${response.status}.`);
+      if (!Array.isArray(payload?.conclusions) || payload.conclusions.length !== domainOrder.length) throw new Error("A IA não devolveu os quatro domínios esperados.");
+      setConclusions(payload.conclusions);
+      setChangesPending(true);
+      setConclusionsStatus("Proposta revista numa única chamada. Confirme a consistência com o relatório antes de validar.");
+    } catch (error) {
+      setConclusions(base);
+      setConclusionsStatus(`${error instanceof Error ? error.message : "Não foi possível rever as conclusões."} A proposta existente foi preservada e não houve repetição automática paga.`);
+    } finally {
+      setAiConclusionsWriting(false);
+    }
+  }
+
+  function exportConclusionsWord() {
+    if (!conclusions.length) return;
+    openExportCenter(conclusionsExport(conclusions), "classificacoes-pontos-fortes-areas-melhoria-aee", "docx", setConclusionsStatus);
+  }
+
   const nav: { id: View; label: string; step: string }[] = [
     { id: "visao", label: "Visão geral", step: "00" },
     { id: "documentos", label: "Documentos", step: "01" },
@@ -1550,6 +1664,7 @@ export default function Home() {
     { id: "entrevistas", label: "Entrevistas", step: "06" },
     { id: "triangulacao", label: "Triangulação", step: "07" },
     { id: "relatorio", label: "Relatório", step: "08" },
+    { id: "conclusoes", label: "Pontos fortes e melhoria", step: "09" },
   ];
 
   return (
@@ -1856,6 +1971,22 @@ export default function Home() {
             <aside><strong>Controlo de qualidade</strong><ul><li>Estrutura 5.1–5.4 preservada</li><li>Texto contínuo em cada campo</li><li>Interpretação revista na triangulação preservada</li><li>Sem nomes de documentos ou páginas no corpo</li><li>Distinção entre prática, resultado e impacto</li><li>Validação humana obrigatória</li></ul></aside>
             <textarea value={report} onChange={(event) => setReport(event.target.value)} placeholder="Selecione “Gerar minuta” para produzir um texto organizado a partir das evidências atuais." aria-label="Minuta do relatório" />
           </div>
+        </section>}
+
+        {view === "conclusoes" && <section className="view">
+          <div className="page-heading"><div><p className="eyebrow">Agente 8 · Síntese conclusiva</p><h2>Classificações, Pontos Fortes e Áreas de Melhoria</h2><p>As propostas partem das narrativas trianguladas e devem ser consistentes com o relatório. A decisão final pertence à equipa de avaliação.</p></div><div className="action-row"><button className="button secondary" onClick={generateConclusions}>Gerar proposta local · sem API</button><button className="button primary" disabled={aiConclusionsWriting} onClick={improveConclusionsWithAi}>{aiConclusionsWriting ? "A rever…" : "Melhorar e propor menções com IA · 1 chamada"}</button><button className="button secondary" disabled={!conclusions.length} onClick={exportConclusionsWord}>Guardar Word (.docx)</button></div></div>
+          {conclusionsStatus && <div className="export-status" role="status">{conclusionsStatus}</div>}
+          <div className="narrative-guidance"><strong>Critério de decisão</strong><span>A proposta considera o predomínio relativo de pontos fortes e áreas de melhoria, a cobertura dos campos, a generalização das práticas, a robustez das fontes e a demonstração de resultados ou impacto. Não constitui uma média matemática.</span></div>
+          {!conclusions.length ? <div className="empty-analysis"><strong>Ainda não existe uma proposta conclusiva.</strong><p>Conclua e reveja as triangulações; depois gere a proposta local ou peça a revisão opcional por IA.</p></div> : <div className="triangulation-grid narrative-grid">
+            {conclusions.map((item) => <article key={item.domain}>
+              <div className="tri-top"><span>{reportHeading(item.domain).split(" — ")[0]}</span><span className="strength moderada">{item.rating}</span></div>
+              <h3>{item.domain}</h3>
+              <label>Menção proposta<select value={item.rating} onChange={(event) => updateConclusion(item.domain, { rating: event.target.value as Rating })}><option>Por definir</option><option>Excelente</option><option>Muito bom</option><option>Bom</option><option>Suficiente</option><option>Insuficiente</option></select></label>
+              <label className="narrative-editor">Fundamentação da menção<textarea value={item.rationale} onChange={(event) => updateConclusion(item.domain, { rationale: event.target.value })} /></label>
+              <label className="narrative-editor">Pontos fortes — um por linha<textarea value={item.strengths.join("\n")} onChange={(event) => updateConclusion(item.domain, { strengths: event.target.value.split("\n").map((value) => value.trim()).filter(Boolean) })} /></label>
+              <label className="narrative-editor">Áreas de melhoria — uma por linha<textarea value={item.improvements.join("\n")} onChange={(event) => updateConclusion(item.domain, { improvements: event.target.value.split("\n").map((value) => value.trim()).filter(Boolean) })} /></label>
+            </article>)}
+          </div>}
         </section>}
       </section>
     </main>

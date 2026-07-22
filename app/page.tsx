@@ -64,6 +64,8 @@ type PreparedDocument = {
   message: string;
 };
 
+type AnalysisBlock = { text: string; label: string };
+
 type AiFieldAnalysis = {
   campo: string;
   pertinente: boolean;
@@ -750,6 +752,41 @@ function buildReport(evidence: Evidence[], narratives: Record<string, string> = 
   return lines.join("\n");
 }
 
+function createAnalysisBlocks(chunks: TextChunk[], targetSize = 16_000, overlapSize = 1_500): AnalysisBlock[] {
+  const units: TextChunk[] = [];
+  chunks.forEach((chunk) => {
+    if (chunk.text.length <= targetSize) units.push(chunk);
+    else {
+      let start = 0;
+      let part = 1;
+      while (start < chunk.text.length) {
+        const end = Math.min(start + targetSize, chunk.text.length);
+        units.push({ text: chunk.text.slice(start, end), location: `${chunk.location} · parte ${part}` });
+        if (end === chunk.text.length) break;
+        start = Math.max(end - overlapSize, start + 1);
+        part += 1;
+      }
+    }
+  });
+
+  const blocks: AnalysisBlock[] = [];
+  let current: TextChunk[] = [];
+  let currentSize = 0;
+  for (const unit of units) {
+    if (current.length && currentSize + unit.text.length > targetSize) {
+      blocks.push({ text: current.map((item) => `[${item.location}]\n${item.text}`).join("\n\n"), label: `${current[0].location} — ${current[current.length - 1].location}` });
+      const previous = current[current.length - 1];
+      const overlapText = previous.text.slice(-overlapSize);
+      current = overlapText ? [{ text: overlapText, location: `${previous.location} · contexto sobreposto` }] : [];
+      currentSize = overlapText.length;
+    }
+    current.push(unit);
+    currentSize += unit.text.length;
+  }
+  if (current.length) blocks.push({ text: current.map((item) => `[${item.location}]\n${item.text}`).join("\n\n"), label: `${current[0].location} — ${current[current.length - 1].location}` });
+  return blocks;
+}
+
 export default function Home() {
   const [view, setView] = useState<View>("visao");
   const [schoolName, setSchoolName] = useState("Agrupamento do Vale");
@@ -955,19 +992,48 @@ export default function Home() {
   async function analyzePreparedDocument(source: string) {
     const document = preparedDocuments.find((item) => item.source === source);
     if (!document || document.status === "A analisar") return;
-    setPreparedDocuments((current) => current.map((item) => item.source === source ? { ...item, status: "A analisar", message: "A interpretar o documento como um todo…" } : item));
+    const blocks = createAnalysisBlocks(document.chunks);
+    setPreparedDocuments((current) => current.map((item) => item.source === source ? { ...item, status: "A analisar", message: `Preparados ${blocks.length} bloco(s) com sobreposição…` } : item));
     try {
-      const response = await fetch("/api/analyze-document", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          fileName: source,
-          extractedText: document.chunks.map((chunk) => `[${chunk.location}]\n${chunk.text}`).join("\n\n"),
-        }),
-      });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok || payload?.ok === false) throw new Error(payload?.error || `O servidor devolveu o estado ${response.status}.`);
-      const result = payload.analysis ?? payload.result ?? payload.data ?? payload;
+      async function requestAnalysis(body: Record<string, unknown>, label: string) {
+        let lastError = "";
+        for (let attempt = 1; attempt <= 2; attempt += 1) {
+          try {
+            const response = await fetch("/api/analyze-document", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+            const payload = await response.json().catch(() => ({}));
+            if (!response.ok || payload?.ok === false) throw new Error(payload?.error || `O servidor devolveu o estado ${response.status}.`);
+            return payload.analysis ?? payload.result ?? payload.data ?? payload;
+          } catch (error) {
+            lastError = error instanceof Error ? error.message : "erro desconhecido";
+            if (attempt === 1) setPreparedDocuments((current) => current.map((item) => item.source === source ? { ...item, message: `${label}: primeira tentativa falhou; repetição automática…` } : item));
+          }
+        }
+        throw new Error(`${label} não foi concluído após duas tentativas: ${lastError}`);
+      }
+
+      const partialAnalyses: any[] = [];
+      for (let index = 0; index < blocks.length; index += 1) {
+        const block = blocks[index];
+        setPreparedDocuments((current) => current.map((item) => item.source === source ? { ...item, message: `A analisar o bloco ${index + 1} de ${blocks.length} · ${block.label}` } : item));
+        const result = await requestAnalysis({ mode: "block", fileName: source, blockLabel: block.label, text: block.text }, `Bloco ${index + 1} de ${blocks.length}`);
+        partialAnalyses.push({ bloco: index + 1, localizacao: block.label, ...result });
+      }
+
+      let consolidationLevel: any[] = partialAnalyses;
+      let round = 1;
+      while (consolidationLevel.length > 1) {
+        const nextLevel: any[] = [];
+        const groups = Math.ceil(consolidationLevel.length / 6);
+        for (let start = 0; start < consolidationLevel.length; start += 6) {
+          const groupNumber = Math.floor(start / 6) + 1;
+          setPreparedDocuments((current) => current.map((item) => item.source === source ? { ...item, message: `Consolidação global · ronda ${round}, grupo ${groupNumber} de ${groups}…` } : item));
+          const consolidated = await requestAnalysis({ mode: "consolidate", fileName: source, partialAnalyses: consolidationLevel.slice(start, start + 6) }, `Consolidação ${round}.${groupNumber}`);
+          nextLevel.push(consolidated);
+        }
+        consolidationLevel = nextLevel;
+        round += 1;
+      }
+      const result = consolidationLevel[0];
       const analyses: AiFieldAnalysis[] = Array.isArray(result?.analises) ? result.analises : [];
       const generated = analyses
         .filter((item) => item.pertinente && item.sintese?.trim())
@@ -980,7 +1046,7 @@ export default function Home() {
             claim: item.sintese.trim(),
             source,
             sourceType: "Documental",
-            location: "síntese do documento integral",
+            location: `síntese integral consolidada de ${blocks.length} bloco(s)`,
             status: "Por triangular",
             strength,
             validated: false,
@@ -990,7 +1056,7 @@ export default function Home() {
         });
       if (!generated.length) throw new Error("A IA não identificou sínteses suficientemente sustentadas para os campos de análise.");
       setDocumentCandidates((current) => [...current.filter((item) => item.source !== source), ...generated]);
-      setPreparedDocuments((current) => current.map((item) => item.source === source ? { ...item, status: "Concluído", message: `${generated.length} síntese(s) interpretativa(s) produzida(s).` } : item));
+      setPreparedDocuments((current) => current.map((item) => item.source === source ? { ...item, status: "Concluído", message: `Documento integral analisado em ${blocks.length} bloco(s) · ${generated.length} síntese(s) produzida(s).` } : item));
       setFileAnalysis((current) => ({ ...current, [source]: { ...(current[source] ?? { status: "Lido", extractedChars: 0, candidates: 0, detail: "" }), candidates: generated.length, detail: `Análise por IA concluída · ${generated.length} síntese(s) aguardam validação humana.` } }));
       setChangesPending(true);
     } catch (error) {
@@ -1520,12 +1586,12 @@ export default function Home() {
         </section>}
 
         {view === "analise" && <section className="view">
-          <div className="page-heading"><div><p className="eyebrow">Agente 2 · Análise documental por IA</p><h2>Interpretação e síntese por campo</h2><p>O agente lê o texto minimizado como um todo, distingue intenção, execução, resultado e impacto e produz apenas sínteses com utilidade probatória.</p></div><div className="analysis-actions"><span className="badge">{documentCandidates.length} sínteses</span><button className="button secondary" disabled={!documentCandidates.length} onClick={toggleAllCandidates}>{allCandidatesSelected ? "Desmarcar todos" : "Selecionar todos"}</button><button className="button primary" disabled={!selectedCandidates.length} onClick={promoteCandidates}>Validar {selectedCandidates.length || ""} e promover</button></div></div>
+          <div className="page-heading"><div><p className="eyebrow">Agente 2 · Análise documental por IA</p><h2>Interpretação e síntese por campo</h2><p>O texto minimizado é analisado integralmente em blocos sobrepostos e consolidado numa leitura global, distinguindo intenção, execução, resultado e impacto.</p></div><div className="analysis-actions"><span className="badge">{documentCandidates.length} sínteses</span><button className="button secondary" disabled={!documentCandidates.length} onClick={toggleAllCandidates}>{allCandidatesSelected ? "Desmarcar todos" : "Selecionar todos"}</button><button className="button primary" disabled={!selectedCandidates.length} onClick={promoteCandidates}>Validar {selectedCandidates.length || ""} e promover</button></div></div>
           <div className="quality-gate"><strong>Documentos prontos para interpretação</strong><span>Apenas o texto previamente validado no Agente de Privacidade será enviado. O documento original não é transmitido nem guardado por esta etapa.</span></div>
           <div className="ai-document-list">
             {preparedDocuments.map((document) => <article className="ai-document-card" key={document.source}>
               <div><strong>{document.source}</strong><small>{document.chunks.length} secções ou páginas · {document.chunks.reduce((total, chunk) => total + chunk.text.length, 0).toLocaleString("pt-PT")} caracteres</small><span className={`ai-state ${document.status.toLowerCase().replace(" ", "-")}`}>{document.message}</span></div>
-              <button className="button primary" disabled={document.status === "A analisar"} onClick={() => analyzePreparedDocument(document.source)}>{document.status === "A analisar" ? "A analisar…" : document.status === "Concluído" ? "Reanalisar documento" : "Analisar documento integralmente"}</button>
+              <button className="button primary" disabled={document.status === "A analisar"} onClick={() => analyzePreparedDocument(document.source)}>{document.status === "A analisar" ? "Análise por blocos em curso…" : document.status === "Concluído" ? "Reanalisar documento" : "Analisar documento integralmente"}</button>
             </article>)}
           </div>
           {preparedDocuments.length === 0 && documentCandidates.length === 0 && <div className="empty-analysis"><strong>Não existem documentos prontos para interpretação.</strong><p>Carregue um documento, valide a minimização dos dados na etapa Privacidade e regresse a esta área.</p><button className="button secondary" onClick={() => setView("documentos")}>Voltar aos documentos</button></div>}

@@ -5,342 +5,89 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 const CAMPOS_AEE = [
-  "Desenvolvimento",
-  "Consistência e impacto",
-  "Visão e estratégia",
-  "Liderança",
-  "Gestão",
-  "Desenvolvimento pessoal e bem-estar das crianças e dos alunos",
-  "Oferta educativa e gestão curricular",
-  "Ensino, aprendizagem e avaliação",
-  "Planificação e acompanhamento das práticas educativa e letiva",
-  "Resultados académicos",
-  "Resultados sociais",
-  "Reconhecimento da comunidade",
-];
+  "Desenvolvimento", "Consistência e impacto", "Visão e estratégia", "Liderança", "Gestão",
+  "Desenvolvimento pessoal e bem-estar das crianças e dos alunos", "Oferta educativa e gestão curricular",
+  "Ensino, aprendizagem e avaliação", "Planificação e acompanhamento das práticas educativa e letiva",
+  "Resultados académicos", "Resultados sociais", "Reconhecimento da comunidade",
+] as const;
 
-function obterTexto(body: Record<string, unknown>): string {
-  const possibilidades = [
-    body.text,
-    body.extractedText,
-    body.documentText,
-    body.content,
-    body.texto,
-    body.conteudo,
-  ];
+const ANALISE_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    enquadramento: { type: "string" },
+    sinteseGlobal: { type: "string" },
+    analises: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          campo: { type: "string", enum: CAMPOS_AEE }, pertinente: { type: "boolean" }, sintese: { type: "string" },
+          evidencias: { type: "array", items: { type: "string" } }, pontosFortes: { type: "array", items: { type: "string" } },
+          areasMelhoria: { type: "array", items: { type: "string" } }, reservas: { type: "array", items: { type: "string" } },
+          robustez: { type: "string", enum: ["sem evidência", "fraca", "moderada", "forte"] },
+        },
+        required: ["campo", "pertinente", "sintese", "evidencias", "pontosFortes", "areasMelhoria", "reservas", "robustez"],
+      },
+    },
+  },
+  required: ["enquadramento", "sinteseGlobal", "analises"],
+};
 
-  const texto = possibilidades.find(
-    (valor) => typeof valor === "string" && valor.trim().length > 0
-  );
-
-  return typeof texto === "string" ? texto.trim() : "";
+function outputText(data: any): string {
+  if (typeof data?.output_text === "string") return data.output_text;
+  if (!Array.isArray(data?.output)) return "";
+  return data.output.flatMap((item: any) => Array.isArray(item?.content) ? item.content : [])
+    .filter((item: any) => item?.type === "output_text").map((item: any) => item?.text ?? "").join("");
 }
 
-function extrairOutputText(data: any): string {
-  if (typeof data?.output_text === "string") {
-    return data.output_text;
-  }
-
-  if (!Array.isArray(data?.output)) {
-    return "";
-  }
-
-  return data.output
-    .flatMap((item: any) =>
-      Array.isArray(item?.content) ? item.content : []
-    )
-    .filter((item: any) => item?.type === "output_text")
-    .map((item: any) => item?.text ?? "")
-    .join("");
+async function invoke(apiKey: string, model: string, prompt: string) {
+  const response = await fetch("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model, store: false, input: prompt,
+      text: { format: { type: "json_schema", name: "analise_documental_aee", strict: true, schema: ANALISE_SCHEMA } },
+    }),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw Object.assign(new Error(data?.error?.message || "A OpenAI não conseguiu concluir a análise."), { status: response.status, type: data?.error?.type });
+  const raw = outputText(data);
+  if (!raw) throw Object.assign(new Error("A resposta da IA não contém uma análise utilizável."), { status: 502 });
+  try { return JSON.parse(raw); }
+  catch { throw Object.assign(new Error("A resposta da IA não pôde ser convertida para a matriz."), { status: 502 }); }
 }
 
 export async function GET() {
-  return NextResponse.json({
-    ok: true,
-    configured: Boolean(process.env.OPENAI_API_KEY),
-    route: "/api/analyze-document",
-  });
+  return NextResponse.json({ ok: true, configured: Boolean(process.env.OPENAI_API_KEY), route: "/api/analyze-document", modes: ["block", "consolidate"] });
 }
 
 export async function POST(request: NextRequest) {
   try {
     const apiKey = process.env.OPENAI_API_KEY?.trim();
-
-    if (!apiKey) {
-      return NextResponse.json(
-        {
-          ok: false,
-          configured: false,
-          error:
-            "O Agente de IA ainda não está configurado. Adicione OPENAI_API_KEY às variáveis de ambiente do servidor.",
-        },
-        { status: 503 }
-      );
-    }
-
-    let body: Record<string, unknown>;
-
-    try {
-      body = await request.json();
-    } catch {
-      return NextResponse.json(
-        {
-          ok: false,
-          error: "O pedido enviado para análise não contém JSON válido.",
-        },
-        { status: 400 }
-      );
-    }
-
-    const texto = obterTexto(body);
-
-    if (!texto) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error:
-            "Não foi recebido texto do documento. Confirme se o PDF foi lido e se contém texto pesquisável.",
-        },
-        { status: 400 }
-      );
-    }
-
-    const nomeDocumento =
-      typeof body.fileName === "string"
-        ? body.fileName
-        : typeof body.documentName === "string"
-        ? body.documentName
-        : typeof body.nomeDocumento === "string"
-        ? body.nomeDocumento
-        : "Documento sem título";
-
-    /*
-     * Limita o texto enviado numa única chamada.
-     * Em documentos muito extensos deverá implementar-se posteriormente
-     * análise por blocos e consolidação final.
-     */
-    const textoLimitado = texto.slice(0, 120_000);
-
+    if (!apiKey) return NextResponse.json({ ok: false, configured: false, error: "Adicione OPENAI_API_KEY às variáveis de ambiente do servidor." }, { status: 503 });
+    const body = await request.json().catch(() => null) as any;
+    if (!body) return NextResponse.json({ ok: false, error: "O pedido não contém JSON válido." }, { status: 400 });
     let model = process.env.OPENAI_MODEL?.trim() || "gpt-5.6-sol";
+    if (model === "gpt-5.6") model = "gpt-5.6-sol";
+    const fileName = typeof body.fileName === "string" ? body.fileName : "Documento sem título";
+    const campos = CAMPOS_AEE.map((campo, i) => `${i + 1}. ${campo}`).join("\n");
+    let prompt = "";
 
-    // Corrige automaticamente a designação incompleta usada anteriormente.
-    if (model === "gpt-5.6") {
-      model = "gpt-5.6-sol";
+    if (body.mode === "consolidate") {
+      if (!Array.isArray(body.partialAnalyses) || !body.partialAnalyses.length) return NextResponse.json({ ok: false, error: "Não foram recebidas análises parciais para consolidar." }, { status: 400 });
+      prompt = `Atue como especialista em Avaliação Externa das Escolas, em Portugal. Consolide as análises parciais do documento ${fileName}.\n\nREGRAS: produza uma leitura global por campo; elimine repetições; não conte a sobreposição entre blocos como fontes independentes; preserve convergências, contradições, lacunas, reservas e localização das evidências; distinga intenção, execução, resultado e impacto; não invente; não aumente a robustez pela mera repetição dentro do mesmo documento; escreva em português europeu; assinale como não pertinente o campo sem suporte suficiente. A síntese deve ser narrativa, não uma colagem.\n\nCampos:\n${campos}\n\nAnálises parciais:\n${JSON.stringify(body.partialAnalyses)}`;
+    } else {
+      const text = typeof body.text === "string" ? body.text.trim() : typeof body.extractedText === "string" ? body.extractedText.trim() : "";
+      if (!text) return NextResponse.json({ ok: false, error: "Não foi recebido texto do bloco." }, { status: 400 });
+      prompt = `Atue como especialista em Avaliação Externa das Escolas, em Portugal. Analise apenas este bloco do documento ${fileName} (${body.blockLabel || "localização não indicada"}).\n\nREGRAS: não copie excertos extensos; conserve nas evidências a página/secção indicada; não transforme títulos ou frases isoladas em conclusões; diferencie intenções, práticas, monitorização, resultados e impacto; não invente causalidades nem juízos; declare insuficiência; produza sínteses fluidas em português europeu; distribua informação apenas por campos pertinentes; pontos fortes e áreas de melhoria exigem suporte; tenha em conta que há sobreposição com blocos adjacentes.\n\nCampos:\n${campos}\n\n--- INÍCIO DO BLOCO ---\n${text}\n--- FIM DO BLOCO ---`;
     }
 
-    const prompt = `
-Atue como especialista em Avaliação Externa das Escolas, em Portugal.
-
-Analise o documento com rigor técnico e produza formulações analíticas prontas
-para validação humana e posterior integração numa matriz de evidências.
-
-Regras obrigatórias:
-
-1. Não copie extensos excertos do documento.
-2. Não transforme títulos, listas ou frases isoladas em conclusões.
-3. Interprete a informação, identificando finalidades, medidas, processos,
-   níveis de concretização, monitorização, resultados e impacto.
-4. Não invente informação, resultados, causalidades ou juízos avaliativos.
-5. Quando não existir informação suficiente para um campo, declare claramente
-   que o documento não contém evidência bastante.
-6. Diferencie intenções, ações implementadas, mecanismos de monitorização e
-   resultados efetivamente demonstrados.
-7. Escreva em português europeu, com frases completas, coesas e sintaticamente
-   corretas.
-8. Cada síntese deve constituir uma narrativa analítica fluida e não uma
-   concatenação de excertos.
-9. Indique pontos fortes apenas quando estiverem sustentados.
-10. Formule áreas de melhoria com prudência, sem ultrapassar a informação
-    disponível.
-11. Distribua a informação apenas pelos campos em que seja efetivamente
-    pertinente.
-12. Não faça referência ao nome do ficheiro dentro das sínteses.
-
-Campos de análise:
-${CAMPOS_AEE.map((campo, indice) => `${indice + 1}. ${campo}`).join("\n")}
-
-Documento: ${nomeDocumento}
-
-Texto:
---- INÍCIO DO DOCUMENTO ---
-${textoLimitado}
---- FIM DO DOCUMENTO ---
-`;
-
-    const response = await fetch("https://api.openai.com/v1/responses", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model,
-        store: false,
-        input: prompt,
-        text: {
-          format: {
-            type: "json_schema",
-            name: "analise_documental_aee",
-            strict: true,
-            schema: {
-              type: "object",
-              additionalProperties: false,
-              properties: {
-                enquadramento: {
-                  type: "string",
-                  description:
-                    "Caracterização sintética da natureza, finalidade e alcance do documento.",
-                },
-                sinteseGlobal: {
-                  type: "string",
-                  description:
-                    "Síntese interpretativa global, fluida e rigorosa.",
-                },
-                analises: {
-                  type: "array",
-                  items: {
-                    type: "object",
-                    additionalProperties: false,
-                    properties: {
-                      campo: {
-                        type: "string",
-                        enum: CAMPOS_AEE,
-                      },
-                      pertinente: {
-                        type: "boolean",
-                      },
-                      sintese: {
-                        type: "string",
-                      },
-                      evidencias: {
-                        type: "array",
-                        items: {
-                          type: "string",
-                        },
-                      },
-                      pontosFortes: {
-                        type: "array",
-                        items: {
-                          type: "string",
-                        },
-                      },
-                      areasMelhoria: {
-                        type: "array",
-                        items: {
-                          type: "string",
-                        },
-                      },
-                      reservas: {
-                        type: "array",
-                        items: {
-                          type: "string",
-                        },
-                      },
-                      robustez: {
-                        type: "string",
-                        enum: [
-                          "sem evidência",
-                          "fraca",
-                          "moderada",
-                          "forte",
-                        ],
-                      },
-                    },
-                    required: [
-                      "campo",
-                      "pertinente",
-                      "sintese",
-                      "evidencias",
-                      "pontosFortes",
-                      "areasMelhoria",
-                      "reservas",
-                      "robustez",
-                    ],
-                  },
-                },
-              },
-              required: ["enquadramento", "sinteseGlobal", "analises"],
-            },
-          },
-        },
-      }),
-    });
-
-    const data = await response.json();
-
-    if (!response.ok) {
-      console.error("Erro devolvido pela OpenAI:", data);
-
-      return NextResponse.json(
-        {
-          ok: false,
-          configured: true,
-          error:
-            data?.error?.message ||
-            "A OpenAI não conseguiu concluir a análise.",
-          errorType: data?.error?.type || "openai_error",
-        },
-        { status: response.status }
-      );
-    }
-
-    const outputText = extrairOutputText(data);
-
-    if (!outputText) {
-      return NextResponse.json(
-        {
-          ok: false,
-          configured: true,
-          error: "A resposta da IA não contém uma análise utilizável.",
-        },
-        { status: 502 }
-      );
-    }
-
-    let resultado;
-
-    try {
-      resultado = JSON.parse(outputText);
-    } catch {
-      console.error("Resposta não convertível em JSON:", outputText);
-
-      return NextResponse.json(
-        {
-          ok: false,
-          configured: true,
-          error:
-            "A IA respondeu, mas o resultado não pôde ser convertido para a matriz.",
-        },
-        { status: 502 }
-      );
-    }
-
-    /*
-     * São devolvidos os nomes analysis, result e data para assegurar
-     * compatibilidade com diferentes versões do page.tsx.
-     */
-    return NextResponse.json({
-      ok: true,
-      configured: true,
-      model,
-      truncated: texto.length > textoLimitado.length,
-      analysis: resultado,
-      result: resultado,
-      data: resultado,
-      ...resultado,
-    });
-  } catch (error) {
-    console.error("Erro interno na análise documental:", error);
-
-    return NextResponse.json(
-      {
-        ok: false,
-        error:
-          error instanceof Error
-            ? error.message
-            : "Ocorreu um erro interno durante a análise documental.",
-      },
-      { status: 500 }
-    );
+    const result = await invoke(apiKey, model, prompt);
+    return NextResponse.json({ ok: true, configured: true, model, mode: body.mode === "consolidate" ? "consolidate" : "block", analysis: result, result, data: result });
+  } catch (error: any) {
+    console.error("Erro na análise documental:", error);
+    return NextResponse.json({ ok: false, configured: true, error: error instanceof Error ? error.message : "Erro interno durante a análise documental.", errorType: error?.type || "server_error" }, { status: Number.isInteger(error?.status) ? error.status : 500 });
   }
 }

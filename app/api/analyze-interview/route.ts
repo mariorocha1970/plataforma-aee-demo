@@ -36,6 +36,30 @@ const ANALISE_SCHEMA = {
   required: ["analises"],
 };
 
+async function requestAnalysis(apiKey: string, model: string, prompt: string, compact = false) {
+  return fetch("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model,
+      store: false,
+      input: compact
+        ? `${prompt}\n\nMODO COMPACTO: selecione no máximo 5 campos; limite cada síntese a 70 palavras e cada lista a 2 elementos.`
+        : prompt,
+      reasoning: { effort: "minimal" },
+      max_output_tokens: compact ? 4_000 : 6_000,
+      text: {
+        format: {
+          type: "json_schema",
+          name: "analise_entrevista_aee",
+          strict: true,
+          schema: ANALISE_SCHEMA,
+        },
+      },
+    }),
+  });
+}
+
 function outputText(data: any): string {
   if (typeof data?.output_text === "string") return data.output_text;
   if (!Array.isArray(data?.output)) return "";
@@ -94,27 +118,8 @@ RELATO:
 ${interviewText.slice(0, 30_000)}
 ---`;
 
-    const response = await fetch("https://api.openai.com/v1/responses", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model,
-        store: false,
-        input: prompt,
-        reasoning: { effort: "low" },
-        max_output_tokens: 2_500,
-        text: {
-          format: {
-            type: "json_schema",
-            name: "analise_entrevista_aee",
-            strict: true,
-            schema: ANALISE_SCHEMA,
-          },
-        },
-      }),
-    });
-
-    const data = await response.json().catch(() => ({}));
+    let response = await requestAnalysis(apiKey, model, prompt);
+    let data = await response.json().catch(() => ({}));
     if (!response.ok) {
       const quota = data?.error?.code === "insufficient_quota" || /quota|billing/i.test(data?.error?.message ?? "");
       const message = quota
@@ -123,10 +128,24 @@ ${interviewText.slice(0, 30_000)}
       return NextResponse.json({ ok: false, error: message }, { status: response.status });
     }
 
-    const raw = outputText(data);
+    let raw = outputText(data);
+    const incomplete = data?.status === "incomplete" || data?.incomplete_details?.reason === "max_output_tokens";
+    if ((!raw || incomplete) && response.ok) {
+      response = await requestAnalysis(apiKey, model, prompt, true);
+      data = await response.json().catch(() => ({}));
+      raw = outputText(data);
+    }
     if (!raw) return NextResponse.json({ ok: false, error: "A resposta da IA não contém uma análise utilizável." }, { status: 502 });
 
-    const analysis = JSON.parse(raw);
+    let analysis: any;
+    try {
+      analysis = JSON.parse(raw);
+    } catch {
+      return NextResponse.json({
+        ok: false,
+        error: "A resposta da IA ficou incompleta. Repita a análise; se persistir, reduza ligeiramente o relato.",
+      }, { status: 502 });
+    }
     return NextResponse.json({ ok: true, model, analysis, result: analysis, data: analysis });
   } catch (error) {
     console.error("Erro na análise da entrevista:", error);

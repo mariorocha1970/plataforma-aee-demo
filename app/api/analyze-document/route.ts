@@ -48,6 +48,8 @@ async function invoke(apiKey: string, model: string, prompt: string) {
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify({
       model, store: false, input: prompt,
+      reasoning: { effort: "low" },
+      max_output_tokens: 6_000,
       text: { format: { type: "json_schema", name: "analise_documental_aee", strict: true, schema: ANALISE_SCHEMA } },
     }),
   });
@@ -69,8 +71,9 @@ export async function POST(request: NextRequest) {
     if (!apiKey) return NextResponse.json({ ok: false, configured: false, error: "Adicione OPENAI_API_KEY às variáveis de ambiente do servidor." }, { status: 503 });
     const body = await request.json().catch(() => null) as any;
     if (!body) return NextResponse.json({ ok: false, error: "O pedido não contém JSON válido." }, { status: 400 });
-    let model = process.env.OPENAI_MODEL?.trim() || "gpt-5.6-sol";
-    if (model === "gpt-5.6") model = "gpt-5.6-sol";
+    // Um modelo rápido reduz o risco de exceder a duração máxima da função.
+    // OPENAI_MODEL continua a permitir uma escolha explícita na Vercel.
+    let model = process.env.OPENAI_MODEL?.trim() || "gpt-5-mini";
     const fileName = typeof body.fileName === "string" ? body.fileName : "Documento sem título";
     const campos = CAMPOS_AEE.map((campo, i) => `${i + 1}. ${campo}`).join("\n");
     let prompt = "";

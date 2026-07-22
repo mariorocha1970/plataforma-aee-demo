@@ -1043,6 +1043,30 @@ export default function Home() {
         }
       }
 
+      function mergeLocally(items: any[]) {
+        const byField = new Map<string, any[]>();
+        items.forEach((partial) => (Array.isArray(partial?.analises) ? partial.analises : []).forEach((analysis: any) => {
+          if (!analysis?.pertinente || !analysis?.campo) return;
+          byField.set(analysis.campo, [...(byField.get(analysis.campo) || []), analysis]);
+        }));
+        const unique = (values: any[], limit: number) => Array.from(new Set(values.filter(Boolean).map((value) => String(value).trim()))).slice(0, limit);
+        const rank: Record<string, number> = { "sem evidência": 0, fraca: 1, moderada: 2, forte: 3 };
+        return {
+          enquadramento: "Consolidação técnica das análises parciais do documento.",
+          sinteseGlobal: "Síntese integral organizada por campo de análise, sujeita a validação humana.",
+          analises: Array.from(byField.entries()).map(([campo, analyses]) => ({
+            campo,
+            pertinente: true,
+            sintese: unique(analyses.map((item) => item.sintese), 3).join(" "),
+            evidencias: unique(analyses.flatMap((item) => item.evidencias || []), 6),
+            pontosFortes: unique(analyses.flatMap((item) => item.pontosFortes || []), 4),
+            areasMelhoria: unique(analyses.flatMap((item) => item.areasMelhoria || []), 4),
+            reservas: unique(analyses.flatMap((item) => item.reservas || []), 4),
+            robustez: analyses.map((item) => item.robustez || "sem evidência").sort((a, b) => (rank[b] || 0) - (rank[a] || 0))[0] || "sem evidência",
+          })),
+        };
+      }
+
       const partialAnalyses: any[] = [];
       for (let index = 0; index < blocks.length; index += 1) {
         const block = blocks[index];
@@ -1055,11 +1079,23 @@ export default function Home() {
       let round = 1;
       while (consolidationLevel.length > 1) {
         const nextLevel: any[] = [];
-        const groups = Math.ceil(consolidationLevel.length / 3);
-        for (let start = 0; start < consolidationLevel.length; start += 3) {
-          const groupNumber = Math.floor(start / 3) + 1;
+        const groups = Math.ceil(consolidationLevel.length / 2);
+        for (let start = 0; start < consolidationLevel.length; start += 2) {
+          const groupNumber = Math.floor(start / 2) + 1;
           setPreparedDocuments((current) => current.map((item) => item.source === source ? { ...item, message: `Consolidação global · ronda ${round}, grupo ${groupNumber} de ${groups}…` } : item));
-          const consolidated = await requestAnalysis({ mode: "consolidate", fileName: source, partialAnalyses: consolidationLevel.slice(start, start + 3) }, `Consolidação ${round}.${groupNumber}`);
+          const group = consolidationLevel.slice(start, start + 2);
+          let consolidated: any;
+          if (group.length === 1) consolidated = group[0];
+          else {
+            try {
+              consolidated = await requestAnalysis({ mode: "consolidate", fileName: source, partialAnalyses: group }, `Consolidação ${round}.${groupNumber}`);
+            } catch (error) {
+              const message = error instanceof Error ? error.message : "erro desconhecido";
+              if (!/estado 504|timeout|timed out/i.test(message)) throw error;
+              setPreparedDocuments((current) => current.map((item) => item.source === source ? { ...item, message: `Consolidação ${round}.${groupNumber} excedeu o tempo; preservação local dos resultados e continuação…` } : item));
+              consolidated = mergeLocally(group);
+            }
+          }
           nextLevel.push(consolidated);
         }
         consolidationLevel = nextLevel;

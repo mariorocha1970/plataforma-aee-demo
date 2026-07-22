@@ -1091,8 +1091,14 @@ export default function Home() {
               consolidated = await requestAnalysis({ mode: "consolidate", fileName: source, partialAnalyses: group }, `Consolidação ${round}.${groupNumber}`);
             } catch (error) {
               const message = error instanceof Error ? error.message : "erro desconhecido";
-              if (!/estado 504|timeout|timed out/i.test(message)) throw error;
-              setPreparedDocuments((current) => current.map((item) => item.source === source ? { ...item, message: `Consolidação ${round}.${groupNumber} excedeu o tempo; preservação local dos resultados e continuação…` } : item));
+              // A consolidação é uma melhoria semântica, não pode ser um ponto único
+              // de falha. Os resultados parciais já contêm toda a informação necessária.
+              // Se a IA exceder o tempo, truncar o JSON ou devolver uma estrutura
+              // inesperada, preservamos o grupo por combinação local e continuamos.
+              setPreparedDocuments((current) => current.map((item) => item.source === source ? {
+                ...item,
+                message: `Consolidação ${round}.${groupNumber} não foi concluída (${message}); preservação local dos resultados e continuação…`,
+              } : item));
               consolidated = mergeLocally(group);
             }
           }

@@ -832,6 +832,7 @@ export default function Home() {
   const [aiTriangulatingField, setAiTriangulatingField] = useState("");
   const [aiTriangulationStatus, setAiTriangulationStatus] = useState("");
   const [aiReportWriting, setAiReportWriting] = useState(false);
+  const [backupStatus, setBackupStatus] = useState("");
 
   useEffect(() => {
     const stored = window.localStorage.getItem("aee-piloto-v2");
@@ -881,6 +882,73 @@ export default function Home() {
     window.localStorage.setItem("aee-piloto-v2", JSON.stringify({ schoolName, evidence, documentCandidates, statisticalRecords, statisticalTreatments, questionnaireComments, questionnaireReport, interviews, interviewCandidates, files, fileAnalysis, narratives, report, lastUpdated }));
     setSaved(true);
     window.setTimeout(() => setSaved(false), 1800);
+  }
+
+  function exportBackup() {
+    const payload = { schoolName, evidence, documentCandidates, statisticalRecords, statisticalTreatments, questionnaireComments, questionnaireReport, interviews, interviewCandidates, files, fileAnalysis, narratives, report, lastUpdated };
+    const backup = {
+      format: "plataforma-aee-backup",
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      payload,
+    };
+    const safeName = (schoolName || "processo-aee").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9_-]+/g, "-").replace(/^-+|-+$/g, "").toLowerCase() || "processo-aee";
+    const date = new Date().toISOString().slice(0, 10);
+    const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${safeName}-copia-seguranca-${date}.json`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    setBackupStatus("Cópia de segurança exportada.");
+    window.setTimeout(() => setBackupStatus(""), 3000);
+  }
+
+  async function importBackup(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    if (file.size > 25 * 1024 * 1024) {
+      setBackupStatus("O ficheiro excede o limite de 25 MB.");
+      return;
+    }
+    try {
+      const parsed = JSON.parse(await file.text());
+      if (parsed?.format !== "plataforma-aee-backup" || parsed?.version !== 1 || !parsed?.payload) throw new Error("Formato inválido");
+      const data = parsed.payload;
+      if (!Array.isArray(data.evidence) || !Array.isArray(data.documentCandidates) || !Array.isArray(data.interviews) || !Array.isArray(data.files) || typeof data.fileAnalysis !== "object" || data.fileAnalysis === null) throw new Error("Conteúdo incompleto");
+      if (!window.confirm(`Importar a cópia de segurança de “${data.schoolName || "processo AEE"}”? O trabalho atualmente aberto será substituído.`)) return;
+      setSchoolName(typeof data.schoolName === "string" ? data.schoolName : "Nova escola");
+      setEvidence(data.evidence);
+      setDocumentCandidates(data.documentCandidates);
+      setSelectedCandidates([]);
+      setStatisticalRecords(Array.isArray(data.statisticalRecords) ? data.statisticalRecords : []);
+      setSelectedStatisticalIds([]);
+      setStatisticalTreatments(Array.isArray(data.statisticalTreatments) ? data.statisticalTreatments : []);
+      setSelectedTreatmentIds([]);
+      setQuestionnaireComments(Array.isArray(data.questionnaireComments) ? data.questionnaireComments : []);
+      setQuestionnaireReport(typeof data.questionnaireReport === "string" ? data.questionnaireReport : "");
+      setInterviews(data.interviews);
+      setInterviewCandidates(Array.isArray(data.interviewCandidates) ? data.interviewCandidates : []);
+      setSelectedInterviewCandidates([]);
+      setFiles(data.files);
+      setFileAnalysis(data.fileAnalysis);
+      setNarratives(data.narratives && typeof data.narratives === "object" ? data.narratives : {});
+      setReport(typeof data.report === "string" ? data.report : "");
+      setLastUpdated(typeof data.lastUpdated === "string" ? data.lastUpdated : "");
+      setPrivacyReviews([]);
+      setPrivacyConfirmed([]);
+      setPreparedDocuments([]);
+      setChangesPending(false);
+      window.localStorage.setItem("aee-piloto-v2", JSON.stringify(data));
+      setBackupStatus("Cópia importada e guardada neste navegador.");
+      window.setTimeout(() => setBackupStatus(""), 4000);
+    } catch {
+      setBackupStatus("Não foi possível importar: ficheiro inválido ou danificado.");
+    }
   }
 
   function updateAnalysis() {
@@ -1522,9 +1590,14 @@ export default function Home() {
             </div>
             <button className="button update-button" onClick={updateAnalysis} aria-live="polite">{updating ? "A atualizar…" : "Atualizar análise"}</button>
             <button className="button secondary" onClick={saveLocal}>{saved ? "Guardado" : "Guardar localmente"}</button>
+            <button className="button secondary" onClick={exportBackup}>Exportar cópia</button>
+            <label className="button secondary" htmlFor="import-backup">Importar cópia</label>
+            <input id="import-backup" type="file" accept="application/json,.json" onChange={importBackup} hidden />
             <button className="button danger-ghost" onClick={() => setShowResetConfirm(true)}>Novo processo</button>
           </div>
         </header>
+
+        {backupStatus && <div className="statistics-status" role="status">{backupStatus}</div>}
 
         {showResetConfirm && <div className="modal-backdrop" role="presentation">
           <section className="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="reset-title">

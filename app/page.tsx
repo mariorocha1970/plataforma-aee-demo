@@ -752,7 +752,7 @@ function buildReport(evidence: Evidence[], narratives: Record<string, string> = 
   return lines.join("\n");
 }
 
-function createAnalysisBlocks(chunks: TextChunk[], targetSize = 16_000, overlapSize = 1_500): AnalysisBlock[] {
+function createAnalysisBlocks(chunks: TextChunk[], targetSize = 8_000, overlapSize = 800): AnalysisBlock[] {
   const units: TextChunk[] = [];
   chunks.forEach((chunk) => {
     if (chunk.text.length <= targetSize) units.push(chunk);
@@ -1001,33 +1001,65 @@ export default function Home() {
           try {
             const response = await fetch("/api/analyze-document", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
             const payload = await response.json().catch(() => ({}));
-            if (!response.ok || payload?.ok === false) throw new Error(payload?.error || `O servidor devolveu o estado ${response.status}.`);
+            if (!response.ok || payload?.ok === false) {
+              const requestError = new Error(payload?.error || `O servidor devolveu o estado ${response.status}.`) as Error & { status?: number };
+              requestError.status = response.status;
+              throw requestError;
+            }
             return payload.analysis ?? payload.result ?? payload.data ?? payload;
           } catch (error) {
             lastError = error instanceof Error ? error.message : "erro desconhecido";
+            const status = typeof error === "object" && error && "status" in error ? Number((error as { status?: number }).status) : 0;
+            // Um timeout não melhora repetindo o mesmo pedido. O chamador subdivide o bloco.
+            if (status === 504 || /estado 504|timeout|timed out/i.test(lastError)) throw error;
             if (attempt === 1) setPreparedDocuments((current) => current.map((item) => item.source === source ? { ...item, message: `${label}: primeira tentativa falhou; repetição automática…` } : item));
           }
         }
         throw new Error(`${label} não foi concluído após duas tentativas: ${lastError}`);
       }
 
+      async function analyzeBlockAdaptively(block: AnalysisBlock, label: string, depth = 0): Promise<any[]> {
+        try {
+          const result = await requestAnalysis({ mode: "block", fileName: source, blockLabel: block.label, text: block.text }, label);
+          return [{ localizacao: block.label, ...result }];
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "erro desconhecido";
+          const isTimeout = /estado 504|timeout|timed out/i.test(message);
+          if (!isTimeout || block.text.length <= 2_500 || depth >= 3) throw error;
+          const middle = Math.floor(block.text.length / 2);
+          const boundary = block.text.lastIndexOf("\n", middle);
+          const cut = boundary > Math.floor(block.text.length * 0.35) ? boundary : middle;
+          const overlap = 300;
+          const parts: AnalysisBlock[] = [
+            { text: block.text.slice(0, Math.min(block.text.length, cut + overlap)), label: `${block.label} · parte A` },
+            { text: block.text.slice(Math.max(0, cut - overlap)), label: `${block.label} · parte B` },
+          ];
+          setPreparedDocuments((current) => current.map((item) => item.source === source ? { ...item, message: `${label} excedeu o tempo; subdivisão automática em ${parts[0].text.length.toLocaleString("pt-PT")} e ${parts[1].text.length.toLocaleString("pt-PT")} caracteres…` } : item));
+          const results: any[] = [];
+          for (let partIndex = 0; partIndex < parts.length; partIndex += 1) {
+            results.push(...await analyzeBlockAdaptively(parts[partIndex], `${label}.${partIndex + 1}`, depth + 1));
+          }
+          return results;
+        }
+      }
+
       const partialAnalyses: any[] = [];
       for (let index = 0; index < blocks.length; index += 1) {
         const block = blocks[index];
         setPreparedDocuments((current) => current.map((item) => item.source === source ? { ...item, message: `A analisar o bloco ${index + 1} de ${blocks.length} · ${block.label}` } : item));
-        const result = await requestAnalysis({ mode: "block", fileName: source, blockLabel: block.label, text: block.text }, `Bloco ${index + 1} de ${blocks.length}`);
-        partialAnalyses.push({ bloco: index + 1, localizacao: block.label, ...result });
+        const results = await analyzeBlockAdaptively(block, `Bloco ${index + 1} de ${blocks.length}`);
+        results.forEach((result, subIndex) => partialAnalyses.push({ bloco: index + 1, subbloco: subIndex + 1, ...result }));
       }
 
       let consolidationLevel: any[] = partialAnalyses;
       let round = 1;
       while (consolidationLevel.length > 1) {
         const nextLevel: any[] = [];
-        const groups = Math.ceil(consolidationLevel.length / 6);
-        for (let start = 0; start < consolidationLevel.length; start += 6) {
-          const groupNumber = Math.floor(start / 6) + 1;
+        const groups = Math.ceil(consolidationLevel.length / 3);
+        for (let start = 0; start < consolidationLevel.length; start += 3) {
+          const groupNumber = Math.floor(start / 3) + 1;
           setPreparedDocuments((current) => current.map((item) => item.source === source ? { ...item, message: `Consolidação global · ronda ${round}, grupo ${groupNumber} de ${groups}…` } : item));
-          const consolidated = await requestAnalysis({ mode: "consolidate", fileName: source, partialAnalyses: consolidationLevel.slice(start, start + 6) }, `Consolidação ${round}.${groupNumber}`);
+          const consolidated = await requestAnalysis({ mode: "consolidate", fileName: source, partialAnalyses: consolidationLevel.slice(start, start + 3) }, `Consolidação ${round}.${groupNumber}`);
           nextLevel.push(consolidated);
         }
         consolidationLevel = nextLevel;

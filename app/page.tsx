@@ -1028,7 +1028,7 @@ export default function Home() {
   const [aiConclusionsWriting, setAiConclusionsWriting] = useState(false);
   const [conclusionsStatus, setConclusionsStatus] = useState("");
   const [indicatorApplicability, setIndicatorApplicability] = useState<Record<string, IndicatorApplicability>>({});
-  const [indicatorFieldId, setIndicatorFieldId] = useState(fields[0].id);
+  const [indicatorFieldId, setIndicatorFieldId] = useState("all");
   const [indicatorSuggestions, setIndicatorSuggestions] = useState<IndicatorSuggestion[]>([]);
   const [indicatorDrafts, setIndicatorDrafts] = useState<Record<number, string[]>>({});
   const [indicatorSuggestionStatus, setIndicatorSuggestionStatus] = useState("");
@@ -1076,6 +1076,12 @@ export default function Home() {
   const coveredFields = new Set(evidence.filter((record) => record.validated).map((record) => record.fieldId)).size;
   const validatedCount = evidence.filter((record) => record.validated).length;
   const pendingCount = evidence.filter((record) => !record.validated).length + privacyReviews.length + documentCandidates.length + statisticalRecords.length;
+  const applicableIndicatorIds = fields.flatMap((field) => (indicatorLabels[field.id] ?? []).map((_, index) => indicatorId(field.id, index)))
+    .filter((id) => indicatorApplicability[id] !== "Não aplicável");
+  const coveredIndicatorIds = new Set(evidence.filter((record) => record.validated)
+    .flatMap((record) => record.indicatorIds ?? []).filter((id) => applicableIndicatorIds.includes(id)));
+  const indicatorCoverage = applicableIndicatorIds.length ? (coveredIndicatorIds.size / applicableIndicatorIds.length) * 100 : 0;
+  const sourceTypeCount = new Set(evidence.filter((record) => record.validated).map((record) => record.sourceType)).size;
   const allCandidatesSelected = documentCandidates.length > 0 && documentCandidates.every((candidate) => selectedCandidates.includes(candidate.id));
   const allStatisticalSelected = statisticalRecords.length > 0 && statisticalRecords.every((record) => selectedStatisticalIds.includes(record.id));
   const allTreatmentsSelected = statisticalTreatments.length > 0 && statisticalTreatments.every((treatment) => selectedTreatmentIds.includes(treatment.id));
@@ -1658,27 +1664,32 @@ export default function Home() {
   }
 
   async function suggestIndicatorsWithAi() {
-    const field = getField(indicatorFieldId);
-    const records = evidence.filter((record) => record.fieldId === field.id && record.validated);
+    const selectedFields = indicatorFieldId === "all" ? fields : [getField(indicatorFieldId)];
+    const selectedFieldIds = new Set(selectedFields.map((field) => field.id));
+    const records = evidence.filter((record) => selectedFieldIds.has(record.fieldId) && record.validated);
     if (!records.length) {
-      setIndicatorSuggestionStatus(`${field.section}: não existem evidências validadas para analisar.`);
+      setIndicatorSuggestionStatus("Não existem evidências validadas no âmbito selecionado.");
       return;
     }
-    if (!window.confirm(`Esta operação utiliza IA e faz 1 chamada à API para propor indicadores para ${records.length} evidência(s) do campo ${field.section}. As propostas só contam para a cobertura depois da sua confirmação. Pretende continuar?`)) return;
+    if (records.length > 160) {
+      setIndicatorSuggestionStatus(`Existem ${records.length} evidências validadas. Para evitar uma análise global incompleta, selecione os campos individualmente e faça a associação por partes.`);
+      return;
+    }
+    const scope = indicatorFieldId === "all" ? `os ${selectedFields.length} campos` : `o campo ${selectedFields[0].section}`;
+    if (!window.confirm(`Esta operação utiliza IA e faz uma única chamada à API para propor indicadores para ${records.length} evidência(s) de ${scope}. As propostas só contam para a cobertura depois da sua confirmação. Pretende continuar?`)) return;
     setAiSuggestingIndicators(true);
-    setIndicatorSuggestionStatus(`${field.section}: associação assistida em curso · 1 chamada…`);
+    setIndicatorSuggestionStatus(`Associação assistida para ${scope} em curso · 1 chamada…`);
     setIndicatorSuggestions([]);
     setIndicatorDrafts({});
     try {
-      const indicators = (indicatorLabels[field.id] ?? []).map((label, index) => ({
-        id: indicatorId(field.id, index),
-        label,
+      const indicators = selectedFields.flatMap((field) => (indicatorLabels[field.id] ?? []).map((label, index) => ({
+        id: indicatorId(field.id, index), fieldId: field.id, label,
         applicability: indicatorApplicability[indicatorId(field.id, index)] ?? "Aplicável",
-      }));
+      })));
       const response = await fetch("/api/suggest-indicators", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ field, evidence: records, indicators }),
+        body: JSON.stringify({ fields: selectedFields, evidence: records, indicators }),
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok || payload?.ok === false) throw new Error(payload?.error || `O servidor devolveu o estado ${response.status}.`);
@@ -1698,9 +1709,9 @@ export default function Home() {
       }));
       setIndicatorSuggestions(suggestions);
       setIndicatorDrafts(drafts);
-      setIndicatorSuggestionStatus(`${field.section}: a IA propôs ${suggestions.length} associação(ões). Reveja, acrescente ou retire indicadores antes de confirmar.`);
+      setIndicatorSuggestionStatus(`A IA propôs ${suggestions.length} associação(ões) em ${scope}. Reveja, acrescente ou retire indicadores antes de confirmar.`);
     } catch (error) {
-      setIndicatorSuggestionStatus(`${field.section}: ${error instanceof Error ? error.message : "Não foi possível propor indicadores."} Não foi feita repetição automática paga.`);
+      setIndicatorSuggestionStatus(`${error instanceof Error ? error.message : "Não foi possível propor indicadores."} Não foi feita repetição automática paga.`);
     } finally {
       setAiSuggestingIndicators(false);
     }
@@ -1718,7 +1729,7 @@ export default function Home() {
     if (!ids.size) return;
     setEvidence((current) => current.map((record) => ids.has(record.id) ? { ...record, indicatorIds: indicatorDrafts[record.id] ?? [] } : record));
     setChangesPending(true);
-    setIndicatorSuggestionStatus(`${getField(indicatorFieldId).section}: associações confirmadas pela equipa e contabilizadas na cobertura.`);
+    setIndicatorSuggestionStatus("Associações confirmadas pela equipa e contabilizadas na cobertura.");
     setIndicatorSuggestions([]);
     setIndicatorDrafts({});
   }
@@ -1950,18 +1961,18 @@ export default function Home() {
               <div className="action-row"><button className="button primary" onClick={() => setView(privacyReviews.length ? "privacidade" : documentCandidates.length ? "analise" : "evidencias")}>{privacyReviews.length ? "Validar privacidade" : documentCandidates.length ? "Rever análise documental" : "Abrir matriz de evidências"}</button><button className="button ghost" onClick={generateReport}>Gerar minuta</button></div>
             </div>
             <div className="progress-panel">
-              <span className="progress-value">{Math.round((coveredFields / fields.length) * 100)}%</span>
-              <strong>Cobertura do referencial</strong>
-              <div className="progress-track"><span style={{ width: `${(coveredFields / fields.length) * 100}%` }} /></div>
-              <small>{coveredFields} de {fields.length} campos com pelo menos uma evidência</small>
+              <span className="progress-value">{Math.round(indicatorCoverage)}%</span>
+              <strong>Cobertura dos indicadores</strong>
+              <div className="progress-track"><span style={{ width: `${indicatorCoverage}%` }} /></div>
+              <small>{coveredIndicatorIds.size} de {applicableIndicatorIds.length} indicadores aplicáveis com evidência</small>
             </div>
           </div>
 
-          <div className="metrics">
-            <article><span>Fontes</span><strong>{files.length}</strong><small>inventariadas</small></article>
-            <article><span>Evidências</span><strong>{evidence.length}</strong><small>{validatedCount} validadas · {documentCandidates.length} candidatas</small></article>
-            <article><span>Painéis</span><strong>{new Set(interviews.map((item) => item.panel)).size}</strong><small>{interviews.length} registos</small></article>
-            <article className="warning"><span>A rever</span><strong>{pendingCount}</strong><small>juízos ou contradições</small></article>
+          <div className="metrics clean-metrics">
+            <article><span>Cobertura</span><strong>{Math.round(indicatorCoverage)}%</strong><small>{coveredIndicatorIds.size}/{applicableIndicatorIds.length} indicadores</small></article>
+            <article><span>Diversidade</span><strong>{sourceTypeCount}/4</strong><small>tipos de fonte validados</small></article>
+            <article><span>Evidências</span><strong>{validatedCount}</strong><small>{evidence.length} registos no total</small></article>
+            <article className={pendingCount ? "warning" : ""}><span>A rever</span><strong>{pendingCount}</strong><small>elementos pendentes</small></article>
           </div>
 
           <section className="ethics-panel" aria-labelledby="ethics-title">
@@ -1986,9 +1997,15 @@ export default function Home() {
               return <article key={domain} className={`domain-card tone-${index + 1}`}>
                 <span className="domain-number">0{index + 1}</span>
                 <h4>{domain}</h4>
-                <p>{covered}/{domainFields.length} campos cobertos</p>
-                <div className="mini-track"><span style={{ width: `${(covered / domainFields.length) * 100}%` }} /></div>
-                <ul>{domainFields.map((field) => <li key={field.id}>{field.section} · {field.name}</li>)}</ul>
+                {(() => {
+                  const domainApplicable = domainFields.flatMap((field) => (indicatorLabels[field.id] ?? []).map((_, indicatorIndex) => indicatorId(field.id, indicatorIndex)))
+                    .filter((id) => indicatorApplicability[id] !== "Não aplicável");
+                  const domainCovered = new Set(evidence.filter((record) => record.validated && domainFields.some((field) => field.id === record.fieldId))
+                    .flatMap((record) => record.indicatorIds ?? []).filter((id) => domainApplicable.includes(id)));
+                  const percentage = domainApplicable.length ? (domainCovered.size / domainApplicable.length) * 100 : 0;
+                  return <><p><strong>{Math.round(percentage)}%</strong> · {domainCovered.size}/{domainApplicable.length} indicadores</p><div className="mini-track"><span style={{ width: `${percentage}%` }} /></div></>;
+                })()}
+                <details><summary>{covered}/{domainFields.length} campos com evidência</summary><ul>{domainFields.map((field) => <li key={field.id}>{field.section} · {field.name}</li>)}</ul></details>
               </article>;
             })}
           </div>
@@ -2142,22 +2159,23 @@ export default function Home() {
         {view === "evidencias" && <section className="view">
           <div className="page-heading"><div><p className="eyebrow">Agente 4 · Matriz probatória</p><h2>Matriz de evidências</h2><p>Aqui convergem evidências documentais, quantitativas e testemunhais, mantendo a respetiva fonte e localização.</p></div><span className="badge">{visibleEvidence.length} registos · {validatedCount} validados</span></div>
           <section className="interview-review-panel">
-            <div className="section-heading"><div><p className="eyebrow">Associação assistida · validação humana</p><h3>Propor indicadores com IA</h3><p>A IA analisa em conjunto as evidências validadas de um campo e propõe apenas indicadores diretamente sustentados. As sugestões não alteram a cobertura até serem revistas e confirmadas.</p></div></div>
+            <div className="section-heading"><div><p className="eyebrow">Associação assistida · validação humana</p><h3>Associar evidências aos indicadores</h3><p>Use uma única chamada para todos os campos. Se precisar de corrigir apenas uma parte, pode repetir a operação para um campo específico. As sugestões só alteram a cobertura depois de confirmadas.</p></div><span className="badge auto-badge">1 chamada global</span></div>
             <div className="filters">
-              <label>Campo de análise<select value={indicatorFieldId} onChange={(event) => { setIndicatorFieldId(event.target.value); setIndicatorSuggestions([]); setIndicatorDrafts({}); setIndicatorSuggestionStatus(""); }}>{fields.map((field) => <option value={field.id} key={field.id}>{field.section} · {field.name}</option>)}</select></label>
-              <button className="button primary" disabled={aiSuggestingIndicators || !evidence.some((record) => record.fieldId === indicatorFieldId && record.validated)} onClick={suggestIndicatorsWithAi}>{aiSuggestingIndicators ? "A analisar…" : "Propor indicadores com IA"}</button>
+              <label>Âmbito da análise<select value={indicatorFieldId} onChange={(event) => { setIndicatorFieldId(event.target.value); setIndicatorSuggestions([]); setIndicatorDrafts({}); setIndicatorSuggestionStatus(""); }}><option value="all">Todos os campos de análise — recomendado</option>{fields.map((field) => <option value={field.id} key={field.id}>{field.section} · {field.name}</option>)}</select></label>
+              <button className="button primary" disabled={aiSuggestingIndicators || !evidence.some((record) => record.validated && (indicatorFieldId === "all" || record.fieldId === indicatorFieldId))} onClick={suggestIndicatorsWithAi}>{aiSuggestingIndicators ? "A analisar todos os campos…" : indicatorFieldId === "all" ? "Propor todas as associações · 1 chamada" : "Reanalisar este campo · 1 chamada"}</button>
             </div>
             {indicatorSuggestionStatus && <div className="statistics-status" role="status">{indicatorSuggestionStatus}</div>}
             {Object.keys(indicatorDrafts).length > 0 && <div className="interview-candidate-list">
-              {evidence.filter((record) => record.fieldId === indicatorFieldId && record.validated && indicatorDrafts[record.id]).map((record) => {
-                const labels = indicatorLabels[indicatorFieldId] ?? [];
+              {evidence.filter((record) => record.validated && indicatorDrafts[record.id] && (indicatorFieldId === "all" || record.fieldId === indicatorFieldId)).map((record) => {
+                const labels = indicatorLabels[record.fieldId] ?? [];
                 const linked = indicatorDrafts[record.id] ?? [];
                 const proposals = indicatorSuggestions.filter((item) => item.evidenceId === record.id);
+                const recordField = getField(record.fieldId);
                 return <article className="interview-candidate selected" key={record.id}>
-                  <div className="interview-candidate-main"><strong>{record.claim}</strong><small>{record.source} · {record.location}</small>
+                  <div className="interview-candidate-main"><span className="badge">{recordField.section} · {recordField.name}</span><strong>{record.claim}</strong><small>{record.source} · {record.location}</small>
                     <details className="evidence-indicators" open><summary>{linked.length} indicador(es) selecionado(s) para confirmação</summary>
                       {labels.map((label, index) => {
-                        const id = indicatorId(indicatorFieldId, index);
+                        const id = indicatorId(record.fieldId, index);
                         const suggestion = proposals.find((item) => item.indicatorId === id);
                         const notApplicable = indicatorApplicability[id] === "Não aplicável";
                         return <label key={id}><input type="checkbox" disabled={notApplicable} checked={linked.includes(id)} onChange={() => toggleIndicatorDraft(record.id, id)} /><span>{label}{suggestion ? ` — sugestão IA (${suggestion.confidence.toLowerCase()}): ${suggestion.justification}` : notApplicable ? " — não aplicável" : ""}</span></label>;
@@ -2246,6 +2264,69 @@ export default function Home() {
           </div>}
         </section>}
       </section>
+      <style>{`
+        .clean-metrics {
+          gap: 14px;
+        }
+        .clean-metrics article {
+          position: relative;
+          min-height: 116px;
+          padding: 20px 22px;
+          border: 1px solid #e7ece9;
+          border-radius: 18px;
+          background: linear-gradient(145deg, #ffffff 0%, #f8faf9 100%);
+          box-shadow: 0 8px 24px rgba(26, 49, 42, .055);
+        }
+        .clean-metrics article::before {
+          content: "";
+          position: absolute;
+          inset: 0 auto 0 0;
+          width: 4px;
+          border-radius: 18px 0 0 18px;
+          background: #4d8b72;
+        }
+        .clean-metrics article.warning::before { background: #d29a49; }
+        .clean-metrics article span {
+          color: #65736e;
+          font-size: .72rem;
+          font-weight: 750;
+          letter-spacing: .08em;
+          text-transform: uppercase;
+        }
+        .clean-metrics article strong {
+          margin: 7px 0 2px;
+          color: #173f34;
+          font-size: 2rem;
+          line-height: 1;
+        }
+        .field-coverage-grid {
+          gap: 14px;
+        }
+        .field-coverage-card {
+          border: 1px solid #e5ebe8;
+          border-radius: 18px;
+          background: #fff;
+          box-shadow: 0 6px 20px rgba(20, 52, 42, .045);
+        }
+        .field-coverage-top strong {
+          color: #245d4c;
+          font-size: 1.45rem;
+        }
+        .field-coverage-meta {
+          padding-top: 10px;
+          border-top: 1px solid #eef2f0;
+        }
+        .domain-card details { margin-top: 14px; }
+        .domain-card summary {
+          color: #53635d;
+          cursor: pointer;
+          font-size: .8rem;
+          font-weight: 700;
+        }
+        @media (max-width: 760px) {
+          .clean-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        }
+      `}</style>
     </main>
   );
 }

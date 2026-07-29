@@ -7,6 +7,12 @@ type EvidenceStatus = "Confirmada" | "Por triangular" | "Contraditória" | "Ause
 type Strength = "Forte" | "Moderada" | "Insuficiente";
 type Rating = "Excelente" | "Muito bom" | "Bom" | "Suficiente" | "Insuficiente" | "Por definir";
 type IndicatorApplicability = "Aplicável" | "Por confirmar" | "Não aplicável";
+type IndicatorSuggestion = {
+  evidenceId: number;
+  indicatorId: string;
+  justification: string;
+  confidence: "Alta" | "Média";
+};
 
 type DomainConclusion = {
   domain: string;
@@ -1022,6 +1028,11 @@ export default function Home() {
   const [aiConclusionsWriting, setAiConclusionsWriting] = useState(false);
   const [conclusionsStatus, setConclusionsStatus] = useState("");
   const [indicatorApplicability, setIndicatorApplicability] = useState<Record<string, IndicatorApplicability>>({});
+  const [indicatorFieldId, setIndicatorFieldId] = useState(fields[0].id);
+  const [indicatorSuggestions, setIndicatorSuggestions] = useState<IndicatorSuggestion[]>([]);
+  const [indicatorDrafts, setIndicatorDrafts] = useState<Record<number, string[]>>({});
+  const [indicatorSuggestionStatus, setIndicatorSuggestionStatus] = useState("");
+  const [aiSuggestingIndicators, setAiSuggestingIndicators] = useState(false);
 
   useEffect(() => {
     const stored = window.localStorage.getItem("aee-piloto-v2");
@@ -1646,6 +1657,72 @@ export default function Home() {
     setChangesPending(true);
   }
 
+  async function suggestIndicatorsWithAi() {
+    const field = getField(indicatorFieldId);
+    const records = evidence.filter((record) => record.fieldId === field.id && record.validated);
+    if (!records.length) {
+      setIndicatorSuggestionStatus(`${field.section}: não existem evidências validadas para analisar.`);
+      return;
+    }
+    if (!window.confirm(`Esta operação utiliza IA e faz 1 chamada à API para propor indicadores para ${records.length} evidência(s) do campo ${field.section}. As propostas só contam para a cobertura depois da sua confirmação. Pretende continuar?`)) return;
+    setAiSuggestingIndicators(true);
+    setIndicatorSuggestionStatus(`${field.section}: associação assistida em curso · 1 chamada…`);
+    setIndicatorSuggestions([]);
+    setIndicatorDrafts({});
+    try {
+      const indicators = (indicatorLabels[field.id] ?? []).map((label, index) => ({
+        id: indicatorId(field.id, index),
+        label,
+        applicability: indicatorApplicability[indicatorId(field.id, index)] ?? "Aplicável",
+      }));
+      const response = await fetch("/api/suggest-indicators", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ field, evidence: records, indicators }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || payload?.ok === false) throw new Error(payload?.error || `O servidor devolveu o estado ${response.status}.`);
+      const allowedIds = new Set(indicators.filter((item) => item.applicability !== "Não aplicável").map((item) => item.id));
+      const recordIds = new Set(records.map((item) => item.id));
+      const suggestions: IndicatorSuggestion[] = (Array.isArray(payload?.suggestions) ? payload.suggestions : [])
+        .filter((item: any) => recordIds.has(Number(item?.evidenceId)) && allowedIds.has(String(item?.indicatorId)))
+        .map((item: any) => ({
+          evidenceId: Number(item.evidenceId),
+          indicatorId: String(item.indicatorId),
+          justification: String(item.justification || "").trim(),
+          confidence: item.confidence === "Alta" ? "Alta" : "Média",
+        }));
+      const drafts = Object.fromEntries(records.map((record) => {
+        const proposed = suggestions.filter((item) => item.evidenceId === record.id).map((item) => item.indicatorId);
+        return [record.id, Array.from(new Set([...(record.indicatorIds ?? []), ...proposed]))];
+      }));
+      setIndicatorSuggestions(suggestions);
+      setIndicatorDrafts(drafts);
+      setIndicatorSuggestionStatus(`${field.section}: a IA propôs ${suggestions.length} associação(ões). Reveja, acrescente ou retire indicadores antes de confirmar.`);
+    } catch (error) {
+      setIndicatorSuggestionStatus(`${field.section}: ${error instanceof Error ? error.message : "Não foi possível propor indicadores."} Não foi feita repetição automática paga.`);
+    } finally {
+      setAiSuggestingIndicators(false);
+    }
+  }
+
+  function toggleIndicatorDraft(evidenceId: number, id: string) {
+    setIndicatorDrafts((current) => {
+      const linked = current[evidenceId] ?? [];
+      return { ...current, [evidenceId]: linked.includes(id) ? linked.filter((value) => value !== id) : [...linked, id] };
+    });
+  }
+
+  function confirmIndicatorDrafts() {
+    const ids = new Set(Object.keys(indicatorDrafts).map(Number));
+    if (!ids.size) return;
+    setEvidence((current) => current.map((record) => ids.has(record.id) ? { ...record, indicatorIds: indicatorDrafts[record.id] ?? [] } : record));
+    setChangesPending(true);
+    setIndicatorSuggestionStatus(`${getField(indicatorFieldId).section}: associações confirmadas pela equipa e contabilizadas na cobertura.`);
+    setIndicatorSuggestions([]);
+    setIndicatorDrafts({});
+  }
+
   async function triangulateFieldWithAi(field: Field) {
     const records = evidence.filter((record) => record.fieldId === field.id && record.validated);
     if (!records.length) {
@@ -2064,6 +2141,34 @@ export default function Home() {
 
         {view === "evidencias" && <section className="view">
           <div className="page-heading"><div><p className="eyebrow">Agente 4 · Matriz probatória</p><h2>Matriz de evidências</h2><p>Aqui convergem evidências documentais, quantitativas e testemunhais, mantendo a respetiva fonte e localização.</p></div><span className="badge">{visibleEvidence.length} registos · {validatedCount} validados</span></div>
+          <section className="interview-review-panel">
+            <div className="section-heading"><div><p className="eyebrow">Associação assistida · validação humana</p><h3>Propor indicadores com IA</h3><p>A IA analisa em conjunto as evidências validadas de um campo e propõe apenas indicadores diretamente sustentados. As sugestões não alteram a cobertura até serem revistas e confirmadas.</p></div></div>
+            <div className="filters">
+              <label>Campo de análise<select value={indicatorFieldId} onChange={(event) => { setIndicatorFieldId(event.target.value); setIndicatorSuggestions([]); setIndicatorDrafts({}); setIndicatorSuggestionStatus(""); }}>{fields.map((field) => <option value={field.id} key={field.id}>{field.section} · {field.name}</option>)}</select></label>
+              <button className="button primary" disabled={aiSuggestingIndicators || !evidence.some((record) => record.fieldId === indicatorFieldId && record.validated)} onClick={suggestIndicatorsWithAi}>{aiSuggestingIndicators ? "A analisar…" : "Propor indicadores com IA"}</button>
+            </div>
+            {indicatorSuggestionStatus && <div className="statistics-status" role="status">{indicatorSuggestionStatus}</div>}
+            {Object.keys(indicatorDrafts).length > 0 && <div className="interview-candidate-list">
+              {evidence.filter((record) => record.fieldId === indicatorFieldId && record.validated && indicatorDrafts[record.id]).map((record) => {
+                const labels = indicatorLabels[indicatorFieldId] ?? [];
+                const linked = indicatorDrafts[record.id] ?? [];
+                const proposals = indicatorSuggestions.filter((item) => item.evidenceId === record.id);
+                return <article className="interview-candidate selected" key={record.id}>
+                  <div className="interview-candidate-main"><strong>{record.claim}</strong><small>{record.source} · {record.location}</small>
+                    <details className="evidence-indicators" open><summary>{linked.length} indicador(es) selecionado(s) para confirmação</summary>
+                      {labels.map((label, index) => {
+                        const id = indicatorId(indicatorFieldId, index);
+                        const suggestion = proposals.find((item) => item.indicatorId === id);
+                        const notApplicable = indicatorApplicability[id] === "Não aplicável";
+                        return <label key={id}><input type="checkbox" disabled={notApplicable} checked={linked.includes(id)} onChange={() => toggleIndicatorDraft(record.id, id)} /><span>{label}{suggestion ? ` — sugestão IA (${suggestion.confidence.toLowerCase()}): ${suggestion.justification}` : notApplicable ? " — não aplicável" : ""}</span></label>;
+                      })}
+                    </details>
+                  </div>
+                </article>;
+              })}
+              <div className="action-row"><button className="button secondary" onClick={() => { setIndicatorSuggestions([]); setIndicatorDrafts({}); setIndicatorSuggestionStatus("Propostas descartadas; as associações existentes foram preservadas."); }}>Descartar propostas</button><button className="button primary" onClick={confirmIndicatorDrafts}>Confirmar associações revistas</button></div>
+            </div>}
+          </section>
           <div className="filters">
             <label>Domínio<select value={filterDomain} onChange={(event) => setFilterDomain(event.target.value)}><option>Todos</option>{domainOrder.map((domain) => <option key={domain}>{domain}</option>)}</select></label>
             <label>Estado<select value={filterStatus} onChange={(event) => setFilterStatus(event.target.value)}><option>Todos</option><option>Confirmada</option><option>Por triangular</option><option>Contraditória</option><option>Ausente</option></select></label>

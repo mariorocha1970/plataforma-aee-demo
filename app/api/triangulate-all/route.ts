@@ -1,1 +1,119 @@
+import { NextRequest, NextResponse } from "next/server";
 
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const maxDuration = 120;
+
+const RESULT_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    narrativas: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          campoId: { type: "string" },
+          narrativa: { type: "string" },
+        },
+        required: ["campoId", "narrativa"],
+      },
+    },
+  },
+  required: ["narrativas"],
+};
+
+function outputText(data: any): string {
+  if (typeof data?.output_text === "string") return data.output_text;
+  if (!Array.isArray(data?.output)) return "";
+  return data.output.flatMap((item: any) => Array.isArray(item?.content) ? item.content : [])
+    .filter((item: any) => item?.type === "output_text")
+    .map((item: any) => item?.text ?? "")
+    .join("");
+}
+
+export async function POST(request: NextRequest) {
+  try {
+    const apiKey = process.env.OPENAI_API_KEY?.trim();
+    if (!apiKey) return NextResponse.json({ ok: false, error: "A API da OpenAI não está configurada." }, { status: 503 });
+
+    const body = await request.json().catch(() => null) as any;
+    const fields = Array.isArray(body?.fields) ? body.fields.slice(0, 20) : [];
+    const evidence = Array.isArray(body?.evidence) ? body.evidence.slice(0, 180) : [];
+    if (!fields.length || !evidence.length) {
+      return NextResponse.json({ ok: false, error: "Não existem campos com evidências validadas para triangular." }, { status: 400 });
+    }
+
+    const compactFields = fields.map((field: any) => ({
+      id: String(field?.id || ""),
+      campo: `${String(field?.section || "")} — ${String(field?.name || "")}`,
+      dominio: String(field?.domain || ""),
+      referentes: Array.isArray(field?.referents) ? field.referents.map(String) : [],
+    }));
+    const compactEvidence = evidence.map((item: any) => ({
+      id: Number(item?.id),
+      campoId: String(item?.fieldId || ""),
+      afirmacao: String(item?.claim || "").slice(0, 750),
+      fonte: String(item?.source || "").slice(0, 140),
+      tipo: String(item?.sourceType || ""),
+      localizacao: String(item?.location || "").slice(0, 140),
+      estado: String(item?.status || ""),
+      robustez: String(item?.strength || ""),
+      indicadores: Array.isArray(item?.indicatorIds) ? item.indicatorIds.map(String) : [],
+    }));
+
+    const prompt = `Produza, numa única operação, sínteses de triangulação autónomas para todos os campos indicados da Avaliação Externa das Escolas, em português europeu.
+
+CAMPOS:
+${JSON.stringify(compactFields)}
+
+EVIDÊNCIAS VALIDADAS:
+${JSON.stringify(compactEvidence)}
+
+REGRAS:
+- Devolva exatamente uma narrativa por campo que tenha evidências; use o campoId recebido.
+- Em cada campo, considere exclusivamente as evidências com o campoId correspondente.
+- Cruze semanticamente fontes independentes; não enumere documentos.
+- Distinga intenção, prática, monitorização, resultado e impacto.
+- Identifique convergências, divergências, contradições e lacunas.
+- Documento normativo não prova execução; testemunho isolado não comprova um facto.
+- Não transforme ausência de evidência em evidência de ausência.
+- Não invente dados, frequência, causalidade, representatividade ou generalização.
+- Redija 1 a 3 parágrafos contínuos por campo, sem nomes de ficheiros ou páginas no corpo.
+- Use uma reserva proporcional quando não seja possível demonstrar alcance, regularidade, resultados ou impacto.
+- Não formule classificações globais nem use linguagem promocional.`;
+
+    const response = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: process.env.OPENAI_TRIANGULATION_MODEL?.trim() || "gpt-5-mini",
+        store: false,
+        input: prompt,
+        reasoning: { effort: "minimal" },
+        max_output_tokens: 10_000,
+        text: { format: { type: "json_schema", name: "triangulacao_global_aee", strict: true, schema: RESULT_SCHEMA } },
+      }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) return NextResponse.json({ ok: false, error: data?.error?.message || "A IA não concluiu a triangulação global." }, { status: response.status });
+    const raw = outputText(data);
+    if (!raw) return NextResponse.json({ ok: false, error: "A IA não devolveu uma triangulação utilizável. Não houve repetição automática." }, { status: 502 });
+
+    let result: any;
+    try {
+      result = JSON.parse(raw);
+    } catch {
+      return NextResponse.json({ ok: false, error: "A resposta global ficou incompleta. Não houve repetição automática paga." }, { status: 502 });
+    }
+    const fieldIds = new Set(compactFields.map((field: any) => field.id));
+    const narratives = (Array.isArray(result?.narrativas) ? result.narrativas : [])
+      .filter((item: any) => fieldIds.has(String(item?.campoId)) && String(item?.narrativa || "").trim())
+      .map((item: any) => ({ fieldId: String(item.campoId), narrative: String(item.narrativa).trim() }));
+    if (!narratives.length) return NextResponse.json({ ok: false, error: "A IA não devolveu narrativas válidas." }, { status: 502 });
+    return NextResponse.json({ ok: true, narratives });
+  } catch (error) {
+    return NextResponse.json({ ok: false, error: error instanceof Error ? error.message : "Erro interno na triangulação global." }, { status: 500 });
+  }
+}

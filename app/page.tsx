@@ -6,6 +6,7 @@ type View = "visao" | "documentos" | "privacidade" | "analise" | "estatistica" |
 type EvidenceStatus = "Confirmada" | "Por triangular" | "Contraditória" | "Ausente";
 type Strength = "Forte" | "Moderada" | "Insuficiente";
 type Rating = "Excelente" | "Muito bom" | "Bom" | "Suficiente" | "Insuficiente" | "Por definir";
+type IndicatorApplicability = "Aplicável" | "Por confirmar" | "Não aplicável";
 
 type DomainConclusion = {
   domain: string;
@@ -33,6 +34,7 @@ type Evidence = {
   status: EvidenceStatus;
   strength: Strength;
   validated: boolean;
+  indicatorIds?: string[];
 };
 
 type CandidateEvidence = Evidence & {
@@ -154,6 +156,140 @@ const fields: Field[] = [
   { id: "res-sociais", section: "5.4.2", domain: "Resultados", name: "Resultados sociais", referents: ["Participação na vida da escola e assunção de responsabilidades", "Cumprimento das regras e disciplina", "Solidariedade e cidadania", "Impacto da escolaridade no percurso dos alunos"] },
   { id: "res-recon", section: "5.4.3", domain: "Resultados", name: "Reconhecimento da comunidade", referents: ["Grau de satisfação da comunidade educativa", "Valorização dos sucessos dos alunos", "Contributo da escola para o desenvolvimento da comunidade envolvente"] },
 ];
+
+const indicatorLabels: Record<string, string[]> = {
+  "auto-dev": `Procedimento(s) sistemático(s) de autoavaliação da escola
+Articulação da autoavaliação da escola com os restantes processos de avaliação que ocorrem na escola
+Auscultação e participação abrangentes da comunidade educativa
+Adequação da autoavaliação à realidade da escola
+Centralidade do processo de ensino e aprendizagem
+Existência de estratégias de comunicação e de reflexão acerca dos resultados da autoavaliação com a comunidade educativa`.split("\n"),
+  "auto-impacto": `Abrangência do processo de recolha de dados
+Rigor do processo de análise dos dados
+Melhoria contínua do processo de autoavaliação
+Monitorização e avaliação das ações de melhoria
+Evidências da autoavaliação na melhoria organizacional da escola
+Evidências da autoavaliação na melhoria do desenvolvimento curricular
+Evidências da autoavaliação na melhoria do processo de ensino e de aprendizagem
+Evidências da autoavaliação na definição das necessidades de formação contínua e avaliação do seu impacto
+Evidências do contributo da autoavaliação para a melhoria da educação inclusiva (implementação das medidas curriculares, afetação de recursos e funcionamento das estruturas de suporte)`.split("\n"),
+  "lider-visao": `Definição clara da visão que sustenta a ação da escola com vista à consecução do Perfil dos Alunos à Saída da Escolaridade Obrigatória
+Visão partilhada pelos diferentes atores educativos e mobilizadora da sua ação
+Clareza e coerência entre os documentos orientadores da ação da escola
+Clareza e coerência dos objetivos, metas e estratégias definidos no projeto educativo
+Relevância das opções curriculares constantes dos documentos da escola para o desenvolvimento de todas as áreas de competências consideradas no PASEO`.split("\n"),
+  "lider-lideranca": `Orientação da ação para o cumprimento das metas e objetivos educacionais
+Motivação das pessoas, desenvolvimento profissional e gestão de conflitos
+Incentivo à participação na escola dos diferentes atores educativos
+Valorização dos diferentes níveis de liderança, nomeadamente as lideranças intermédias
+Incentivo ao desenvolvimento de projetos e soluções inovadoras
+Avaliação da eficácia dos projetos, parcerias e soluções
+Parcerias com outras instituições e agentes da comunidade que mobilizem recursos e promovam, assim, a qualidade das aprendizagens`.split("\n"),
+  "lider-gestao": `Existência de critérios pedagógicos na constituição e gestão dos grupos e turmas
+Flexibilidade na gestão do trabalho com os grupos e turmas
+Existência, consistência e divulgação na comunidade educativa de critérios na aplicação de medidas disciplinares aos alunos
+Envolvimento dos alunos na vida da escola
+Promoção de um ambiente escolar desafiador da aprendizagem
+Promoção de um ambiente escolar seguro, saudável e ecológico
+Promoção de um ambiente escolar socialmente acolhedor, inclusivo e cordial
+Distribuição e gestão dos recursos humanos de acordo com as necessidades das crianças e alunos
+Gestão dos recursos que valorize as pessoas, o seu desenvolvimento profissional e bem-estar
+Gestão dos recursos humanos que impulsione a autonomia e a diversidade organizativa
+Práticas de formação contínua dos profissionais, por iniciativa da escola, adequadas às necessidades identificadas e às suas prioridades pedagógicas
+Opções tomadas com impactos positivos na qualidade das aprendizagens
+Opções tomadas tendo em conta as necessidades e expectativas de todas as crianças e alunos
+Opções monitorizadas e ajustadas quando necessário
+Diversidade e eficácia dos circuitos de comunicação interna e externa
+Rigor no reporte de dados às entidades competentes
+Adequação da informação ao público-alvo
+Acesso à informação da escola pela comunidade educativa
+Divulgação da informação respeitando princípios éticos e deontológicos`.split("\n"),
+  "serv-bemestar": `Promoção da autonomia e responsabilidade individual
+Promoção da participação e envolvimento na comunidade
+Promoção de uma atitude de resiliência
+Promoção da assiduidade e pontualidade
+Atividades de apoio ao bem-estar pessoal e social
+Medidas de prevenção e proteção de comportamentos de risco
+Reconhecimento e respeito pela diversidade
+Medidas de orientação escolar e profissional`.split("\n"),
+  "serv-oferta": `Respostas educativas adaptadas às necessidades de formação dos alunos com vista ao desenvolvimento do Perfil dos Alunos à Saída da Escolaridade Obrigatória
+Valorização da dimensão lúdica no desenvolvimento das atividades de enriquecimento curricular/atividades de animação e de apoio à família
+Adequação da oferta educativa aos interesses dos alunos e às necessidades de formação da comunidade envolvente
+Práticas de organização e gestão do currículo e da aprendizagem para uma educação inclusiva
+Integração curricular de atividades culturais, científicas, artísticas e desportivas
+Iniciativas de inovação curricular
+Iniciativas de inovação pedagógica
+Definição de medidas de suporte à aprendizagem e à inclusão que promovam a igualdade de oportunidades de acesso ao currículo
+Articulação curricular vertical e horizontal a nível da planificação e desenvolvimento curricular
+Articulação com as atividades de enriquecimento curricular/atividades de animação e de apoio à família
+Projetos transversais no âmbito da estratégia de educação para a cidadania`.split("\n"),
+  "serv-ensino": `Estratégias diversificadas de ensino e aprendizagem com vista à melhoria das aprendizagens, incluindo o desenvolvimento do espírito crítico, a resolução de problemas e o trabalho em equipa
+Recurso privilegiado à metodologia de projeto e a atividades experimentais
+Estratégias para a manutenção de ambientes de sala de aula propícios à aprendizagem
+Medidas universais, seletivas e adicionais de inclusão das crianças e dos alunos
+Ações para a melhoria dos resultados das crianças e alunos em grupos de risco, como os oriundos de contextos socioeconómicos desfavorecidos
+Práticas de promoção da excelência escolar
+Medidas de prevenção da retenção, abandono e desistência
+Diversidade de práticas e instrumentos de avaliação nas diferentes modalidades
+Aferição de critérios e instrumentos de avaliação
+Qualidade e regularidade da informação devolvida às crianças, aos alunos e às famílias
+Utilização primordial da avaliação com finalidade formativa
+Utilização de recursos educativos diversificados (TIC, biblioteca escolar, centro de recursos educativos)
+Adequação dos recursos educativos às características das crianças e dos alunos
+Rentabilização do centro de apoio à aprendizagem
+Diversidade de formas de participação das famílias na escola
+Eficácia das medidas adotadas pela escola para envolver os pais e encarregados de educação no acompanhamento do percurso escolar dos seus educandos
+Participação dos pais na equipa multidisciplinar de apoio à educação inclusiva`.split("\n"),
+  "serv-plan": `Consistência das práticas de autorregulação no desenvolvimento do currículo
+Contribuição da autorregulação para a melhoria da prática letiva
+Consistência das práticas de regulação por pares
+Formas de colaboração sistemática nos diferentes níveis da planificação e desenvolvimento da atividade letiva
+Partilha de práticas científico-pedagógicas relevantes
+Reflexão sobre a eficácia das diferentes metodologias de ensino e aprendizagem aplicadas
+Contribuição da regulação por pares para a melhoria da prática letiva
+Consistência das práticas de regulação pelas lideranças
+Contribuição da regulação pelas lideranças para a melhoria da prática letiva`.split("\n"),
+  "res-acad": `Percentagem dos alunos da escola que conclui o 1.º ciclo até quatro anos após a entrada no 1.º ano
+Percentagem dos alunos da escola que conclui o 2.º ciclo até dois anos após a entrada no 5.º ano
+Percentagem dos alunos da escola com percursos diretos de sucesso no 3.º ciclo
+Percentagem dos alunos da escola com percursos diretos de sucesso no ensino científico-humanístico
+Percentagem dos alunos da escola que conclui o ensino secundário profissional até três anos após ingressar na oferta, entre os que vieram diretamente do 3.º ciclo
+Percentagem dos alunos da escola que conclui o ensino artístico especializado integrado até três anos após ingressar na oferta, entre os que vieram diretamente do 3.º ciclo
+Taxas de conclusão da oferta dentro do número de anos previsto
+Percentagem de adultos certificados em cursos de educação e formação de adultos, face aos que iniciaram a oferta
+Taxas anuais de transição dos alunos matriculados no ensino secundário recorrente em regime presencial
+Resultados dos alunos oriundos de contextos socioeconómicos desfavorecidos, de origem imigrante e de grupos culturalmente diferenciados
+Resultados dos alunos com relatório técnico-pedagógico, programa educativo individual e/ou plano individual de transição
+Resultados de desenvolvimento e valorização dos alunos de excelência
+Assimetrias internas de resultados`.split("\n"),
+  "res-sociais": `Atividades desenvolvidas na escola da iniciativa das crianças e dos alunos
+Participação das crianças e alunos nas iniciativas da escola para a formação pessoal e cidadania
+Participação dos alunos em diferentes estruturas e órgãos da escola
+Percentagem de alunos retidos por faltas
+Percentagem das ocorrências em que foram aplicadas medidas disciplinares sancionatórias
+Normas e código de conduta
+Formas de tratamento dos incidentes disciplinares
+Trabalho voluntário
+Ações de solidariedade
+Ações de apoio à inclusão
+Ações de participação democrática
+Inserção académica dos alunos
+Inserção profissional dos alunos
+Inserção dos alunos com plano individual de transição na vida pós-escolar`.split("\n"),
+  "res-recon": `Perceção dos alunos acerca da escola
+Perceção dos encarregados de educação acerca da escola
+Perceção de outras entidades da comunidade acerca da escola
+Iniciativas destinadas a valorizar os resultados académicos
+Iniciativas destinadas a valorizar os resultados sociais
+Reconhecimento por parte da sociedade local e nacional
+Envolvimento da escola em iniciativas locais
+Disponibilização dos espaços e equipamentos da escola para atividades da comunidade
+Participação de adultos em ofertas de educação e formação`.split("\n"),
+};
+
+function indicatorId(fieldId: string, index: number) {
+  return `${fieldId}:${index + 1}`;
+}
 
 const domainOrder = ["Autoavaliação", "Liderança e gestão", "Prestação do serviço educativo", "Resultados"];
 
@@ -885,6 +1021,7 @@ export default function Home() {
   const [conclusions, setConclusions] = useState<DomainConclusion[]>([]);
   const [aiConclusionsWriting, setAiConclusionsWriting] = useState(false);
   const [conclusionsStatus, setConclusionsStatus] = useState("");
+  const [indicatorApplicability, setIndicatorApplicability] = useState<Record<string, IndicatorApplicability>>({});
 
   useEffect(() => {
     const stored = window.localStorage.getItem("aee-piloto-v2");
@@ -910,6 +1047,7 @@ export default function Home() {
         if (typeof data.report === "string") setReport(data.report);
         if (data.narratives && typeof data.narratives === "object") setNarratives(data.narratives);
         if (Array.isArray(data.conclusions)) setConclusions(data.conclusions);
+        if (data.indicatorApplicability && typeof data.indicatorApplicability === "object") setIndicatorApplicability(data.indicatorApplicability);
         if (typeof data.lastUpdated === "string") setLastUpdated(data.lastUpdated);
         if (typeof data.schoolName === "string") setSchoolName(data.schoolName);
       } catch {
@@ -932,13 +1070,13 @@ export default function Home() {
   const allTreatmentsSelected = statisticalTreatments.length > 0 && statisticalTreatments.every((treatment) => selectedTreatmentIds.includes(treatment.id));
 
   function saveLocal() {
-    window.localStorage.setItem("aee-piloto-v2", JSON.stringify({ schoolName, evidence, documentCandidates, statisticalRecords, statisticalTreatments, questionnaireComments, questionnaireReport, interviews, interviewCandidates, files, fileAnalysis, narratives, report, conclusions, lastUpdated }));
+    window.localStorage.setItem("aee-piloto-v2", JSON.stringify({ schoolName, evidence, documentCandidates, statisticalRecords, statisticalTreatments, questionnaireComments, questionnaireReport, interviews, interviewCandidates, files, fileAnalysis, narratives, report, conclusions, indicatorApplicability, lastUpdated }));
     setSaved(true);
     window.setTimeout(() => setSaved(false), 1800);
   }
 
   function exportBackup() {
-    const payload = { schoolName, evidence, documentCandidates, statisticalRecords, statisticalTreatments, questionnaireComments, questionnaireReport, interviews, interviewCandidates, files, fileAnalysis, narratives, report, conclusions, lastUpdated };
+    const payload = { schoolName, evidence, documentCandidates, statisticalRecords, statisticalTreatments, questionnaireComments, questionnaireReport, interviews, interviewCandidates, files, fileAnalysis, narratives, report, conclusions, indicatorApplicability, lastUpdated };
     const backup = {
       format: "plataforma-aee-backup",
       version: 1,
@@ -992,6 +1130,7 @@ export default function Home() {
       setNarratives(data.narratives && typeof data.narratives === "object" ? data.narratives : {});
       setReport(typeof data.report === "string" ? data.report : "");
       setConclusions(Array.isArray(data.conclusions) ? data.conclusions : []);
+      setIndicatorApplicability(data.indicatorApplicability && typeof data.indicatorApplicability === "object" ? data.indicatorApplicability : {});
       setLastUpdated(typeof data.lastUpdated === "string" ? data.lastUpdated : "");
       setPrivacyReviews([]);
       setPrivacyConfirmed([]);
@@ -1019,7 +1158,7 @@ export default function Home() {
     setNarratives(refreshedNarratives);
     setLastUpdated(timestamp);
     setChangesPending(false);
-    window.localStorage.setItem("aee-piloto-v2", JSON.stringify({ schoolName, evidence, documentCandidates, statisticalRecords, statisticalTreatments, questionnaireComments, questionnaireReport, interviews, interviewCandidates, files, fileAnalysis, narratives: refreshedNarratives, report: refreshedReport, conclusions, lastUpdated: timestamp }));
+    window.localStorage.setItem("aee-piloto-v2", JSON.stringify({ schoolName, evidence, documentCandidates, statisticalRecords, statisticalTreatments, questionnaireComments, questionnaireReport, interviews, interviewCandidates, files, fileAnalysis, narratives: refreshedNarratives, report: refreshedReport, conclusions, indicatorApplicability, lastUpdated: timestamp }));
     window.setTimeout(() => setUpdating(false), 650);
   }
 
@@ -1038,6 +1177,7 @@ export default function Home() {
       report: "",
       narratives: {} as Record<string, string>,
       conclusions: [] as DomainConclusion[],
+      indicatorApplicability: {} as Record<string, IndicatorApplicability>,
       lastUpdated: "",
     };
     setSchoolName(emptyProcess.schoolName);
@@ -1062,6 +1202,7 @@ export default function Home() {
     setReport(emptyProcess.report);
     setNarratives(emptyProcess.narratives);
     setConclusions(emptyProcess.conclusions);
+    setIndicatorApplicability(emptyProcess.indicatorApplicability);
     setLastUpdated(emptyProcess.lastUpdated);
     setChangesPending(false);
     setFilterDomain("Todos");
@@ -1774,18 +1915,29 @@ export default function Home() {
               </article>;
             })}
           </div>
-          <div className="section-heading field-coverage-heading"><div><p className="eyebrow">Leitura detalhada</p><h3>Cobertura por campo de análise</h3><p>Cada barra representa a diversidade de evidência validada disponível: documental, quantitativa, testemunhal e normativa.</p></div><span className="source-note">4 tipos de evidência · máximo 100%</span></div>
+          <div className="section-heading field-coverage-heading"><div><p className="eyebrow">Leitura detalhada</p><h3>Cobertura por campo de análise</h3><p>A percentagem representa os indicadores aplicáveis com pelo menos uma evidência validada e associada. A diversidade das fontes é apresentada separadamente.</p></div><span className="source-note">Indicadores do Quadro de Referência</span></div>
           <div className="field-coverage-grid">
             {fields.map((field) => {
               const records = evidence.filter((record) => record.fieldId === field.id && record.validated);
               const sourceTypes = new Set(records.map((record) => record.sourceType));
-              const coverage = (sourceTypes.size / 4) * 100;
+              const labels = indicatorLabels[field.id] ?? [];
+              const applicableIds = labels.map((_, index) => indicatorId(field.id, index)).filter((id) => indicatorApplicability[id] !== "Não aplicável");
+              const coveredIds = new Set(records.flatMap((record) => record.indicatorIds ?? []).filter((id) => applicableIds.includes(id)));
+              const coverage = applicableIds.length ? (coveredIds.size / applicableIds.length) * 100 : 0;
               return <article className="field-coverage-card" key={field.id}>
                 <div className="field-coverage-top"><span>{field.section}</span><strong>{Math.round(coverage)}%</strong></div>
                 <h4>{field.name}</h4>
                 <small>{field.domain}</small>
                 <div className="field-track" aria-label={`${Math.round(coverage)}% de cobertura`}><span style={{ width: `${coverage}%` }} /></div>
-                <div className="field-coverage-meta"><span>{records.length} evidência{records.length === 1 ? "" : "s"} validada{records.length === 1 ? "" : "s"}</span><span>{sourceTypes.size}/4 tipos</span></div>
+                <div className="field-coverage-meta"><span>{coveredIds.size}/{applicableIds.length} indicadores com evidência</span><span>{sourceTypes.size}/4 tipos de fonte</span></div>
+                <details className="indicator-coverage-detail"><summary>Rever aplicabilidade dos indicadores</summary>
+                  <div className="indicator-coverage-list">{labels.map((label, index) => {
+                    const id = indicatorId(field.id, index);
+                    const linked = coveredIds.has(id);
+                    const applicability = indicatorApplicability[id] ?? "Aplicável";
+                    return <label key={id}><span><strong>{linked ? "Com evidência" : applicability === "Não aplicável" ? "Não aplicável" : applicability === "Por confirmar" ? "Por confirmar" : "Sem evidência"}</strong>{label}</span><select value={applicability} onChange={(event) => { setIndicatorApplicability((current) => ({ ...current, [id]: event.target.value as IndicatorApplicability })); setChangesPending(true); }}><option>Aplicável</option><option>Por confirmar</option><option>Não aplicável</option></select></label>;
+                  })}</div>
+                </details>
               </article>;
             })}
           </div>
@@ -1916,8 +2068,8 @@ export default function Home() {
             <label>Domínio<select value={filterDomain} onChange={(event) => setFilterDomain(event.target.value)}><option>Todos</option>{domainOrder.map((domain) => <option key={domain}>{domain}</option>)}</select></label>
             <label>Estado<select value={filterStatus} onChange={(event) => setFilterStatus(event.target.value)}><option>Todos</option><option>Confirmada</option><option>Por triangular</option><option>Contraditória</option><option>Ausente</option></select></label>
           </div>
-          <div className="table-wrap"><table><thead><tr><th>Formulação analítica</th><th>Campo</th><th>Fonte / localização</th><th>Estado</th><th>Validação</th></tr></thead><tbody>
-            {visibleEvidence.map((record) => { const field = getField(record.fieldId); return <tr key={record.id}><td><textarea className="evidence-editor" value={record.claim} onChange={(event) => { const claim = event.target.value; setEvidence((current) => current.map((item) => item.id === record.id ? { ...item, claim } : item)); setChangesPending(true); }} aria-label={`Formulação analítica — ${field.name}`} /><small>{record.sourceType} · robustez {record.strength.toLowerCase()} · edite para interpretar, não transcrever</small></td><td><strong>{field.section}</strong><small>{field.domain}<br />{field.name}</small></td><td>{record.source}<small>{record.location}</small></td><td><span className={`status ${record.status.toLowerCase().replaceAll(" ", "-").normalize("NFD").replace(/[\u0300-\u036f]/g, "")}`}>{record.status}</span></td><td><label className="check"><input type="checkbox" checked={record.validated} onChange={() => { setEvidence((current) => current.map((item) => item.id === record.id ? { ...item, validated: !item.validated } : item)); setChangesPending(true); }} />{record.validated ? "Validada" : "Pendente"}</label></td></tr>; })}
+          <div className="table-wrap"><table><thead><tr><th>Formulação analítica</th><th>Campo e indicadores</th><th>Fonte / localização</th><th>Estado</th><th>Validação</th></tr></thead><tbody>
+            {visibleEvidence.map((record) => { const field = getField(record.fieldId); const linked = record.indicatorIds ?? []; return <tr key={record.id}><td><textarea className="evidence-editor" value={record.claim} onChange={(event) => { const claim = event.target.value; setEvidence((current) => current.map((item) => item.id === record.id ? { ...item, claim } : item)); setChangesPending(true); }} aria-label={`Formulação analítica — ${field.name}`} /><small>{record.sourceType} · robustez {record.strength.toLowerCase()} · edite para interpretar, não transcrever</small></td><td><strong>{field.section}</strong><small>{field.domain}<br />{field.name}</small><details className="evidence-indicators"><summary>{linked.length ? `${linked.length} indicador(es) associado(s)` : "Associar indicadores"}</summary>{(indicatorLabels[field.id] ?? []).map((label, index) => { const id = indicatorId(field.id, index); return <label key={id}><input type="checkbox" checked={linked.includes(id)} onChange={() => { setEvidence((current) => current.map((item) => item.id === record.id ? { ...item, indicatorIds: linked.includes(id) ? linked.filter((value) => value !== id) : [...linked, id] } : item)); setChangesPending(true); }} /><span>{label}</span></label>; })}</details></td><td>{record.source}<small>{record.location}</small></td><td><span className={`status ${record.status.toLowerCase().replaceAll(" ", "-").normalize("NFD").replace(/[\u0300-\u036f]/g, "")}`}>{record.status}</span></td><td><label className="check"><input type="checkbox" checked={record.validated} onChange={() => { setEvidence((current) => current.map((item) => item.id === record.id ? { ...item, validated: !item.validated } : item)); setChangesPending(true); }} />{record.validated ? "Validada" : "Pendente"}</label></td></tr>; })}
           </tbody></table></div>
         </section>}
 

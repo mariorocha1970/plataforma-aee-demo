@@ -1021,6 +1021,7 @@ export default function Home() {
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [exportStatus, setExportStatus] = useState("");
   const [aiTriangulatingField, setAiTriangulatingField] = useState("");
+  const [aiTriangulatingAll, setAiTriangulatingAll] = useState(false);
   const [aiTriangulationStatus, setAiTriangulationStatus] = useState("");
   const [aiReportWriting, setAiReportWriting] = useState(false);
   const [backupStatus, setBackupStatus] = useState("");
@@ -1075,7 +1076,14 @@ export default function Home() {
 
   const coveredFields = new Set(evidence.filter((record) => record.validated).map((record) => record.fieldId)).size;
   const validatedCount = evidence.filter((record) => record.validated).length;
-  const pendingCount = evidence.filter((record) => !record.validated).length + privacyReviews.length + documentCandidates.length + statisticalRecords.length;
+  const pendingEvidenceCount = evidence.filter((record) => !record.validated).length;
+  const pendingBreakdown = {
+    privacy: privacyReviews.length,
+    documents: documentCandidates.length,
+    interviews: interviewCandidates.length,
+    evidence: pendingEvidenceCount,
+  };
+  const pendingCount = Object.values(pendingBreakdown).reduce((total, count) => total + count, 0);
   const applicableIndicatorIds = fields.flatMap((field) => (indicatorLabels[field.id] ?? []).map((_, index) => indicatorId(field.id, index)))
     .filter((id) => indicatorApplicability[id] !== "Não aplicável");
   const coveredIndicatorIds = new Set(evidence.filter((record) => record.validated)
@@ -1777,6 +1785,47 @@ export default function Home() {
     }
   }
 
+  async function triangulateAllWithAi() {
+    const records = evidence.filter((record) => record.validated);
+    const activeFields = fields.filter((field) => records.some((record) => record.fieldId === field.id));
+    if (!records.length) {
+      setAiTriangulationStatus("Não existem evidências validadas para triangular.");
+      return;
+    }
+    if (records.length > 180) {
+      setAiTriangulationStatus(`Existem ${records.length} evidências validadas. Para evitar truncagem, use a triangulação por campo nos casos que necessitem de revisão.`);
+      return;
+    }
+    if (!window.confirm(`Esta operação utiliza IA e faz uma única chamada para triangular ${records.length} evidência(s) em ${activeFields.length} campo(s). As narrativas atuais desses campos serão substituídas, mas continuarão editáveis. Pretende continuar?`)) return;
+    setAiTriangulatingAll(true);
+    setAiTriangulationStatus(`Triangulação global de ${activeFields.length} campo(s) em curso · 1 chamada…`);
+    try {
+      const response = await fetch("/api/triangulate-all", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fields: activeFields, evidence: records }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || payload?.ok === false) throw new Error(payload?.error || `O servidor devolveu o estado ${response.status}.`);
+      const received = Array.isArray(payload?.narratives) ? payload.narratives : [];
+      const usable = received.filter((item: any) => activeFields.some((field) => field.id === String(item?.fieldId)) && String(item?.narrative || "").trim());
+      if (!usable.length) throw new Error("A IA não devolveu narrativas utilizáveis.");
+      setNarratives((current) => ({
+        ...current,
+        ...Object.fromEntries(usable.map((item: any) => [String(item.fieldId), String(item.narrative).trim()])),
+      }));
+      setChangesPending(true);
+      const missing = activeFields.length - usable.length;
+      setAiTriangulationStatus(missing
+        ? `Foram concluídos ${usable.length} de ${activeFields.length} campos numa chamada. Reveja os ${missing} campo(s) em falta individualmente.`
+        : `${usable.length} campos triangulados numa única chamada. Reveja e valide as narrativas.`);
+    } catch (error) {
+      setAiTriangulationStatus(`${error instanceof Error ? error.message : "Não foi possível triangular globalmente."} As narrativas existentes foram preservadas e não houve repetição automática paga.`);
+    } finally {
+      setAiTriangulatingAll(false);
+    }
+  }
+
   async function improveReportWithAi() {
     const completedNarratives = preserveReviewedNarratives(evidence, narratives);
     const localDraft = report.trim() || buildReport(evidence, completedNarratives);
@@ -1986,8 +2035,22 @@ export default function Home() {
             <article><span>Cobertura</span><strong>{Math.round(indicatorCoverage)}%</strong><small>{coveredIndicatorIds.size}/{applicableIndicatorIds.length} indicadores</small></article>
             <article><span>Diversidade</span><strong>{sourceTypeCount}/4</strong><small>tipos de fonte validados</small></article>
             <article><span>Evidências</span><strong>{validatedCount}</strong><small>{evidence.length} registos no total</small></article>
-            <article className={pendingCount ? "warning" : ""}><span>A rever</span><strong>{pendingCount}</strong><small>elementos pendentes</small></article>
+            <article className={pendingCount ? "warning" : ""}><span>Por validar</span><strong>{pendingCount}</strong><small>propostas que ainda não são evidência validada</small></article>
           </div>
+
+          {pendingCount > 0 && <section className="ethics-panel" aria-labelledby="pending-title">
+            <div className="ethics-intro">
+              <p className="eyebrow">Trabalho por concluir</p>
+              <h3 id="pending-title">O que falta validar</h3>
+              <p>Estes itens não entram na triangulação nem na cobertura. Só passam a evidência depois de revistos e promovidos para a Matriz.</p>
+            </div>
+            <ul>
+              <li><strong>{pendingBreakdown.privacy} · Privacidade</strong><span>Rever e autorizar o texto antes da análise documental.</span>{pendingBreakdown.privacy > 0 && <button className="text-button" onClick={() => setView("privacidade")}>Abrir</button>}</li>
+              <li><strong>{pendingBreakdown.documents} · Propostas documentais</strong><span>Confirmar afirmação, localização, campo e indicadores; depois validar e promover.</span>{pendingBreakdown.documents > 0 && <button className="text-button" onClick={() => setView("analise")}>Abrir</button>}</li>
+              <li><strong>{pendingBreakdown.interviews} · Propostas testemunhais</strong><span>Rever a síntese e as reservas; depois validar e enviar para a Matriz.</span>{pendingBreakdown.interviews > 0 && <button className="text-button" onClick={() => setView("entrevistas")}>Abrir</button>}</li>
+              <li><strong>{pendingBreakdown.evidence} · Registos da Matriz</strong><span>Confirmar ou eliminar os registos ainda não validados.</span>{pendingBreakdown.evidence > 0 && <button className="text-button" onClick={() => setView("evidencias")}>Abrir</button>}</li>
+            </ul>
+          </section>}
 
           <section className="ethics-panel" aria-labelledby="ethics-title">
             <div className="ethics-intro">
@@ -2231,7 +2294,7 @@ export default function Home() {
         </section>}
 
         {view === "triangulacao" && <section className="view">
-          <div className="page-heading"><div><p className="eyebrow">Agente 6 · Cruzamento de fontes</p><h2>Triangulação e narrativa avaliativa</h2><p>A atualização local é imediata e gratuita. A triangulação semântica por IA é opcional e faz exatamente uma chamada por campo.</p></div><div className="action-row"><span className="badge auto-badge">Só evidência validada</span><button className="button secondary" onClick={refreshNarratives}>Atualizar localmente · sem API</button></div></div>
+          <div className="page-heading"><div><p className="eyebrow">Agente 6 · Cruzamento de fontes</p><h2>Triangulação e narrativa avaliativa</h2><p>A opção recomendada cruza todos os campos numa única chamada. A operação por campo fica disponível apenas para correções pontuais.</p></div><div className="action-row"><span className="badge auto-badge">Só evidência validada</span><button className="button secondary" onClick={refreshNarratives}>Atualizar localmente · sem API</button><button className="button primary" disabled={aiTriangulatingAll || Boolean(aiTriangulatingField) || !validatedCount} onClick={triangulateAllWithAi}>{aiTriangulatingAll ? "A triangular todos…" : "Triangular todos os campos com IA · 1 chamada"}</button></div></div>
           {aiTriangulationStatus && <div className="statistics-status" role="status">{aiTriangulationStatus}</div>}
           <div className="narrative-guidance"><strong>Do dado ao juízo</strong><span>As narrativas são propostas de trabalho editáveis. Reveja o alcance, confirme as referências e não transforme previsão, atividade ou testemunho isolado em impacto demonstrado.</span></div>
           <div className="triangulation-grid narrative-grid">
@@ -2245,7 +2308,7 @@ export default function Home() {
                 <div className="tri-top"><span>{field.section}</span><span className={`strength ${strength.toLowerCase()}`}>{strength}</span></div>
                 <h3>{field.name}</h3><small>{field.domain}</small>
                 <div className="tri-stats"><span><strong>{records.length}</strong> validadas</span><span><strong>{types.size}</strong> tipos de fonte</span><span><strong>{waiting}</strong> pendentes</span></div>
-                <button className="button primary" disabled={!records.length || Boolean(aiTriangulatingField)} onClick={() => triangulateFieldWithAi(field)}>{aiTriangulatingField === field.id ? "A triangular…" : "Triangular este campo com IA · 1 chamada"}</button>
+                <button className="button secondary" disabled={!records.length || aiTriangulatingAll || Boolean(aiTriangulatingField)} onClick={() => triangulateFieldWithAi(field)}>{aiTriangulatingField === field.id ? "A triangular…" : "Refazer apenas este campo · 1 chamada"}</button>
                 <label className="narrative-editor">Síntese avaliativa<textarea value={narrative} onChange={(event) => { setNarratives((current) => ({ ...current, [field.id]: event.target.value })); setChangesPending(true); }} /></label>
                 <div className="source-evidence"><strong>Base probatória</strong>{records.length ? <ul>{records.map((record) => <li key={record.id}>{record.source} · {record.location} · {record.status}</li>)}</ul> : <span>Lacuna documental: preparar pedido de evidência e questões para os painéis.</span>}</div>
               </article>;

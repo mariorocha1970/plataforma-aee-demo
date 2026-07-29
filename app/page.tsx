@@ -1301,7 +1301,16 @@ export default function Home() {
         const response = await fetch("/api/analyze-document", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ fileName: source, location: block.label, text: block.text }),
+          body: JSON.stringify({
+            fileName: source,
+            location: block.label,
+            text: block.text,
+            indicators: fields.flatMap((field) => (indicatorLabels[field.id] ?? []).map((label, indicatorIndex) => ({
+              id: indicatorId(field.id, indicatorIndex),
+              field: field.name,
+              label,
+            }))),
+          }),
         });
         const payload = await response.json().catch(() => ({}));
         if (!response.ok || payload?.ok === false) throw new Error(payload?.error || `O servidor devolveu o estado ${response.status}.`);
@@ -1315,6 +1324,9 @@ export default function Home() {
           const location = String(item?.localizacao || block.label).trim();
           const reservation = String(item?.reserva || "").trim();
           const nature = String(item?.natureza || "").trim();
+          const proposedIndicatorIds = (Array.isArray(item?.indicadores) ? item.indicadores : [])
+            .map(String)
+            .filter((id: string) => id.startsWith(`${field.id}:`) && (indicatorLabels[field.id] ?? []).some((_, indicatorIndex) => indicatorId(field.id, indicatorIndex) === id));
           const duplicate = collected.some((candidate) => candidate.fieldId === field.id && normalizeText(candidate.claim) === normalizeText(claim));
           if (duplicate) return;
           collected.push({
@@ -1327,6 +1339,7 @@ export default function Home() {
             status: "Por triangular",
             strength: "Insuficiente",
             validated: false,
+            indicatorIds: proposedIndicatorIds,
             matchedTerms: nature ? [nature] : [],
             analysis: reservation ? `${claim} Reserva: ${reservation}` : claim,
           });
@@ -1385,7 +1398,7 @@ export default function Home() {
   }
 
   function updateCandidateField(id: number, fieldId: string) {
-    setDocumentCandidates((current) => current.map((candidate) => candidate.id === id ? { ...candidate, fieldId } : candidate));
+    setDocumentCandidates((current) => current.map((candidate) => candidate.id === id ? { ...candidate, fieldId, indicatorIds: [] } : candidate));
   }
 
   function updateCandidateAnalysis(id: number, analysis: string) {
@@ -1411,6 +1424,7 @@ export default function Home() {
       status: "Confirmada",
       strength: "Insuficiente",
       validated: true,
+      indicatorIds: candidate.indicatorIds ?? [],
     }));
     setEvidence((current) => [...current.filter((item) => !promoted.some((candidate) => candidate.id === item.id)), ...promoted]);
     setDocumentCandidates((current) => current.filter((candidate) => !selectedCandidates.includes(candidate.id)));
@@ -2102,7 +2116,7 @@ export default function Home() {
         </section>}
 
         {view === "analise" && <section className="view">
-          <div className="page-heading"><div><p className="eyebrow">Agente 2 · Extração documental por IA</p><h2>Evidências documentais por campo</h2><p>A IA extrai apenas evidências factuais, com localização, natureza e reservas. Não produz juízos nem realiza consolidações pagas; a triangulação ocorre depois da validação humana.</p></div><div className="analysis-actions"><span className="badge">{documentCandidates.length} evidências</span><button className="button secondary" disabled={!documentCandidates.length} onClick={toggleAllCandidates}>{allCandidatesSelected ? "Desmarcar todos" : "Selecionar todos"}</button><button className="button primary" disabled={!selectedCandidates.length} onClick={promoteCandidates}>Validar {selectedCandidates.length || ""} e promover</button></div></div>
+          <div className="page-heading"><div><p className="eyebrow">Agente 2 · Extração documental por IA</p><h2>Evidências documentais por campo e indicador</h2><p>A IA percorre o texto, extrai factos e propõe imediatamente os indicadores diretamente sustentados. A validação confirma simultaneamente a evidência e as associações revistas.</p></div><div className="analysis-actions"><span className="badge">{documentCandidates.length} evidências · {new Set(documentCandidates.flatMap((item) => item.indicatorIds ?? [])).size} indicadores detetados</span><button className="button secondary" disabled={!documentCandidates.length} onClick={toggleAllCandidates}>{allCandidatesSelected ? "Desmarcar todos" : "Selecionar todos"}</button><button className="button primary" disabled={!selectedCandidates.length} onClick={promoteCandidates}>Validar {selectedCandidates.length || ""} e promover</button></div></div>
           <div className="quality-gate"><strong>Documentos prontos para interpretação</strong><span>Apenas o texto previamente validado no Agente de Privacidade será enviado. O documento original não é transmitido nem guardado por esta etapa.</span></div>
           <div className="ai-document-list">
             {preparedDocuments.map((document) => <article className="ai-document-card" key={document.source}>
@@ -2115,7 +2129,7 @@ export default function Home() {
             {documentCandidates.map((candidate) => { const field = getField(candidate.fieldId); return <article className={selectedCandidates.includes(candidate.id) ? "candidate-card selected" : "candidate-card"} key={candidate.id}>
               <label className="candidate-check"><input type="checkbox" checked={selectedCandidates.includes(candidate.id)} onChange={() => toggleCandidate(candidate.id)} /><span>Validar</span></label>
               <div className="candidate-main"><div className="original-excerpt"><strong>Excerto identificado</strong><p>{candidate.claim}</p><div className="candidate-source"><span>{candidate.source} · {candidate.location}</span></div></div>{candidate.matchedTerms.length > 0 && <div className="matched-terms">{candidate.matchedTerms.map((term) => <span key={term}>{term}</span>)}</div>}<label className="analysis-editor">Formulação analítica — opcional<textarea value={candidate.analysis} onChange={(event) => updateCandidateAnalysis(candidate.id, event.target.value)} placeholder="Se necessário, reformule ou clarifique a interpretação deste excerto antes de o validar." /><small className={candidate.analysis.trim() ? "analysis-ready" : "analysis-neutral"}>{candidate.analysis.trim() ? "Será usada a formulação editada" : "Será usado o excerto selecionado"}</small></label></div>
-              <div className="candidate-classification"><label>Campo proposto<select value={candidate.fieldId} onChange={(event) => updateCandidateField(candidate.id, event.target.value)}>{fields.map((option) => <option value={option.id} key={option.id}>{option.section} · {option.name}</option>)}</select></label><small>{field.domain}</small><button className="text-button danger-text" onClick={() => discardCandidate(candidate.id)}>Descartar</button></div>
+              <div className="candidate-classification"><label>Campo proposto<select value={candidate.fieldId} onChange={(event) => updateCandidateField(candidate.id, event.target.value)}>{fields.map((option) => <option value={option.id} key={option.id}>{option.section} · {option.name}</option>)}</select></label><small>{field.domain}</small><details className="evidence-indicators" open><summary>{candidate.indicatorIds?.length ? `${candidate.indicatorIds.length} indicador(es) proposto(s)` : "Sem indicador diretamente sustentado"}</summary>{(indicatorLabels[field.id] ?? []).map((label, index) => { const id = indicatorId(field.id, index); const linked = candidate.indicatorIds ?? []; return <label key={id}><input type="checkbox" checked={linked.includes(id)} onChange={() => { setDocumentCandidates((current) => current.map((item) => item.id === candidate.id ? { ...item, indicatorIds: linked.includes(id) ? linked.filter((value) => value !== id) : [...linked, id] } : item)); setChangesPending(true); }} /><span>{label}</span></label>; })}</details><button className="text-button danger-text" onClick={() => discardCandidate(candidate.id)}>Descartar</button></div>
             </article>; })}
           </div></>}
         </section>}

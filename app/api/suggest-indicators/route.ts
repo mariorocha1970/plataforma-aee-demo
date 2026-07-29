@@ -10,7 +10,7 @@ const RESULT_SCHEMA = {
   properties: {
     sugestoes: {
       type: "array",
-      maxItems: 120,
+      maxItems: 300,
       items: {
         type: "object",
         additionalProperties: false,
@@ -39,17 +39,18 @@ export async function POST(request: NextRequest) {
     const apiKey = process.env.OPENAI_API_KEY?.trim();
     if (!apiKey) return NextResponse.json({ ok: false, error: "A API da OpenAI não está configurada." }, { status: 503 });
     const body = await request.json().catch(() => null) as any;
-    const field = body?.field;
-    const evidence = Array.isArray(body?.evidence) ? body.evidence.slice(0, 40) : [];
+    const fields = Array.isArray(body?.fields) ? body.fields.slice(0, 12) : body?.field ? [body.field] : [];
+    const evidence = Array.isArray(body?.evidence) ? body.evidence.slice(0, 160) : [];
     const indicators = (Array.isArray(body?.indicators) ? body.indicators : [])
       .filter((item: any) => item?.applicability !== "Não aplicável")
-      .slice(0, 25);
-    if (!field?.name || !evidence.length || !indicators.length) {
-      return NextResponse.json({ ok: false, error: "O campo não contém evidências validadas ou indicadores aplicáveis." }, { status: 400 });
+      .slice(0, 180);
+    if (!fields.length || !evidence.length || !indicators.length) {
+      return NextResponse.json({ ok: false, error: "Não existem evidências validadas ou indicadores aplicáveis para analisar." }, { status: 400 });
     }
 
     const compactEvidence = evidence.map((item: any) => ({
       id: Number(item?.id),
+      campo_id: String(item?.fieldId || ""),
       afirmacao: String(item?.claim || "").slice(0, 1_000),
       fonte: String(item?.source || "").slice(0, 180),
       tipo: String(item?.sourceType || ""),
@@ -60,14 +61,20 @@ export async function POST(request: NextRequest) {
     }));
     const compactIndicators = indicators.map((item: any) => ({
       id: String(item?.id || ""),
+      campo_id: String(item?.fieldId || ""),
       indicador: String(item?.label || "").slice(0, 500),
+    }));
+    const compactFields = fields.map((item: any) => ({
+      id: String(item?.id || ""),
+      campo: `${String(item?.section || "")} — ${String(item?.name || "")}`,
+      dominio: String(item?.domain || ""),
+      referentes: Array.isArray(item?.referents) ? item.referents : [],
     }));
 
     const prompt = `Associe evidências validadas aos indicadores do Quadro de Referência da Avaliação Externa das Escolas, em português europeu.
 
-CAMPO: ${field.section} — ${field.name}
-DOMÍNIO: ${field.domain}
-REFERENTES: ${(Array.isArray(field.referents) ? field.referents : []).join("; ")}
+CAMPOS EM ANÁLISE:
+${JSON.stringify(compactFields)}
 
 INDICADORES APLICÁVEIS:
 ${JSON.stringify(compactIndicators)}
@@ -76,7 +83,8 @@ EVIDÊNCIAS VALIDADAS:
 ${JSON.stringify(compactEvidence)}
 
 REGRAS:
-- Trabalhe exclusivamente dentro deste campo e use apenas os identificadores fornecidos.
+- Respeite rigorosamente o campo_id: uma evidência só pode ser associada a indicadores do mesmo campo.
+- Use exclusivamente os identificadores fornecidos.
 - Proponha uma associação apenas quando a afirmação da evidência sustentar diretamente o conteúdo do indicador.
 - Não associe por mera semelhança lexical, proximidade temática ou porque o indicador seria expectável.
 - Um documento orientador ou normativo pode sustentar a existência de uma intenção, regra ou opção, mas não prova automaticamente implementação, regularidade, resultado ou impacto.
@@ -98,7 +106,7 @@ REGRAS:
         store: false,
         input: prompt,
         reasoning: { effort: "minimal" },
-        max_output_tokens: 3_500,
+        max_output_tokens: fields.length > 1 ? 8_000 : 3_500,
         text: { format: { type: "json_schema", name: "associacao_indicadores_aee", strict: true, schema: RESULT_SCHEMA } },
       }),
     });
@@ -110,11 +118,20 @@ REGRAS:
     try { result = JSON.parse(raw); } catch {
       return NextResponse.json({ ok: false, error: "A resposta ficou incompleta. Não houve repetição automática paga." }, { status: 502 });
     }
+    const evidenceFields = new Map(compactEvidence.map((item: any) => [item.id, item.campo_id]));
+    const indicatorFields = new Map(compactIndicators.map((item: any) => [item.id, item.campo_id]));
     const validEvidenceIds = new Set(compactEvidence.map((item: any) => item.id));
     const validIndicatorIds = new Set(compactIndicators.map((item: any) => item.id));
     const existing = new Set(compactEvidence.flatMap((item: any) => item.indicadores_ja_confirmados.map((id: string) => `${item.id}|${id}`)));
     const suggestions = (Array.isArray(result?.sugestoes) ? result.sugestoes : [])
-      .filter((item: any) => validEvidenceIds.has(Number(item?.evidencia_id)) && validIndicatorIds.has(String(item?.indicador_id)) && !existing.has(`${Number(item?.evidencia_id)}|${String(item?.indicador_id)}`))
+      .filter((item: any) => {
+        const evidenceId = Number(item?.evidencia_id);
+        const indicatorId = String(item?.indicador_id);
+        return validEvidenceIds.has(evidenceId)
+          && validIndicatorIds.has(indicatorId)
+          && evidenceFields.get(evidenceId) === indicatorFields.get(indicatorId)
+          && !existing.has(`${evidenceId}|${indicatorId}`);
+      })
       .map((item: any) => ({
         evidenceId: Number(item.evidencia_id),
         indicatorId: String(item.indicador_id),

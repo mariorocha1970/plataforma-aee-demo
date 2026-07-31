@@ -145,6 +145,7 @@ type StatisticalTreatment = {
   respondentGroup?: "Alunos" | "Encarregados de educação" | "Docentes" | "Não docentes";
   strengths: string[];
   improvements: string[];
+  evidenceUse?: "academic-comparison" | "context-only";
 };
 
 type QuestionnaireComment = {
@@ -575,17 +576,19 @@ function buildInfoEscolasComparison(items: StatisticalRecord[], id: string): Sta
     average: values.length ? values.reduce((total, value) => total + value, 0) / values.length : null,
     strengths: [],
     improvements: complete.length < 3 ? ["A comparação não cobre três anos letivos completos com ambas as séries."] : [],
+    evidenceUse: "academic-comparison",
   };
 }
 
 function buildStatisticalTreatments(records: StatisticalRecord[]) {
   const grouped = new Map<string, StatisticalRecord[]>();
   records.forEach((record) => {
-    if (record.dataset === "infoescolas" && record.evidenceUse !== "academic-comparison") return;
     const unit = record.value.includes("%") ? "%" : "valor";
     const respondentGroup = record.indicator.match(/—\s*(Alunos|Encarregados de educação|Docentes|Não docentes)$/i)?.[1];
-    const key = record.dataset === "infoescolas" && record.comparisonKey
+    const key = record.dataset === "infoescolas" && record.evidenceUse === "academic-comparison" && record.comparisonKey
       ? `infoescolas|${normalizeText(record.comparisonKey)}`
+      : record.dataset === "infoescolas" && record.evidenceUse === "context-only"
+        ? `infoescolas-context|${record.fieldId}|${unit}|${treatmentIndicatorKey(record)}`
       : respondentGroup ? `questionnaire|${respondentGroup}` : `${record.fieldId}|${unit}|${treatmentIndicatorKey(record)}`;
     grouped.set(key, [...(grouped.get(key) ?? []), record]);
   });
@@ -676,6 +679,7 @@ function buildStatisticalTreatments(records: StatisticalRecord[]) {
       average,
       strengths: [],
       improvements: [],
+      evidenceUse: id.startsWith("infoescolas-context|") ? "context-only" : undefined,
     };
   });
 }
@@ -1280,7 +1284,8 @@ export default function Home() {
   const sourceTypeCount = new Set(evidence.filter((record) => record.validated).map((record) => record.sourceType)).size;
   const allCandidatesSelected = documentCandidates.length > 0 && documentCandidates.every((candidate) => selectedCandidates.includes(candidate.id));
   const allStatisticalSelected = statisticalRecords.length > 0 && statisticalRecords.every((record) => selectedStatisticalIds.includes(record.id));
-  const allTreatmentsSelected = statisticalTreatments.length > 0 && statisticalTreatments.every((treatment) => selectedTreatmentIds.includes(treatment.id));
+  const promotableTreatments = statisticalTreatments.filter((treatment) => treatment.evidenceUse !== "context-only");
+  const allTreatmentsSelected = promotableTreatments.length > 0 && promotableTreatments.every((treatment) => selectedTreatmentIds.includes(treatment.id));
 
   function saveLocal() {
     window.localStorage.setItem("aee-piloto-v2", JSON.stringify({ schoolName, evidence, documentCandidates, statisticalRecords, statisticalTreatments, questionnaireComments, questionnaireReport, interviews, interviewCandidates, files, fileAnalysis, narratives, report, conclusions, indicatorApplicability, lastUpdated }));
@@ -1689,7 +1694,9 @@ export default function Home() {
         const replacedIds = statisticalRecords.filter((record) => record.source === source).map((record) => record.id);
         setStatisticalRecords((current) => [...current.filter((record) => record.source !== source && validStatisticalRecord(record)), ...extracted]);
         setStatisticalTreatments((current) => current.filter((treatment) => !treatment.recordIds.some((id) => replacedIds.includes(id))));
-        setSelectedStatisticalIds(extracted.filter((record) => record.evidenceUse === "academic-comparison").map((record) => record.id));
+        // Todos os dados permanecem disponíveis para tratamento e consulta.
+        // Só as comparações académicas serão pré-selecionadas para promoção.
+        setSelectedStatisticalIds(extracted.map((record) => record.id));
         setSelectedTreatmentIds([]);
         setChangesPending(true);
         setStatisticalStatus(extracted.length ? `${extracted.length} observações estatísticas identificadas para ${payload.school || sourceUrl.hostname}, organizadas pelos gráficos do InfoEscolas.` : "A página da escola foi aberta, mas os gráficos não continham observações reconhecíveis.");
@@ -1744,7 +1751,7 @@ export default function Home() {
 
   function treatStatisticalData() {
     const chosen = selectedStatisticalIds.length ? statisticalRecords.filter((record) => selectedStatisticalIds.includes(record.id)) : statisticalRecords;
-    const base = chosen.filter(validStatisticalRecord).filter((record) => record.dataset !== "infoescolas" || record.evidenceUse === "academic-comparison");
+    const base = chosen.filter(validStatisticalRecord);
     const rejected = chosen.length - base.length;
     if (rejected) {
       const rejectedIds = new Set(chosen.filter((record) => !validStatisticalRecord(record)).map((record) => record.id));
@@ -1753,7 +1760,7 @@ export default function Home() {
     }
     const treatments = buildStatisticalTreatments(base);
     setStatisticalTreatments(treatments);
-    setSelectedTreatmentIds(treatments.map((treatment) => treatment.id));
+    setSelectedTreatmentIds(treatments.filter((treatment) => treatment.evidenceUse !== "context-only").map((treatment) => treatment.id));
     setStatisticalStatus(`${treatments.length} síntese(s) de tratamento produzida(s) a partir de ${base.length} registo(s).${rejected ? ` ${rejected} registo(s) inválido(s), com código ou rótulo não interpretável, foram removidos.` : ""}`);
     setChangesPending(true);
   }
@@ -1768,11 +1775,11 @@ export default function Home() {
   }
 
   function toggleAllTreatments() {
-    setSelectedTreatmentIds(allTreatmentsSelected ? [] : statisticalTreatments.map((treatment) => treatment.id));
+    setSelectedTreatmentIds(allTreatmentsSelected ? [] : promotableTreatments.map((treatment) => treatment.id));
   }
 
   function promoteStatisticalTreatments() {
-    const selected = statisticalTreatments.filter((treatment) => selectedTreatmentIds.includes(treatment.id));
+    const selected = statisticalTreatments.filter((treatment) => selectedTreatmentIds.includes(treatment.id) && treatment.evidenceUse !== "context-only");
     if (!selected.length) return;
     const promoted: Evidence[] = selected.map((treatment, index) => ({
       id: Date.now() + index,
@@ -2464,7 +2471,7 @@ export default function Home() {
             <div className="section-heading"><div><p className="eyebrow">Resultado intermédio</p><h3>Apresentação do tratamento por indicador</h3><p>Nos questionários, os dados são agregados por grupo e questões repetidas são deduplicadas. Critérios de sinalização: concordância ≥75% para ponto forte; não concordância ≥15%, “Não sei” ≥10% ou concordância &lt;60% para área de melhoria.</p></div><div className="action-row"><button className="button secondary" onClick={toggleAllTreatments}>{allTreatmentsSelected ? "Desmarcar tratamentos" : "Selecionar tratamentos"}</button><button className="button secondary" onClick={exportStatisticalServer}>Guardar Word (.docx)</button><button className="button primary" disabled={!selectedTreatmentIds.length} onClick={promoteStatisticalTreatments}>Enviar análise descritiva ({selectedTreatmentIds.length || ""})</button></div></div>
             {statisticalTreatments.some((treatment) => treatment.respondentGroup) && <QuestionnaireOverviewChart treatments={statisticalTreatments.filter((treatment) => treatment.respondentGroup)} />}
             <div className="treatment-grid">{statisticalTreatments.map((treatment) => { const field = getField(treatment.fieldId); return <article className={selectedTreatmentIds.includes(treatment.id) ? "treatment-card selected" : "treatment-card"} key={treatment.id}>
-              <div className="treatment-top"><label className="check"><input type="checkbox" checked={selectedTreatmentIds.includes(treatment.id)} onChange={() => toggleTreatment(treatment.id)} />Usar tratamento</label><span className="badge">{field.section} · {treatment.recordIds.length} registos</span></div>
+              <div className="treatment-top"><label className="check"><input type="checkbox" disabled={treatment.evidenceUse === "context-only"} checked={selectedTreatmentIds.includes(treatment.id)} onChange={() => toggleTreatment(treatment.id)} />{treatment.evidenceUse === "context-only" ? "Consulta/contexto" : "Usar tratamento"}</label><span className="badge">{field.section} · {treatment.recordIds.length} registos</span></div>
               <h4>{treatment.indicator}</h4><small className="treatment-field">{field.name}</small>
               <TreatmentChart treatment={treatment} />
               {treatment.respondentGroup ? <div className="treatment-metrics questionnaire-metrics">{treatment.points.map((point) => <span key={point.label}><strong>{point.value.toLocaleString("pt-PT", { maximumFractionDigits: 1 })}%</strong>{point.label}</span>)}</div> : <div className="treatment-metrics"><span><strong>{treatment.points.length}</strong> observações</span><span><strong>{treatment.minimum?.toLocaleString("pt-PT", { maximumFractionDigits: 1 }) ?? "—"}{treatment.unit === "%" ? "%" : ""}</strong> mínimo</span><span><strong>{treatment.maximum?.toLocaleString("pt-PT", { maximumFractionDigits: 1 }) ?? "—"}{treatment.unit === "%" ? "%" : ""}</strong> máximo</span><span><strong>{treatment.average?.toLocaleString("pt-PT", { maximumFractionDigits: 1 }) ?? "—"}{treatment.unit === "%" ? "%" : ""}</strong> média</span></div>}

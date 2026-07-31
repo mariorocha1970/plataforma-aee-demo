@@ -24,6 +24,7 @@ export async function POST(request: NextRequest) {
     if (!apiKey) return NextResponse.json({ ok: false, error: "A API da OpenAI não está configurada." }, { status: 503 });
     const body = await request.json().catch(() => null) as any;
     const field = body?.field;
+    const diagnostic = body?.diagnostic || {};
     const evidence = Array.isArray(body?.evidence) ? body.evidence.slice(0, 40) : [];
     if (!field?.name || !evidence.length) return NextResponse.json({ ok: false, error: "O campo não contém evidências validadas." }, { status: 400 });
 
@@ -45,6 +46,9 @@ REFERENTES: ${(Array.isArray(field.referents) ? field.referents : []).join("; ")
 EVIDÊNCIAS VALIDADAS:
 ${JSON.stringify(compactEvidence)}
 
+DIAGNÓSTICO PROBATÓRIO DO CAMPO:
+${JSON.stringify(diagnostic)}
+
 REGRAS:
 - Cruze semanticamente as fontes; não se limite a enumerá-las.
 - Distinga fontes independentes de mera repetição e documento normativo de prática comprovada.
@@ -54,7 +58,9 @@ REGRAS:
 - Não transforme ausência de evidência em evidência de ausência.
 - Não invente dados, frequência, causalidade ou representatividade.
 - Redija 1 a 3 parágrafos contínuos, claros e sóbrios, sem citar nomes de ficheiros ou páginas no corpo.
-- Termine com uma reserva proporcional quando a base probatória não permita demonstrar alcance, regularidade, resultados ou impacto.
+- Não inclua reservas genéricas ou preventivas. Só formule uma reserva quando o diagnóstico identificar uma limitação concreta.
+- Se coveragePercent for 100, não afirme que faltam indicadores. Se independentDiversity for verdadeira e hasResultsOrImpact for verdadeiro, omita inteiramente a reserva, salvo contradição identificada.
+- Quando exista limitação, nomeie-a com precisão: indicadores sem evidência, pouca diversidade de fontes, contradição ou ausência de resultados/impacto.
 - Não formule uma classificação global nem use linguagem promocional.`;
 
     const response = await fetch("https://api.openai.com/v1/responses", {

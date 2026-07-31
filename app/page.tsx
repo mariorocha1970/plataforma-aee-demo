@@ -131,6 +131,7 @@ type StatisticalRecord = {
   evidenceUse?: "academic-comparison" | "context-only";
   sourceKey?: string;
   sourceScope?: string;
+  sourceScopeCode?: string;
 };
 
 type StatisticalTreatment = {
@@ -514,6 +515,17 @@ function treatmentIndicatorKey(record: StatisticalRecord) {
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 140) || "indicador";
+}
+
+function infoEscolasRecordScope(record: StatisticalRecord) {
+  if (record.sourceScopeCode) return String(record.sourceScopeCode);
+  const text = normalizeText(`${record.comparisonKey || ""} ${record.indicator}`);
+  if (/concluem.*1 ciclo.*quatro anos|1 ciclo.*ensino geral/.test(text)) return "1";
+  if (/concluem.*2 ciclo.*dois anos|2 ciclo.*geral/.test(text)) return "2";
+  if (/concluem.*3 ciclo.*tres anos|antes do 3 ciclo|percursos diretos.*3 ciclo/.test(text)) return "3";
+  if (/curso profissional|ensino profissional/.test(text)) return "5";
+  if (/cientifico.?humanistico|ensino secundario|antes do secundario/.test(text)) return "4";
+  return "";
 }
 
 function treatmentPointLabel(record: StatisticalRecord, index: number) {
@@ -1743,20 +1755,29 @@ export default function Home() {
       const headerName = response.headers.get("x-source-filename");
       const fileName = headerName ? decodeURIComponent(headerName) : decodeURIComponent(sourceUrl.pathname.split("/").pop() || "InfoEscolas-online");
       if (contentType.includes("application/json")) {
-        const payload = await response.json() as { kind?: string; school?: string; scopeLabel?: string; scopeKey?: string; records?: Array<{ indicator?: string; value?: string; context?: string; location?: string; chartTitle?: string; period?: string; seriesRole?: "school" | "national" | "other"; evidenceUse?: "academic-comparison" | "context-only" }> };
+        const payload = await response.json() as { kind?: string; school?: string; scopeLabel?: string; scopeCode?: string; scopeKey?: string; records?: Array<{ indicator?: string; value?: string; context?: string; location?: string; chartTitle?: string; period?: string; seriesRole?: "school" | "national" | "other"; evidenceUse?: "academic-comparison" | "context-only" }> };
         if (payload.kind !== "infoescolas" || !Array.isArray(payload.records)) throw new Error("O portal devolveu dados num formato não reconhecido.");
         const scopeLabel = payload.scopeLabel || "Oferta não identificada";
-        const sourceKey = payload.scopeKey || `${payload.school || sourceUrl.hostname}|${scopeLabel}|${sourceUrl.searchParams.get("nivel") || finalUrl}`;
+        const requestedLevel = url.searchParams.get("nivel") || sourceUrl.searchParams.get("nivel") || "";
+        const scopeCode = payload.scopeCode || requestedLevel || scopeLabel;
+        // A chave canónica vem do endereço originalmente inserido. Assim, um
+        // redirecionamento do portal nunca funde dois níveis de ensino.
+        const sourceKey = payload.scopeKey || `infoescolas|${payload.school || sourceUrl.hostname}|${scopeCode}`;
         const source = `InfoEscolas · ${payload.school || sourceUrl.hostname} · ${scopeLabel}`;
         const extracted = payload.records.flatMap((item, index) => {
           const indicator = String(item.indicator ?? "").trim();
           const value = String(item.value ?? "").trim();
           const context = String(item.context ?? "").trim();
           if (!indicator || !value || !context || !isPlausibleStatisticalLabel(indicator) || looksLikeExecutableCode(indicator)) return [];
-          return [{ id: Date.now() * 1000 + index, fieldId: "res-acad", indicator, value, context, source, location: String(item.location ?? finalUrl), dataset: "infoescolas", comparisonKey: String(item.chartTitle ?? indicator.split(" — ")[0]).trim(), period: String(item.period ?? "").trim(), seriesRole: item.seriesRole ?? "other", evidenceUse: item.evidenceUse ?? "context-only", sourceKey, sourceScope: scopeLabel } satisfies StatisticalRecord];
+          return [{ id: Date.now() * 1000 + index, fieldId: "res-acad", indicator, value, context, source, location: String(item.location ?? finalUrl), dataset: "infoescolas", comparisonKey: String(item.chartTitle ?? indicator.split(" — ")[0]).trim(), period: String(item.period ?? "").trim(), seriesRole: item.seriesRole ?? "other", evidenceUse: item.evidenceUse ?? "context-only", sourceKey, sourceScope: scopeLabel, sourceScopeCode: scopeCode } satisfies StatisticalRecord];
         });
-        const replacedIds = statisticalRecords.filter((record) => (record.sourceKey || record.source) === sourceKey).map((record) => record.id);
-        setStatisticalRecords((current) => [...current.filter((record) => (record.sourceKey || record.source) !== sourceKey && validStatisticalRecord(record)), ...extracted]);
+        const sameScope = (record: StatisticalRecord) => (record.sourceKey || record.source) === sourceKey
+          || (record.dataset === "infoescolas" && Boolean(scopeCode) && infoEscolasRecordScope(record) === String(scopeCode));
+        // A segunda condição repara dados guardados pela v62 cuja chave ficou
+        // errada devido a um redirecionamento: só substitui registos cujo próprio
+        // indicador demonstra pertencer ao ciclo agora reimportado.
+        const replacedIds = statisticalRecords.filter(sameScope).map((record) => record.id);
+        setStatisticalRecords((current) => [...current.filter((record) => !sameScope(record) && validStatisticalRecord(record)), ...extracted]);
         setStatisticalTreatments((current) => current.filter((treatment) => !treatment.recordIds.some((id) => replacedIds.includes(id))));
         // Todos os dados permanecem disponíveis para tratamento e consulta.
         // Só as comparações académicas serão pré-selecionadas para promoção.

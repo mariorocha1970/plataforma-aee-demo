@@ -59,7 +59,41 @@ function splitSetCookies(headers: Headers) {
   return raw.map((value) => value.split(";", 1)[0]).filter(Boolean);
 }
 
-function infoEscolasPayload(html: string, sourceUrl: string) {
+const INFOESCOLAS_LEVELS: Record<string, string> = {
+  "1": "1.º ciclo",
+  "2": "2.º ciclo",
+  "3": "3.º ciclo",
+  "4": "Ensino secundário",
+  "5": "Ensino profissional",
+};
+
+function normalizedSourcePart(value: string) {
+  return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+}
+
+function infoEscolasScope(requestedUrl: string, resolvedUrl: string, titles: string) {
+  const requested = new URL(requestedUrl);
+  const resolved = new URL(resolvedUrl);
+  // O endereço colado pelo utilizador é a referência principal. O portal pode
+  // redirecionar para uma página cujo URL já não conserva o parâmetro "nivel".
+  const explicitLevel = requested.searchParams.get("nivel") || resolved.searchParams.get("nivel") || "";
+  const scopeLabel = INFOESCOLAS_LEVELS[explicitLevel]
+    || (/percentagem de alunos[^.]*concluem o 1\s*\.?\s*ciclo em quatro anos|1\s*\.?\s*ciclo\s*-\s*ensino geral/.test(titles) ? "1.º ciclo"
+      : /percentagem de alunos[^.]*concluem o 2\s*\.?\s*ciclo em dois anos|2\s*\.?\s*ciclo\s*-\s*(?:geral|ensino)/.test(titles) ? "2.º ciclo"
+      : /percentagem de alunos[^.]*concluem o 3\s*\.?\s*ciclo em tres anos|antes do 3\s*\.?\s*ciclo/.test(titles) ? "3.º ciclo"
+      : /cursos? profissionais?|ensino profissional/.test(titles) ? "Ensino profissional"
+      : /cursos? cientifico.?humanisticos?|antes do secundario/.test(titles) ? "Ensino secundário"
+      : "Outra oferta");
+  const organization = requested.searchParams.get("code") || resolved.searchParams.get("code") || "InfoEscolas";
+  const scopeCode = explicitLevel || normalizedSourcePart(scopeLabel);
+  return {
+    scopeLabel,
+    scopeCode,
+    scopeKey: `infoescolas|${normalizedSourcePart(organization)}|${scopeCode}`,
+  };
+}
+
+function infoEscolasPayload(html: string, sourceUrl: string, requestedUrl = sourceUrl) {
   if (!/infoescolas\.medu\.pt/i.test(sourceUrl) || !/google\.visualization\.DataTable/.test(html)) return null;
   const clean = (value: string) => value.replace(/<[^>]*>/g, " ").replace(/&nbsp;|&#160;/gi, " ").replace(/&ordm;|&#186;/gi, "º").replace(/&amp;/gi, "&").replace(/\s+/g, " ").trim();
   const titleMap = new Map<string, string>();
@@ -131,17 +165,8 @@ function infoEscolasPayload(html: string, sourceUrl: string) {
   }
   if (!records.length) return null;
   const titles = [...new Set(records.map((record) => record.chartTitle))].join(" ").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
-  const scopeLabel = /1\s*\.?\s*ciclo|primeiro ciclo/.test(titles) ? "1.º ciclo"
-    : /2\s*\.?\s*ciclo|segundo ciclo/.test(titles) ? "2.º ciclo"
-    : /3\s*\.?\s*ciclo|terceiro ciclo/.test(titles) ? "3.º ciclo"
-    : /profissional/.test(titles) ? "Ensino profissional"
-    : /secundario|cientifico.?humanistico/.test(titles) ? "Ensino secundário"
-    : "Oferta não identificada";
-  const url = new URL(sourceUrl);
-  const organization = url.searchParams.get("code") || school;
-  const explicitLevel = url.searchParams.get("nivel") || "";
-  const scopeKey = `${organization.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase()}|${scopeLabel}|${explicitLevel}`;
-  return { kind: "infoescolas", school, sourceUrl, scopeLabel, scopeKey, records };
+  const scope = infoEscolasScope(requestedUrl, sourceUrl, titles);
+  return { kind: "infoescolas", school, sourceUrl, ...scope, records };
 }
 
 function declaredCharset(contentType: string) {
@@ -206,7 +231,7 @@ export async function POST(request: NextRequest) {
     const contentType = originalContentType.split(";")[0].trim();
     if (contentType.includes("html") || contentType.startsWith("text/")) {
       const decoded = decodeText(bytes, originalContentType);
-      const infoEscolas = infoEscolasPayload(decoded, current.toString());
+      const infoEscolas = infoEscolasPayload(decoded, current.toString(), body.url.trim());
       if (infoEscolas) return NextResponse.json(infoEscolas, { headers: { "Cache-Control": "no-store", "X-Source-URL": current.toString(), "X-Source-Filename": encodeURIComponent("InfoEscolas.json") } });
       bytes = new TextEncoder().encode(removeExecutableHtml(decoded)).buffer;
     }

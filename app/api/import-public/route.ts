@@ -53,6 +53,67 @@ function removeExecutableHtml(html: string) {
     .replace(/\s(?:on\w+|srcdoc)\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, " ");
 }
 
+function splitSetCookies(headers: Headers) {
+  const values = (headers as Headers & { getSetCookie?: () => string[] }).getSetCookie?.() ?? [];
+  const raw = values.length ? values : headers.get("set-cookie") ? [headers.get("set-cookie") as string] : [];
+  return raw.map((value) => value.split(";", 1)[0]).filter(Boolean);
+}
+
+function infoEscolasPayload(html: string, sourceUrl: string) {
+  if (!/infoescolas\.medu\.pt/i.test(sourceUrl) || !/google\.visualization\.DataTable/.test(html)) return null;
+  const clean = (value: string) => value.replace(/<[^>]*>/g, " ").replace(/&nbsp;|&#160;/gi, " ").replace(/&ordm;|&#186;/gi, "º").replace(/&amp;/gi, "&").replace(/\s+/g, " ").trim();
+  const titleMap = new Map<string, string>();
+  for (const match of html.matchAll(/id=['"]DivTit(\d+)['"][^>]*>([\s\S]*?)(?:<span\b|<\/div>)/gi)) titleMap.set(match[1], clean(match[2]));
+  const school = clean(html.match(/class=['"]titEstCur['"][^>]*>([\s\S]*?)(?:<br|<\/td>)/i)?.[1] ?? "InfoEscolas");
+  const records: Array<{ indicator: string; value: string; context: string; location: string }> = [];
+  const functions = [...html.matchAll(/function\s+drawChart\d+\(\)\s*\{([\s\S]*?)(?=google\.setOnLoadCallback\(drawChart\d+\)|<\/script>)/g)];
+  for (const functionMatch of functions) {
+    const block = functionMatch[1];
+    const chartId = block.match(/getElementById\(['"]DivChart(\d+)['"]\)/)?.[1];
+    const title = chartId ? titleMap.get(chartId) : undefined;
+    const rowsLiteral = block.match(/data\.addRows\((\[[\s\S]*?\])\);/)?.[1];
+    if (!title || !rowsLiteral) continue;
+    const columns = [...block.matchAll(/data\.addColumn\(['"](?:string|number)['"],\s*['"]([^'"]+)['"]\)/g)].map((item) => clean(item[1]));
+    const rows = [...rowsLiteral.matchAll(/\[([^\[\]]*)\]/g)].map((row) => {
+      const cells: Array<string | number | null> = [];
+      const token = /\s*(?:'((?:\\.|[^'])*)'|"((?:\\.|[^"])*)"|([^,]*))\s*(?:,|$)/g;
+      let item: RegExpExecArray | null;
+      while ((item = token.exec(row[1])) && cells.length < columns.length) {
+        const raw = item[1] ?? item[2] ?? item[3]?.trim() ?? "";
+        if (item[1] !== undefined || item[2] !== undefined) cells.push(raw.replace(/\\'/g, "'").replace(/\\n/g, " "));
+        else cells.push(raw === "" ? null : Number(raw));
+        if (item[0] === "") break;
+      }
+      return cells;
+    });
+    rows.forEach((row) => {
+      const period = String(row[0] ?? "Observação");
+      const sampleColumn = columns.findIndex((column) => /numero alunos amostra/i.test(column));
+      const sample = sampleColumn > 0 && typeof row[sampleColumn] === "number" ? `; amostra=${row[sampleColumn]}` : "";
+      for (let index = 1; index < Math.min(columns.length, row.length); index += 1) {
+        const column = columns[index];
+        const numeric = row[index];
+        if (typeof numeric !== "number" || !Number.isFinite(numeric) || /balanco|numero alunos amostra/i.test(column)) continue;
+        let value = numeric;
+        let suffix = "";
+        const isEquity = /indicador de equidade/i.test(title);
+        const isPercentage = !isEquity && (/^perc\d*$/i.test(column) || /taxa|percentagem/i.test(title) || (/distribui[cç][aã]o.*sexo/i.test(title) && Math.abs(numeric) <= 1));
+        if (isPercentage) { value = Math.abs(numeric) <= 1 ? numeric * 100 : numeric; suffix = "%"; }
+        else if (isEquity) suffix = " p.p.";
+        const displayColumn = column.replace(/^Perc(\d)$/i, "$1.º ano").replace(/Media Nacional/gi, "Média nacional");
+        const formatted = Number(value.toFixed(2)).toLocaleString("pt-PT", { maximumFractionDigits: 2 });
+        records.push({
+          indicator: `${title} — ${displayColumn}`,
+          value: `${formatted}${suffix}`,
+          context: `${school}; período/categoria=${period}; série=${displayColumn}; valor=${formatted}${suffix}${sample}`,
+          location: `${title} · ${period}`,
+        });
+      }
+    });
+  }
+  return records.length ? { kind: "infoescolas", school, sourceUrl, records } : null;
+}
+
 function declaredCharset(contentType: string) {
   return contentType.match(/charset\s*=\s*["']?([^;\s"']+)/i)?.[1]?.trim().toLowerCase() || "";
 }
@@ -87,13 +148,16 @@ export async function POST(request: NextRequest) {
 
     let current = await assertPublicUrl(body.url.trim());
     let response: Response | null = null;
+    const cookies = new Map<string, string>();
+    const cookieHost = current.hostname.toLowerCase();
     for (let redirect = 0; redirect <= MAX_REDIRECTS; redirect += 1) {
       response = await fetch(current.toString(), {
         redirect: "manual",
         cache: "no-store",
         signal: AbortSignal.timeout(20_000),
-        headers: { "User-Agent": "Plataforma-AEE/1.0 (+public-data-import)", Accept: "text/html,application/pdf,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/plain;q=0.9,*/*;q=0.5" },
+        headers: { "User-Agent": "Plataforma-AEE/1.0 (+public-data-import)", Accept: "text/html,application/pdf,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/plain;q=0.9,*/*;q=0.5", ...(cookies.size && current.hostname.toLowerCase() === cookieHost ? { Cookie: [...cookies.entries()].map(([name, value]) => `${name}=${value}`).join("; ") } : {}) },
       });
+      if (current.hostname.toLowerCase() === cookieHost) splitSetCookies(response.headers).forEach((cookie) => { const separator = cookie.indexOf("="); if (separator > 0) cookies.set(cookie.slice(0, separator), cookie.slice(separator + 1)); });
       if (![301, 302, 303, 307, 308].includes(response.status)) break;
       const location = response.headers.get("location");
       if (!location) throw new Error("O portal devolveu um redirecionamento sem destino.");
@@ -112,6 +176,8 @@ export async function POST(request: NextRequest) {
     const contentType = originalContentType.split(";")[0].trim();
     if (contentType.includes("html") || contentType.startsWith("text/")) {
       const decoded = decodeText(bytes, originalContentType);
+      const infoEscolas = infoEscolasPayload(decoded, current.toString());
+      if (infoEscolas) return NextResponse.json(infoEscolas, { headers: { "Cache-Control": "no-store", "X-Source-URL": current.toString(), "X-Source-Filename": encodeURIComponent("InfoEscolas.json") } });
       bytes = new TextEncoder().encode(removeExecutableHtml(decoded)).buffer;
     }
     const filename = sourceFilename(current, response.headers.get("content-disposition"));

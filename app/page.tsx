@@ -432,12 +432,100 @@ function extractQuestionnaireRates(source: string, chunk: TextChunk, startId: nu
   return records;
 }
 
+function splitStatisticalRow(line: string) {
+  const delimiter = line.includes("\t") ? "\t" : line.includes(";") ? ";" : line.includes(",") ? "," : "";
+  if (!delimiter) return [line.trim()];
+  const cells: string[] = [];
+  let value = "";
+  let quoted = false;
+  for (let index = 0; index < line.length; index += 1) {
+    const character = line[index];
+    if (character === '"' && line[index + 1] === '"' && quoted) { value += '"'; index += 1; continue; }
+    if (character === '"') { quoted = !quoted; continue; }
+    if (character === delimiter && !quoted) { cells.push(value.trim()); value = ""; continue; }
+    value += character;
+  }
+  cells.push(value.trim());
+  return cells;
+}
+
+function statisticalCellValue(cell: string) {
+  const cleaned = cell.trim().replace(/\s+/g, " ");
+  if (!/^[-+]?\d+(?:[.,]\d+)?\s*%?$/.test(cleaned)) return null;
+  if (/^(?:19|20)\d{2}$/.test(cleaned)) return null;
+  return cleaned;
+}
+
+function extractTabularStatisticalRecords(source: string, chunk: TextChunk, startId: number) {
+  const records: StatisticalRecord[] = [];
+  const rows = chunk.text.split(/\r?\n/).map(splitStatisticalRow).filter((cells) => cells.length >= 2);
+  let headers: string[] = [];
+  rows.forEach((cells, rowIndex) => {
+    const numericIndexes = cells.map((cell, index) => statisticalCellValue(cell) !== null ? index : -1).filter((index) => index >= 0);
+    if (!numericIndexes.length) {
+      if (cells.some((cell) => /(?:19|20)\d{2}|%|valor|total|media|média|taxa/i.test(cell))) headers = cells;
+      return;
+    }
+    const firstNumeric = numericIndexes[0];
+    const labelCells = cells.slice(0, firstNumeric).filter(Boolean);
+    const indicator = (labelCells.at(-1) || headers[0] || "Indicador estatístico").replace(/^\d+[.)-]?\s*/, "").trim().slice(0, 220);
+    if (!isPlausibleStatisticalLabel(indicator)) return;
+    numericIndexes.forEach((cellIndex) => {
+      const rawValue = statisticalCellValue(cells[cellIndex]);
+      if (!rawValue) return;
+      const header = headers[cellIndex]?.trim();
+      const period = header?.match(/\b(?:19|20)\d{2}(?:\s*[-–/]\s*(?:19|20)?\d{2})?\b/)?.[0];
+      const context = [indicator, header, rawValue].filter(Boolean).join(" | ");
+      records.push({
+        id: startId + records.length,
+        fieldId: inferStatisticalField(`${indicator} ${header || ""}`),
+        indicator,
+        value: rawValue,
+        context,
+        source,
+        location: `${chunk.location} · linha ${rowIndex + 1}`,
+        dataset: "general",
+        sourceKey: `local|${normalizeText(source)}`,
+        period,
+      });
+    });
+  });
+  return records;
+}
+
+function deduplicateStatisticalRecords(records: StatisticalRecord[]) {
+  const unique = new Map<string, StatisticalRecord>();
+  records.forEach((record) => {
+    const scope = record.dataset === "infoescolas"
+      ? `infoescolas|${normalizeText(record.source.replace(/·[^·]+$/, ""))}|${record.sourceScopeCode || infoEscolasRecordScope(record) || normalizeText(record.sourceScope || "")}`
+      : `local|${normalizeText(record.source)}`;
+    const key = [scope, record.fieldId, normalizeText(record.comparisonKey || record.indicator), record.period || "", record.seriesRole || "", normalizeText(record.context.replace(record.value, ""))].join("|");
+    unique.set(key, record);
+  });
+  return [...unique.values()];
+}
+
+function deduplicateStatisticalTreatments(treatments: StatisticalTreatment[], records?: StatisticalRecord[]) {
+  const unique = new Map<string, StatisticalTreatment>();
+  const activeRecordIds = records ? new Set(records.map((record) => record.id)) : null;
+  treatments.forEach((treatment) => {
+    if (activeRecordIds && treatment.recordIds.length && !treatment.recordIds.some((id) => activeRecordIds.has(id))) return;
+    unique.set(treatment.id, treatment);
+  });
+  return [...unique.values()];
+}
+
 function extractStatisticalRecords(source: string, chunks: TextChunk[]) {
   const records: StatisticalRecord[] = [];
   chunks.forEach((chunk) => {
     const questionnaireRates = extractQuestionnaireRates(source, chunk, Date.now() * 1000 + records.length);
     if (questionnaireRates.length) {
       records.push(...questionnaireRates);
+      return;
+    }
+    const tabularRecords = extractTabularStatisticalRecords(source, chunk, Date.now() * 1000 + records.length);
+    if (tabularRecords.length) {
+      records.push(...tabularRecords);
       return;
     }
     const rawLines = chunk.text.split(/\n+|(?<=[.!?])\s+/).map((line) => line.replace(/[•●▪◦*]+/g, " ").replace(/[ \t]+/g, " ").trim());
@@ -480,7 +568,7 @@ function extractStatisticalRecords(source: string, chunks: TextChunk[]) {
       });
     });
   });
-  return records.slice(0, 60);
+  return deduplicateStatisticalRecords(records).slice(0, 1000);
 }
 
 function looksLikeExecutableCode(text: string) {
@@ -833,7 +921,7 @@ async function extractFile(file: File): Promise<TextChunk[]> {
     for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
       const page = await document.getPage(pageNumber);
       const content = await page.getTextContent();
-      const text = content.items.map((item) => ("str" in item ? item.str : "")).join(" ").replace(/\s+/g, " ").trim();
+      const text = content.items.map((item) => "str" in item ? `${item.str}${"hasEOL" in item && item.hasEOL ? "\n" : " "}` : "").join("").replace(/[ \t]+/g, " ").replace(/\n\s*\n+/g, "\n").trim();
       if (text) chunks.push({ text, location: `p. ${pageNumber}` });
     }
     return chunks;
@@ -1311,8 +1399,9 @@ export default function Home() {
         }
         if (Array.isArray(data.interviews)) setInterviews(data.interviews);
         if (Array.isArray(data.interviewCandidates)) setInterviewCandidates(data.interviewCandidates);
-        if (Array.isArray(data.statisticalRecords)) setStatisticalRecords(data.statisticalRecords);
-        if (Array.isArray(data.statisticalTreatments)) setStatisticalTreatments(data.statisticalTreatments.filter((item: StatisticalTreatment) => Array.isArray(item.points) && Array.isArray(item.strengths) && Array.isArray(item.improvements)));
+        const restoredStatisticalRecords = Array.isArray(data.statisticalRecords) ? deduplicateStatisticalRecords(data.statisticalRecords) : [];
+        setStatisticalRecords(restoredStatisticalRecords);
+        if (Array.isArray(data.statisticalTreatments)) setStatisticalTreatments(deduplicateStatisticalTreatments(data.statisticalTreatments.filter((item: StatisticalTreatment) => Array.isArray(item.points) && Array.isArray(item.strengths) && Array.isArray(item.improvements)), restoredStatisticalRecords));
         if (Array.isArray(data.questionnaireComments)) setQuestionnaireComments(data.questionnaireComments);
         if (typeof data.questionnaireReport === "string") setQuestionnaireReport(data.questionnaireReport);
         if (Array.isArray(data.files)) setFiles(data.files);
@@ -1404,9 +1493,10 @@ export default function Home() {
       setEvidence(data.evidence);
       setDocumentCandidates(data.documentCandidates);
       setSelectedCandidates([]);
-      setStatisticalRecords(Array.isArray(data.statisticalRecords) ? data.statisticalRecords : []);
+      const restoredStatisticalRecords = Array.isArray(data.statisticalRecords) ? deduplicateStatisticalRecords(data.statisticalRecords) : [];
+      setStatisticalRecords(restoredStatisticalRecords);
       setSelectedStatisticalIds([]);
-      setStatisticalTreatments(Array.isArray(data.statisticalTreatments) ? data.statisticalTreatments : []);
+      setStatisticalTreatments(Array.isArray(data.statisticalTreatments) ? deduplicateStatisticalTreatments(data.statisticalTreatments, restoredStatisticalRecords) : []);
       setSelectedTreatmentIds([]);
       setQuestionnaireComments(Array.isArray(data.questionnaireComments) ? data.questionnaireComments : []);
       setQuestionnaireReport(typeof data.questionnaireReport === "string" ? data.questionnaireReport : "");
@@ -1717,7 +1807,7 @@ export default function Home() {
     const extracted = extractStatisticalRecords(source, chunks).map((record) => ({ ...record, dataset: "general" as const, sourceKey }));
     // Recarregar um ficheiro substitui apenas esse ficheiro. Não se volta a
     // validar nem a filtrar aqui os registos das restantes origens.
-    setStatisticalRecords((current) => [...current.filter((record) => (record.sourceKey || `local|${normalizeText(record.source)}`) !== sourceKey), ...extracted]);
+    setStatisticalRecords((current) => deduplicateStatisticalRecords([...current.filter((record) => (record.sourceKey || `local|${normalizeText(record.source)}`) !== sourceKey), ...extracted]));
     setStatisticalTreatments((current) => current.filter((treatment) => !(treatment.sourceKeys ?? []).includes(sourceKey) && !treatment.sources.includes(source)));
     setSelectedTreatmentIds((current) => current.filter((id) => !id.includes(sourceKey)));
     setSelectedStatisticalIds((current) => [...new Set([
@@ -1797,7 +1887,7 @@ export default function Home() {
         // A segunda condição repara dados guardados pela v62 cuja chave ficou
         // errada devido a um redirecionamento: só substitui registos cujo próprio
         // indicador demonstra pertencer ao ciclo agora reimportado.
-        setStatisticalRecords((current) => [...current.filter((record) => !sameScope(record)), ...extracted]);
+        setStatisticalRecords((current) => deduplicateStatisticalRecords([...current.filter((record) => !sameScope(record)), ...extracted]));
         setStatisticalTreatments((current) => current.filter((treatment) => !(treatment.sourceKeys ?? []).some((key) => key === sourceKey || (key.startsWith("infoescolas|") && key.endsWith(`|${String(scopeCode)}`) && normalizeText(treatment.sources.join(" ")).includes(schoolKey)))));
         // Todos os dados permanecem disponíveis para tratamento e consulta.
         // Só as comparações académicas serão pré-selecionadas para promoção.
@@ -1867,7 +1957,7 @@ export default function Home() {
     // dados de origem. O utilizador pode revê-los ou voltar a carregá-los.
     const treatments = buildStatisticalTreatments(base);
     const treatmentIds = new Set(treatments.map((treatment) => treatment.id));
-    setStatisticalTreatments((current) => [...current.filter((treatment) => !treatmentIds.has(treatment.id)), ...treatments]);
+    setStatisticalTreatments((current) => deduplicateStatisticalTreatments([...current.filter((treatment) => !treatmentIds.has(treatment.id)), ...treatments]));
     setSelectedTreatmentIds((current) => [...new Set([...current.filter((id) => !treatmentIds.has(id)), ...treatments.filter((treatment) => treatment.evidenceUse !== "context-only").map((treatment) => treatment.id)])]);
     const scopeLabel = dataset === "general" ? "ficheiros locais" : dataset === "infoescolas" ? "InfoEscolas" : "todas as fontes";
     setStatisticalStatus(`${treatments.length} síntese(s) de ${scopeLabel} produzida(s) a partir de ${base.length} registo(s). Os tratamentos e dados das restantes fontes foram preservados.${rejected ? ` ${rejected} linha(s) sem estrutura estatística interpretável foram ignoradas no tratamento, mas permanecem nos dados de origem.` : ""}`);

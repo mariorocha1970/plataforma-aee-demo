@@ -67,7 +67,7 @@ function infoEscolasPayload(html: string, sourceUrl: string) {
   // num getElementById('DivTitN') e capturar o número como título.
   for (const match of html.matchAll(/<(?:div|td)\b[^>]*\bid=['"]DivTit(\d+)['"][^>]*>([\s\S]*?)(?:<span\b|<\/div>)/gi)) titleMap.set(match[1], clean(match[2]));
   const school = clean(html.match(/class=['"]titEstCur['"][^>]*>([\s\S]*?)(?:<br|<\/td>)/i)?.[1] ?? "InfoEscolas");
-  const records: Array<{ indicator: string; value: string; context: string; location: string }> = [];
+  const records: Array<{ indicator: string; value: string; context: string; location: string; chartTitle: string; period: string; seriesRole: "school" | "national" | "other"; evidenceUse: "academic-comparison" | "context-only" }> = [];
   const functions = [...html.matchAll(/function\s+drawChart\d+\(\)\s*\{([\s\S]*?)(?=google\.setOnLoadCallback\(drawChart\d+\)|<\/script>)/g)];
   for (const functionMatch of functions) {
     const block = functionMatch[1];
@@ -75,6 +75,13 @@ function infoEscolasPayload(html: string, sourceUrl: string) {
     const title = chartId ? titleMap.get(chartId) : undefined;
     const rowsLiteral = block.match(/data\.addRows\((\[[\s\S]*?\])\);/)?.[1];
     if (!title || !rowsLiteral) continue;
+    const normalizedTitle = title.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+    const academicEvidenceRelevant = (
+      /alunos.*(?:apoio ase|ase).*(?:concluem|conclusao).*(?:em|nos)\s+(?:dois|tres|quatro|[234])\s+anos/.test(normalizedTitle)
+      || /percentagem de alunos que concluem.*(?:em|nos)\s+(?:dois|tres|quatro|[234])\s+anos/.test(normalizedTitle)
+      || /positiva.*provas? nacionais?.*percurso sem retencoes/.test(normalizedTitle)
+      || /percursos? diretos? de sucesso/.test(normalizedTitle)
+    );
     const columns = [...block.matchAll(/data\.addColumn\(['"](?:string|number)['"],\s*['"]([^'"]+)['"]\)/g)].map((item) => clean(item[1]));
     const rows = [...rowsLiteral.matchAll(/\[([^\[\]]*)\]/g)].map((row) => {
       const cells: Array<string | number | null> = [];
@@ -103,12 +110,18 @@ function infoEscolasPayload(html: string, sourceUrl: string) {
         if (isPercentage) { value = Math.abs(numeric) <= 1 ? numeric * 100 : numeric; suffix = "%"; }
         else if (isEquity) suffix = " p.p.";
         const displayColumn = column.replace(/^Perc(\d)$/i, "$1.º ano").replace(/Media Nacional/gi, "Média nacional");
+        const normalizedColumn = displayColumn.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+        const seriesRole: "school" | "national" | "other" = /nacional/.test(normalizedColumn) ? "national" : /amostra|balanco/.test(normalizedColumn) ? "other" : "school";
         const formatted = Number(value.toFixed(2)).toLocaleString("pt-PT", { maximumFractionDigits: 2 });
         records.push({
           indicator: `${title} — ${displayColumn}`,
           value: `${formatted}${suffix}`,
           context: `${school}. Período ou categoria: ${period}. Série: ${displayColumn}. Valor: ${formatted}${suffix}${sample ? sample.replace(/^; amostra=/, ". Amostra: ") : ""}`,
           location: `${title} · ${period}`,
+          chartTitle: title,
+          period,
+          seriesRole,
+          evidenceUse: academicEvidenceRelevant && (seriesRole === "school" || seriesRole === "national") ? "academic-comparison" : "context-only",
         });
       }
     });

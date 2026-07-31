@@ -42,6 +42,7 @@ type Evidence = {
   strength: Strength;
   validated: boolean;
   indicatorIds?: string[];
+  statisticalTreatmentId?: string;
 };
 
 type CandidateEvidence = Evidence & {
@@ -128,6 +129,8 @@ type StatisticalRecord = {
   period?: string;
   seriesRole?: "school" | "national" | "other";
   evidenceUse?: "academic-comparison" | "context-only";
+  sourceKey?: string;
+  sourceScope?: string;
 };
 
 type StatisticalTreatment = {
@@ -146,6 +149,7 @@ type StatisticalTreatment = {
   strengths: string[];
   improvements: string[];
   evidenceUse?: "academic-comparison" | "context-only";
+  sourceKeys?: string[];
 };
 
 type QuestionnaireComment = {
@@ -577,6 +581,7 @@ function buildInfoEscolasComparison(items: StatisticalRecord[], id: string): Sta
     strengths: [],
     improvements: complete.length < 3 ? ["A comparação não cobre três anos letivos completos com ambas as séries."] : [],
     evidenceUse: "academic-comparison",
+    sourceKeys: [...new Set(selected.map((item) => item.sourceKey).filter((value): value is string => Boolean(value)))],
   };
 }
 
@@ -586,9 +591,9 @@ function buildStatisticalTreatments(records: StatisticalRecord[]) {
     const unit = record.value.includes("%") ? "%" : "valor";
     const respondentGroup = record.indicator.match(/—\s*(Alunos|Encarregados de educação|Docentes|Não docentes)$/i)?.[1];
     const key = record.dataset === "infoescolas" && record.evidenceUse === "academic-comparison" && record.comparisonKey
-      ? `infoescolas|${normalizeText(record.comparisonKey)}`
+      ? `infoescolas|${record.sourceKey || normalizeText(record.source)}|${normalizeText(record.comparisonKey)}`
       : record.dataset === "infoescolas" && record.evidenceUse === "context-only"
-        ? `infoescolas-context|${record.fieldId}|${unit}|${treatmentIndicatorKey(record)}`
+        ? `infoescolas-context|${record.sourceKey || normalizeText(record.source)}|${record.fieldId}|${unit}|${treatmentIndicatorKey(record)}`
       : respondentGroup ? `questionnaire|${respondentGroup}` : `${record.fieldId}|${unit}|${treatmentIndicatorKey(record)}`;
     grouped.set(key, [...(grouped.get(key) ?? []), record]);
   });
@@ -1110,6 +1115,14 @@ function requiredAcademicComparisons(records: Evidence[]) {
     .map((item) => item.claim.trim());
 }
 
+function evidenceRevision(records: Evidence[], fieldId: string) {
+  return records
+    .filter((record) => record.fieldId === fieldId && record.validated)
+    .map((record) => `${record.id}|${record.status}|${record.claim}|${(record.indicatorIds ?? []).join(",")}`)
+    .sort()
+    .join("\n");
+}
+
 function comparisonFacts(value: string) {
   return [...new Set(value.match(/\b(?:19|20)\d{2}\/\d{2}\b|[-−]?\d+(?:[,.]\d+)?\s*(?:%|p\.p\.)/gi) ?? [])]
     .map((item) => normalizeText(item).replace(/−/g, "-"));
@@ -1245,6 +1258,7 @@ export default function Home() {
   const [interviewAnalyzing, setInterviewAnalyzing] = useState(false);
   const [report, setReport] = useState("");
   const [narratives, setNarratives] = useState<Record<string, string>>({});
+  const [triangulationRevisions, setTriangulationRevisions] = useState<Record<string, string>>({});
   const [saved, setSaved] = useState(false);
   const [lastUpdated, setLastUpdated] = useState("");
   const [changesPending, setChangesPending] = useState(false);
@@ -1289,6 +1303,7 @@ export default function Home() {
         if (data.fileAnalysis && typeof data.fileAnalysis === "object") setFileAnalysis(data.fileAnalysis);
         if (typeof data.report === "string") setReport(data.report);
         if (data.narratives && typeof data.narratives === "object") setNarratives(data.narratives);
+        if (data.triangulationRevisions && typeof data.triangulationRevisions === "object") setTriangulationRevisions(data.triangulationRevisions);
         if (Array.isArray(data.conclusions)) setConclusions(data.conclusions);
         if (data.indicatorApplicability && typeof data.indicatorApplicability === "object") setIndicatorApplicability(data.indicatorApplicability);
         if (typeof data.lastUpdated === "string") setLastUpdated(data.lastUpdated);
@@ -1327,13 +1342,13 @@ export default function Home() {
   const allTreatmentsSelected = promotableTreatments.length > 0 && promotableTreatments.every((treatment) => selectedTreatmentIds.includes(treatment.id));
 
   function saveLocal() {
-    window.localStorage.setItem("aee-piloto-v2", JSON.stringify({ schoolName, evidence, documentCandidates, statisticalRecords, statisticalTreatments, questionnaireComments, questionnaireReport, interviews, interviewCandidates, files, fileAnalysis, narratives, report, conclusions, indicatorApplicability, lastUpdated }));
+    window.localStorage.setItem("aee-piloto-v2", JSON.stringify({ schoolName, evidence, documentCandidates, statisticalRecords, statisticalTreatments, questionnaireComments, questionnaireReport, interviews, interviewCandidates, files, fileAnalysis, narratives, triangulationRevisions, report, conclusions, indicatorApplicability, lastUpdated }));
     setSaved(true);
     window.setTimeout(() => setSaved(false), 1800);
   }
 
   function exportBackup() {
-    const payload = { schoolName, evidence, documentCandidates, statisticalRecords, statisticalTreatments, questionnaireComments, questionnaireReport, interviews, interviewCandidates, files, fileAnalysis, narratives, report, conclusions, indicatorApplicability, lastUpdated };
+    const payload = { schoolName, evidence, documentCandidates, statisticalRecords, statisticalTreatments, questionnaireComments, questionnaireReport, interviews, interviewCandidates, files, fileAnalysis, narratives, triangulationRevisions, report, conclusions, indicatorApplicability, lastUpdated };
     const backup = {
       format: "plataforma-aee-backup",
       version: 1,
@@ -1385,6 +1400,7 @@ export default function Home() {
       setFiles(data.files);
       setFileAnalysis(data.fileAnalysis);
       setNarratives(data.narratives && typeof data.narratives === "object" ? data.narratives : {});
+      setTriangulationRevisions(data.triangulationRevisions && typeof data.triangulationRevisions === "object" ? data.triangulationRevisions : {});
       setReport(typeof data.report === "string" ? data.report : "");
       setConclusions(Array.isArray(data.conclusions) ? data.conclusions : []);
       setIndicatorApplicability(data.indicatorApplicability && typeof data.indicatorApplicability === "object" ? data.indicatorApplicability : {});
@@ -1402,6 +1418,11 @@ export default function Home() {
   }
 
   function updateAnalysis() {
+    if (report && evidence.some((record) => record.fieldId === "res-acad" && record.validated) && triangulationRevisions["res-acad"] !== evidenceRevision(evidence, "res-acad")) {
+      setAiTriangulationStatus("A atualização foi interrompida: a triangulação de 5.4.1 está desatualizada após alterações na Matriz.");
+      setView("triangulacao");
+      return;
+    }
     setUpdating(true);
     const refreshedNarratives = preserveReviewedNarratives(evidence, narratives, indicatorApplicability);
     const refreshedReport = report ? buildReport(evidence, refreshedNarratives, indicatorApplicability) : report;
@@ -1415,7 +1436,7 @@ export default function Home() {
     setNarratives(refreshedNarratives);
     setLastUpdated(timestamp);
     setChangesPending(false);
-    window.localStorage.setItem("aee-piloto-v2", JSON.stringify({ schoolName, evidence, documentCandidates, statisticalRecords, statisticalTreatments, questionnaireComments, questionnaireReport, interviews, interviewCandidates, files, fileAnalysis, narratives: refreshedNarratives, report: refreshedReport, conclusions, indicatorApplicability, lastUpdated: timestamp }));
+    window.localStorage.setItem("aee-piloto-v2", JSON.stringify({ schoolName, evidence, documentCandidates, statisticalRecords, statisticalTreatments, questionnaireComments, questionnaireReport, interviews, interviewCandidates, files, fileAnalysis, narratives: refreshedNarratives, triangulationRevisions, report: refreshedReport, conclusions, indicatorApplicability, lastUpdated: timestamp }));
     window.setTimeout(() => setUpdating(false), 650);
   }
 
@@ -1433,6 +1454,7 @@ export default function Home() {
       fileAnalysis: {} as Record<string, FileAnalysis>,
       report: "",
       narratives: {} as Record<string, string>,
+      triangulationRevisions: {} as Record<string, string>,
       conclusions: [] as DomainConclusion[],
       indicatorApplicability: {} as Record<string, IndicatorApplicability>,
       lastUpdated: "",
@@ -1458,6 +1480,7 @@ export default function Home() {
     setPreparedDocuments([]);
     setReport(emptyProcess.report);
     setNarratives(emptyProcess.narratives);
+    setTriangulationRevisions(emptyProcess.triangulationRevisions);
     setConclusions(emptyProcess.conclusions);
     setIndicatorApplicability(emptyProcess.indicatorApplicability);
     setLastUpdated(emptyProcess.lastUpdated);
@@ -1720,25 +1743,27 @@ export default function Home() {
       const headerName = response.headers.get("x-source-filename");
       const fileName = headerName ? decodeURIComponent(headerName) : decodeURIComponent(sourceUrl.pathname.split("/").pop() || "InfoEscolas-online");
       if (contentType.includes("application/json")) {
-        const payload = await response.json() as { kind?: string; school?: string; records?: Array<{ indicator?: string; value?: string; context?: string; location?: string; chartTitle?: string; period?: string; seriesRole?: "school" | "national" | "other"; evidenceUse?: "academic-comparison" | "context-only" }> };
+        const payload = await response.json() as { kind?: string; school?: string; scopeLabel?: string; scopeKey?: string; records?: Array<{ indicator?: string; value?: string; context?: string; location?: string; chartTitle?: string; period?: string; seriesRole?: "school" | "national" | "other"; evidenceUse?: "academic-comparison" | "context-only" }> };
         if (payload.kind !== "infoescolas" || !Array.isArray(payload.records)) throw new Error("O portal devolveu dados num formato não reconhecido.");
-        const source = payload.school ? `InfoEscolas · ${payload.school}` : `InfoEscolas · ${sourceUrl.hostname}`;
+        const scopeLabel = payload.scopeLabel || "Oferta não identificada";
+        const sourceKey = payload.scopeKey || `${payload.school || sourceUrl.hostname}|${scopeLabel}|${sourceUrl.searchParams.get("nivel") || finalUrl}`;
+        const source = `InfoEscolas · ${payload.school || sourceUrl.hostname} · ${scopeLabel}`;
         const extracted = payload.records.flatMap((item, index) => {
           const indicator = String(item.indicator ?? "").trim();
           const value = String(item.value ?? "").trim();
           const context = String(item.context ?? "").trim();
           if (!indicator || !value || !context || !isPlausibleStatisticalLabel(indicator) || looksLikeExecutableCode(indicator)) return [];
-          return [{ id: Date.now() * 1000 + index, fieldId: "res-acad", indicator, value, context, source, location: String(item.location ?? finalUrl), dataset: "infoescolas", comparisonKey: String(item.chartTitle ?? indicator.split(" — ")[0]).trim(), period: String(item.period ?? "").trim(), seriesRole: item.seriesRole ?? "other", evidenceUse: item.evidenceUse ?? "context-only" } satisfies StatisticalRecord];
+          return [{ id: Date.now() * 1000 + index, fieldId: "res-acad", indicator, value, context, source, location: String(item.location ?? finalUrl), dataset: "infoescolas", comparisonKey: String(item.chartTitle ?? indicator.split(" — ")[0]).trim(), period: String(item.period ?? "").trim(), seriesRole: item.seriesRole ?? "other", evidenceUse: item.evidenceUse ?? "context-only", sourceKey, sourceScope: scopeLabel } satisfies StatisticalRecord];
         });
-        const replacedIds = statisticalRecords.filter((record) => record.source === source).map((record) => record.id);
-        setStatisticalRecords((current) => [...current.filter((record) => record.source !== source && validStatisticalRecord(record)), ...extracted]);
+        const replacedIds = statisticalRecords.filter((record) => (record.sourceKey || record.source) === sourceKey).map((record) => record.id);
+        setStatisticalRecords((current) => [...current.filter((record) => (record.sourceKey || record.source) !== sourceKey && validStatisticalRecord(record)), ...extracted]);
         setStatisticalTreatments((current) => current.filter((treatment) => !treatment.recordIds.some((id) => replacedIds.includes(id))));
         // Todos os dados permanecem disponíveis para tratamento e consulta.
         // Só as comparações académicas serão pré-selecionadas para promoção.
         setSelectedStatisticalIds(extracted.map((record) => record.id));
-        setSelectedTreatmentIds([]);
+        setSelectedTreatmentIds((current) => current.filter((id) => statisticalTreatments.some((treatment) => treatment.id === id && !treatment.recordIds.some((recordId) => replacedIds.includes(recordId)))));
         setChangesPending(true);
-        setStatisticalStatus(extracted.length ? `${extracted.length} observações estatísticas identificadas para ${payload.school || sourceUrl.hostname}, organizadas pelos gráficos do InfoEscolas.` : "A página da escola foi aberta, mas os gráficos não continham observações reconhecíveis.");
+        setStatisticalStatus(extracted.length ? `${extracted.length} observações estatísticas de ${scopeLabel} acrescentadas. Os restantes ciclos/ofertas foram preservados.` : "A página da escola foi aberta, mas os gráficos não continham observações reconhecíveis.");
         return;
       }
       let chunks: TextChunk[];
@@ -1798,8 +1823,9 @@ export default function Home() {
       setSelectedStatisticalIds((current) => current.filter((id) => !rejectedIds.has(id)));
     }
     const treatments = buildStatisticalTreatments(base);
-    setStatisticalTreatments(treatments);
-    setSelectedTreatmentIds(treatments.filter((treatment) => treatment.evidenceUse !== "context-only").map((treatment) => treatment.id));
+    const treatmentIds = new Set(treatments.map((treatment) => treatment.id));
+    setStatisticalTreatments((current) => [...current.filter((treatment) => !treatmentIds.has(treatment.id)), ...treatments]);
+    setSelectedTreatmentIds((current) => [...new Set([...current.filter((id) => !treatmentIds.has(id)), ...treatments.filter((treatment) => treatment.evidenceUse !== "context-only").map((treatment) => treatment.id)])]);
     setStatisticalStatus(`${treatments.length} síntese(s) de tratamento produzida(s) a partir de ${base.length} registo(s).${rejected ? ` ${rejected} registo(s) inválido(s), com código ou rótulo não interpretável, foram removidos.` : ""}`);
     setChangesPending(true);
   }
@@ -1831,8 +1857,23 @@ export default function Home() {
       strength: "Insuficiente",
       validated: true,
       indicatorIds: treatment.id.startsWith("infoescolas|") ? indicatorIdsForInfoEscolasTreatment(treatment) : [],
+      statisticalTreatmentId: treatment.id,
     }));
-    setEvidence((current) => [...current.filter((item) => !promoted.some((record) => record.source === item.source)), ...promoted]);
+    const promotedIds = new Set(promoted.map((record) => record.statisticalTreatmentId));
+    const promotedFields = new Set(promoted.map((record) => record.fieldId));
+    setEvidence((current) => [...current.filter((item) => {
+      if (item.statisticalTreatmentId && promotedIds.has(item.statisticalTreatmentId)) return false;
+      if (!item.statisticalTreatmentId && promotedFields.has(item.fieldId) && item.source.startsWith("Tratamento estatístico —")) return false;
+      return true;
+    }), ...promoted]);
+    setTriangulationRevisions((current) => {
+      const next = { ...current };
+      selected.forEach((treatment) => { delete next[treatment.fieldId]; });
+      return next;
+    });
+    if (selected.some((treatment) => treatment.fieldId === "res-acad")) {
+      setAiTriangulationStatus("Foram acrescentadas ou atualizadas evidências estatísticas em 5.4.1. A triangulação anterior está desatualizada e deve ser repetida antes do Relatório.");
+    }
     setChangesPending(true);
     setView("evidencias");
   }
@@ -1970,6 +2011,11 @@ export default function Home() {
   function generateReport() {
     const completedNarratives = preserveReviewedNarratives(evidence, narratives, indicatorApplicability);
     const comparisons = requiredAcademicComparisons(evidence);
+    if (evidence.some((record) => record.fieldId === "res-acad" && record.validated) && triangulationRevisions["res-acad"] !== evidenceRevision(evidence, "res-acad")) {
+      setAiTriangulationStatus("A triangulação de 5.4.1 está desatualizada porque a Matriz recebeu novas evidências. Repita a triangulação antes de gerar o Relatório.");
+      setView("triangulacao");
+      return;
+    }
     if (comparisons.some((comparison) => !containsAcademicComparison(narratives["res-acad"] || "", comparison))) {
       setAiTriangulationStatus("As análises comparadas de 5.4.1 já estão na Matriz, mas ainda não constam da narrativa triangulada. Execute a triangulação antes de gerar o Relatório.");
       setView("triangulacao");
@@ -2076,6 +2122,7 @@ export default function Home() {
       const narrative = ensureAcademicComparisonsInNarrative(String(payload?.narrative || "").trim(), field.id === "res-acad" ? requiredAcademicComparisons(records) : []);
       if (!narrative) throw new Error("A IA não devolveu uma narrativa utilizável.");
       setNarratives((current) => ({ ...current, [field.id]: narrative }));
+      setTriangulationRevisions((current) => ({ ...current, [field.id]: evidenceRevision(evidence, field.id) }));
       setChangesPending(true);
       setAiTriangulationStatus(`${field.section}: triangulação concluída numa chamada. Reveja e valide o texto.`);
     } catch (error) {
@@ -2118,6 +2165,10 @@ export default function Home() {
           return [fieldId, fieldId === "res-acad" ? ensureAcademicComparisonsInNarrative(value, requiredAcademicComparisons(records)) : value];
         })),
       }));
+      setTriangulationRevisions((current) => ({
+        ...current,
+        ...Object.fromEntries(usable.map((item: any) => [String(item.fieldId), evidenceRevision(evidence, String(item.fieldId))])),
+      }));
       setChangesPending(true);
       const missing = activeFields.length - usable.length;
       setAiTriangulationStatus(missing
@@ -2133,6 +2184,11 @@ export default function Home() {
   async function improveReportWithAi() {
     const completedNarratives = preserveReviewedNarratives(evidence, narratives, indicatorApplicability);
     const comparisons = requiredAcademicComparisons(evidence);
+    if (evidence.some((record) => record.fieldId === "res-acad" && record.validated) && triangulationRevisions["res-acad"] !== evidenceRevision(evidence, "res-acad")) {
+      setExportStatus("O relatório não foi aprimorado: a triangulação de 5.4.1 está desatualizada após a entrada de novas evidências.");
+      setView("triangulacao");
+      return;
+    }
     if (comparisons.some((comparison) => !containsAcademicComparison(narratives["res-acad"] || "", comparison))) {
       setExportStatus("O relatório não foi aprimorado: as análises estatísticas de 5.4.1 têm de passar primeiro pela triangulação.");
       setView("triangulacao");
@@ -2615,9 +2671,11 @@ export default function Home() {
               const strength = strengthFor(records);
               const types = new Set(records.map((record) => record.sourceType));
               const narrative = narratives[field.id] ?? composeFieldNarrative(field, records);
+              const triangulationOutdated = Boolean(narrative.trim()) && triangulationRevisions[field.id] !== evidenceRevision(evidence, field.id);
               return <article key={field.id}>
                 <div className="tri-top"><span>{field.section}</span><span className={`strength ${strength.toLowerCase()}`}>{strength}</span></div>
                 <h3>{field.name}</h3><small>{field.domain}</small>
+                {triangulationOutdated && <div className="statistics-status" role="status"><strong>Triangulação desatualizada.</strong> A Matriz mudou depois desta narrativa; repita a triangulação antes de atualizar o Relatório.</div>}
                 <div className="tri-stats"><span><strong>{records.length}</strong> validadas</span><span><strong>{types.size}</strong> tipos de fonte</span><span><strong>{waiting}</strong> pendentes</span></div>
                 <button className="button secondary" disabled={!records.length || aiTriangulatingAll || Boolean(aiTriangulatingField)} onClick={() => triangulateFieldWithAi(field)}>{aiTriangulatingField === field.id ? "A triangular…" : "Refazer apenas este campo · 1 chamada"}</button>
                 <label className="narrative-editor">Síntese avaliativa<textarea value={narrative} onChange={(event) => { setNarratives((current) => ({ ...current, [field.id]: event.target.value })); setChangesPending(true); }} /></label>

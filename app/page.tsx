@@ -1097,6 +1097,38 @@ function buildReport(evidence: Evidence[], narratives: Record<string, string> = 
   return lines.join("\n");
 }
 
+function requiredAcademicComparisons(records: Evidence[]) {
+  return records
+    .filter((item) => item.fieldId === "res-acad" && item.validated && item.sourceType === "Quantitativa" && (item.indicatorIds?.length ?? 0) > 0 && /nacional|país|pais|portugal/i.test(item.claim) && item.claim.trim())
+    .map((item) => item.claim.trim());
+}
+
+function comparisonFacts(value: string) {
+  return [...new Set(value.match(/\b(?:19|20)\d{2}\/\d{2}\b|[-−]?\d+(?:[,.]\d+)?\s*(?:%|p\.p\.)/gi) ?? [])]
+    .map((item) => normalizeText(item).replace(/−/g, "-"));
+}
+
+function containsAcademicComparison(text: string, comparison: string) {
+  const normalized = normalizeText(text).replace(/−/g, "-");
+  const facts = comparisonFacts(comparison);
+  return facts.length > 0 && facts.every((fact) => normalized.includes(fact));
+}
+
+function ensureAcademicComparisonsInNarrative(narrative: string, comparisons: string[]) {
+  const missing = comparisons.filter((comparison) => !containsAcademicComparison(narrative, comparison));
+  return [narrative.trim(), ...missing].filter(Boolean).join("\n\n");
+}
+
+function ensureAcademicComparisonsInReport(report: string, comparisons: string[]) {
+  const missing = comparisons.filter((comparison) => !containsAcademicComparison(report, comparison));
+  if (!missing.length) return report;
+  const block = missing.join("\n\n");
+  const nextSection = /\n5\.4\.2\.?\s+/i;
+  const match = nextSection.exec(report);
+  if (!match || match.index === undefined) return `${report.trim()}\n\n${block}`;
+  return `${report.slice(0, match.index).trimEnd()}\n\n${block}\n${report.slice(match.index)}`;
+}
+
 const negativeConclusionPattern = /\b(?:não|sem|insuficiente|limitad[ao]s?|fragilidad|desigual|irregular|carece|lacuna|contradit|abaixo|reduzid[ao]s?|não permite|não demonstra|por consolidar|necessita|requer)\b/i;
 const boilerplateConclusionPattern = /\b(?:evidência validada|base probatória|formulação do juízo|validação da equipa|fontes? independente|não demonstram?, por si só)\b/i;
 
@@ -1930,6 +1962,12 @@ export default function Home() {
 
   function generateReport() {
     const completedNarratives = preserveReviewedNarratives(evidence, narratives, indicatorApplicability);
+    const comparisons = requiredAcademicComparisons(evidence);
+    if (comparisons.some((comparison) => !containsAcademicComparison(narratives["res-acad"] || "", comparison))) {
+      setAiTriangulationStatus("As análises comparadas de 5.4.1 já estão na Matriz, mas ainda não constam da narrativa triangulada. Execute a triangulação antes de gerar o Relatório.");
+      setView("triangulacao");
+      return;
+    }
     setNarratives(completedNarratives);
     setReport(buildReport(evidence, completedNarratives, indicatorApplicability));
     setView("relatorio");
@@ -2024,11 +2062,11 @@ export default function Home() {
       const response = await fetch("/api/triangulate-field", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ field, evidence: records, diagnostic: fieldDiagnostic(field, records, indicatorApplicability) }),
+        body: JSON.stringify({ field, evidence: records, diagnostic: fieldDiagnostic(field, records, indicatorApplicability), mandatoryAcademicComparisons: field.id === "res-acad" ? requiredAcademicComparisons(records) : [] }),
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok || payload?.ok === false) throw new Error(payload?.error || `O servidor devolveu o estado ${response.status}.`);
-      const narrative = String(payload?.narrative || "").trim();
+      const narrative = ensureAcademicComparisonsInNarrative(String(payload?.narrative || "").trim(), field.id === "res-acad" ? requiredAcademicComparisons(records) : []);
       if (!narrative) throw new Error("A IA não devolveu uma narrativa utilizável.");
       setNarratives((current) => ({ ...current, [field.id]: narrative }));
       setChangesPending(true);
@@ -2058,7 +2096,7 @@ export default function Home() {
       const response = await fetch("/api/triangulate-all", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fields: activeFields, evidence: records, diagnostics: Object.fromEntries(activeFields.map((field) => [field.id, fieldDiagnostic(field, records.filter((record) => record.fieldId === field.id), indicatorApplicability)])) }),
+        body: JSON.stringify({ fields: activeFields, evidence: records, diagnostics: Object.fromEntries(activeFields.map((field) => [field.id, fieldDiagnostic(field, records.filter((record) => record.fieldId === field.id), indicatorApplicability)])), mandatoryAcademicComparisons: requiredAcademicComparisons(records) }),
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok || payload?.ok === false) throw new Error(payload?.error || `O servidor devolveu o estado ${response.status}.`);
@@ -2067,7 +2105,11 @@ export default function Home() {
       if (!usable.length) throw new Error("A IA não devolveu narrativas utilizáveis.");
       setNarratives((current) => ({
         ...current,
-        ...Object.fromEntries(usable.map((item: any) => [String(item.fieldId), String(item.narrative).trim()])),
+        ...Object.fromEntries(usable.map((item: any) => {
+          const fieldId = String(item.fieldId);
+          const value = String(item.narrative).trim();
+          return [fieldId, fieldId === "res-acad" ? ensureAcademicComparisonsInNarrative(value, requiredAcademicComparisons(records)) : value];
+        })),
       }));
       setChangesPending(true);
       const missing = activeFields.length - usable.length;
@@ -2083,7 +2125,13 @@ export default function Home() {
 
   async function improveReportWithAi() {
     const completedNarratives = preserveReviewedNarratives(evidence, narratives, indicatorApplicability);
-    const localDraft = report.trim() || buildReport(evidence, completedNarratives, indicatorApplicability);
+    const comparisons = requiredAcademicComparisons(evidence);
+    if (comparisons.some((comparison) => !containsAcademicComparison(narratives["res-acad"] || "", comparison))) {
+      setExportStatus("O relatório não foi aprimorado: as análises estatísticas de 5.4.1 têm de passar primeiro pela triangulação.");
+      setView("triangulacao");
+      return;
+    }
+    const localDraft = ensureAcademicComparisonsInReport(report.trim() || buildReport(evidence, completedNarratives, indicatorApplicability), comparisons);
     const usable = fields.filter((field) => completedNarratives[field.id]?.trim()).map((field) => ({
       section: field.section, domain: field.domain, name: field.name, narrative: completedNarratives[field.id].trim(),
       diagnostic: fieldDiagnostic(field, evidence.filter((record) => record.fieldId === field.id && record.validated), indicatorApplicability),
@@ -2099,11 +2147,11 @@ export default function Home() {
       const response = await fetch("/api/write-report", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ schoolName, narratives: usable, localDraft }),
+        body: JSON.stringify({ schoolName, narratives: usable, localDraft, mandatoryAcademicComparisons: comparisons }),
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok || payload?.ok === false) throw new Error(payload?.error || `O servidor devolveu o estado ${response.status}.`);
-      const improved = String(payload?.report || "").trim();
+      const improved = ensureAcademicComparisonsInReport(String(payload?.report || "").trim(), comparisons);
       if (!improved) throw new Error("A IA não devolveu um relatório utilizável.");
       setReport(improved);
       setChangesPending(true);
@@ -2468,7 +2516,7 @@ export default function Home() {
             </article>)}
           </div>}
           {statisticalTreatments.length > 0 && <section className="treatment-panel">
-            <div className="section-heading"><div><p className="eyebrow">Resultado intermédio</p><h3>Apresentação do tratamento por indicador</h3><p>Nos questionários, os dados são agregados por grupo e questões repetidas são deduplicadas. Critérios de sinalização: concordância ≥75% para ponto forte; não concordância ≥15%, “Não sei” ≥10% ou concordância &lt;60% para área de melhoria.</p></div><div className="action-row"><button className="button secondary" onClick={toggleAllTreatments}>{allTreatmentsSelected ? "Desmarcar tratamentos" : "Selecionar tratamentos"}</button><button className="button secondary" onClick={exportStatisticalServer}>Guardar Word (.docx)</button><button className="button primary" disabled={!selectedTreatmentIds.length} onClick={promoteStatisticalTreatments}>Enviar análise descritiva ({selectedTreatmentIds.length || ""})</button></div></div>
+            <div className="section-heading"><div><p className="eyebrow">Resultado intermédio</p><h3>Apresentação do tratamento por indicador</h3><p>Nos questionários, os dados são agregados por grupo e questões repetidas são deduplicadas. Critérios de sinalização: concordância ≥75% para ponto forte; não concordância ≥15%, “Não sei” ≥10% ou concordância &lt;60% para área de melhoria.</p></div><div className="action-row"><button className="button secondary" onClick={toggleAllTreatments}>{allTreatmentsSelected ? "Desmarcar tratamentos" : "Selecionar tratamentos"}</button><button className="button secondary" onClick={exportStatisticalServer}>Guardar Word (.docx)</button><button className="button primary" disabled={!selectedTreatmentIds.length} onClick={promoteStatisticalTreatments}>Enviar para a Matriz ({selectedTreatmentIds.length || ""})</button></div></div>
             {statisticalTreatments.some((treatment) => treatment.respondentGroup) && <QuestionnaireOverviewChart treatments={statisticalTreatments.filter((treatment) => treatment.respondentGroup)} />}
             <div className="treatment-grid">{statisticalTreatments.map((treatment) => { const field = getField(treatment.fieldId); return <article className={selectedTreatmentIds.includes(treatment.id) ? "treatment-card selected" : "treatment-card"} key={treatment.id}>
               <div className="treatment-top"><label className="check"><input type="checkbox" disabled={treatment.evidenceUse === "context-only"} checked={selectedTreatmentIds.includes(treatment.id)} onChange={() => toggleTreatment(treatment.id)} />{treatment.evidenceUse === "context-only" ? "Consulta/contexto" : "Usar tratamento"}</label><span className="badge">{field.section} · {treatment.recordIds.length} registos</span></div>

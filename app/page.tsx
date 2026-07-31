@@ -441,16 +441,38 @@ function extractStatisticalRecords(source: string, chunks: TextChunk[]) {
     });
     lines.forEach((line) => {
       if (line.length < 12 || line.length > 520) return;
+      if (looksLikeExecutableCode(line)) return;
       const valueMatch = line.match(/\b\d+(?:[.,]\d+)?\s*%|\b\d+(?:[.,]\d+)?\b/);
       if (!valueMatch) return;
       const statisticalLanguage = /%|taxa|média|media|valor|número|numero|índice|indice|percentagem|alunos?|resultados?|participação|participacao|transição|transicao|conclusão|conclusao|retenção|retencao/i.test(line);
       if (!statisticalLanguage || (/^(?:19|20)\d{2}$/.test(valueMatch[0]) && !/%/.test(line))) return;
       const value = valueMatch[0].trim();
       const indicator = line.replace(valueMatch[0], " ").replace(/^[\s:;,.–—-]+|[\s:;,.–—-]+$/g, "").slice(0, 220) || "Indicador estatístico";
+      if (!isPlausibleStatisticalLabel(indicator)) return;
       records.push({ id: Date.now() * 1000 + records.length, fieldId: inferStatisticalField(line), indicator, value, context: line, source, location: chunk.location });
     });
   });
   return records.slice(0, 60);
+}
+
+function looksLikeExecutableCode(text: string) {
+  const normalized = text.toLowerCase();
+  if (/\b(?:function|parseint|parsefloat|isnan|return|document\.|window\.|getelementbyid|queryselector|innerhtml|textcontent|addEventListener)\b/i.test(text)) return true;
+  if (/(?:===|!==|=>|\+\+|--|&&|\|\|)|\b(?:var|let|const)\s+[a-z_$][\w$]*\s*=|[{}]\s*(?:else|catch|finally)\b/i.test(text)) return true;
+  const codePunctuation = (text.match(/[{}();=]/g) ?? []).length;
+  return codePunctuation >= 4 || (normalized.includes("function") && codePunctuation >= 2);
+}
+
+function isPlausibleStatisticalLabel(label: string) {
+  const cleaned = label.trim();
+  if (cleaned.length < 3 || looksLikeExecutableCode(cleaned)) return false;
+  const letters = (cleaned.match(/[A-Za-zÀ-ÖØ-öø-ÿ]/g) ?? []).length;
+  const codeSymbols = (cleaned.match(/[{}();=<>]/g) ?? []).length;
+  return letters >= 3 && codeSymbols <= 2 && letters / Math.max(cleaned.length, 1) >= 0.25;
+}
+
+function validStatisticalRecord(record: StatisticalRecord) {
+  return isPlausibleStatisticalLabel(record.indicator) && !looksLikeExecutableCode(record.context);
 }
 
 function parseStatisticalValue(value: string) {
@@ -1443,7 +1465,10 @@ export default function Home() {
 
   function addStatisticalRecords(source: string, chunks: TextChunk[]) {
     const extracted = extractStatisticalRecords(source, chunks);
-    setStatisticalRecords((current) => [...current.filter((record) => record.source !== source), ...extracted]);
+    const replacedIds = statisticalRecords.filter((record) => record.source === source).map((record) => record.id);
+    setStatisticalRecords((current) => [...current.filter((record) => record.source !== source && validStatisticalRecord(record)), ...extracted]);
+    setStatisticalTreatments((current) => current.filter((treatment) => !treatment.recordIds.some((id) => replacedIds.includes(id))));
+    setSelectedTreatmentIds((current) => current.filter((id) => statisticalTreatments.some((treatment) => treatment.id === id && !treatment.recordIds.some((recordId) => replacedIds.includes(recordId)))));
     setChangesPending(true);
     return extracted.length;
   }
@@ -1489,8 +1514,15 @@ export default function Home() {
         chunks = await extractFile(new File([await response.blob()], fileName, { type: contentType }));
       } else {
         const html = await response.text();
-        const text = contentType.includes("html") ? new DOMParser().parseFromString(html, "text/html").body.textContent ?? "" : html;
-        const cleaned = text.replace(/\s+/g, " ").trim();
+        let text = html;
+        if (contentType.includes("html")) {
+          const document = new DOMParser().parseFromString(html, "text/html");
+          document.querySelectorAll("script, style, noscript, template, svg, canvas").forEach((node) => node.remove());
+          const root = document.querySelector("main, [role='main']") ?? document.body;
+          root.querySelectorAll("br, p, li, tr, h1, h2, h3, h4, h5, h6, section, article").forEach((node) => node.append("\n"));
+          text = root.textContent ?? "";
+        }
+        const cleaned = text.replace(/[ \t]+/g, " ").replace(/\n\s*\n+/g, "\n").trim();
         if (cleaned.length < 40) throw new Error("A página foi aberta, mas não devolveu dados legíveis. Pode depender de conteúdo gerado dinamicamente ou de uma sessão.");
         chunks = [{ text: cleaned, location: finalUrl }];
       }
@@ -1516,11 +1548,18 @@ export default function Home() {
   }
 
   function treatStatisticalData() {
-    const base = selectedStatisticalIds.length ? statisticalRecords.filter((record) => selectedStatisticalIds.includes(record.id)) : statisticalRecords;
+    const chosen = selectedStatisticalIds.length ? statisticalRecords.filter((record) => selectedStatisticalIds.includes(record.id)) : statisticalRecords;
+    const base = chosen.filter(validStatisticalRecord);
+    const rejected = chosen.length - base.length;
+    if (rejected) {
+      const rejectedIds = new Set(chosen.filter((record) => !validStatisticalRecord(record)).map((record) => record.id));
+      setStatisticalRecords((current) => current.filter((record) => !rejectedIds.has(record.id)));
+      setSelectedStatisticalIds((current) => current.filter((id) => !rejectedIds.has(id)));
+    }
     const treatments = buildStatisticalTreatments(base);
     setStatisticalTreatments(treatments);
     setSelectedTreatmentIds(treatments.map((treatment) => treatment.id));
-    setStatisticalStatus(`${treatments.length} síntese(s) de tratamento produzida(s) a partir de ${base.length} registo(s).`);
+    setStatisticalStatus(`${treatments.length} síntese(s) de tratamento produzida(s) a partir de ${base.length} registo(s).${rejected ? ` ${rejected} registo(s) inválido(s), com código ou rótulo não interpretável, foram removidos.` : ""}`);
     setChangesPending(true);
   }
 

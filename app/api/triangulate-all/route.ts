@@ -42,6 +42,8 @@ export async function POST(request: NextRequest) {
     const fields = Array.isArray(body?.fields) ? body.fields.slice(0, 20) : [];
     const evidence = Array.isArray(body?.evidence) ? body.evidence.slice(0, 180) : [];
     const diagnostics = body?.diagnostics && typeof body.diagnostics === "object" ? body.diagnostics : {};
+    const mandatoryAcademicComparisons = (Array.isArray(body?.mandatoryAcademicComparisons) ? body.mandatoryAcademicComparisons : [])
+      .map((item: any) => String(item || "").slice(0, 2_500)).filter(Boolean).slice(0, 12);
     if (!fields.length || !evidence.length) {
       return NextResponse.json({ ok: false, error: "Não existem campos com evidências validadas para triangular." }, { status: 400 });
     }
@@ -75,6 +77,9 @@ ${JSON.stringify(compactEvidence)}
 DIAGNÓSTICOS PROBATÓRIOS POR CAMPO:
 ${JSON.stringify(diagnostics)}
 
+ANÁLISES ESTATÍSTICAS COMPARADAS, VALIDADAS NA MATRIZ, PARA 5.4.1:
+${JSON.stringify(mandatoryAcademicComparisons)}
+
 REGRAS:
 - Devolva exatamente uma narrativa por campo que tenha evidências; use o campoId recebido.
 - Em cada campo, considere exclusivamente as evidências com o campoId correspondente.
@@ -87,7 +92,9 @@ REGRAS:
 - Documento normativo não prova execução; testemunho isolado não comprova um facto.
 - Não transforme ausência de evidência em evidência de ausência.
 - Em 5.4.1, os dados do InfoEscolas só sustentam resultados académicos quando apresentam, para o mesmo indicador, a escola/agrupamento e o nacional em leitura comparada dos três últimos anos letivos. Não analise séries isoladas nem use outros gráficos contextuais como evidência académica.
+- Nos percursos diretos de sucesso, explicite a comparação com o nacional nos três últimos anos letivos disponíveis, incluindo conclusão no tempo esperado, conclusão dos alunos com apoio ASE e sucesso nas provas nacionais após percurso sem retenções, conforme o ciclo ou oferta.
 - Na leitura comparada, preserve os valores por ano, a diferença em pontos percentuais e a evolução da distância face ao nacional. Se a série estiver incompleta, declare essa limitação sem preencher valores nem concluir uma tendência.
+- Em 5.4.1, integre todos os factos materiais das análises estatísticas acima e cruze-os com as restantes evidências. Separe descrição quantitativa de interpretação triangulada e não atribua causas, efeitos ou impacto sem confirmação independente.
 - Não invente dados, frequência, causalidade, representatividade ou generalização.
 - Redija 1 a 3 parágrafos contínuos por campo, sem nomes de ficheiros ou páginas no corpo.
 - Não use reservas genéricas ou preventivas. Só formule uma reserva quando o diagnóstico do campo identificar uma limitação concreta.

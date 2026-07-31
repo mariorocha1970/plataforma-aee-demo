@@ -27,6 +27,8 @@ export async function POST(request: NextRequest) {
     if (!narratives.length) return NextResponse.json({ ok: false, error: "Não existem triangulações revistas para redigir o relatório." }, { status: 400 });
     const schoolName = String(body?.schoolName || "a organização escolar").slice(0, 180);
     const localDraft = String(body?.localDraft || "").slice(0, 40_000);
+    const mandatoryAcademicComparisons = (Array.isArray(body?.mandatoryAcademicComparisons) ? body.mandatoryAcademicComparisons : [])
+      .map((item: any) => String(item || "").slice(0, 2_500)).filter(Boolean).slice(0, 12);
     const prompt = `Aprimore a minuta de um relatório de Avaliação Externa das Escolas, em português europeu, relativa a ${schoolName}.
 
 TRIANGULAÇÕES REVISTAS POR CAMPO:
@@ -34,6 +36,9 @@ ${JSON.stringify(narratives)}
 
 MINUTA LOCAL A PRESERVAR COMO ESTRUTURA:
 ---
+
+FACTOS ESTATÍSTICOS JÁ INTEGRADOS NA TRIANGULAÇÃO DE 5.4.1 E A PRESERVAR:
+${JSON.stringify(mandatoryAcademicComparisons)}
 ${localDraft}
 ---
 
@@ -50,6 +55,8 @@ REGRAS:
 - Nunca repita a mesma reserva por rotina em vários campos e não produza pontuação duplicada.
 - Distinga intenção, prática, monitorização, resultado e impacto.
 - No campo 5.4.1 — Resultados académicos, trate os dados do InfoEscolas apenas em leitura comparada entre a escola/agrupamento e a referência nacional, considerando os três últimos anos letivos disponíveis.
+- Na narrativa dos percursos diretos de sucesso, explicite essa comparação com o nacional nos três últimos anos letivos disponíveis, para a conclusão no tempo esperado, a conclusão dos alunos com apoio ASE e o sucesso nas provas nacionais após percurso sem retenções, conforme o ciclo ou oferta.
+- Preserve na narrativa de 5.4.1 todos os factos estatísticos já integrados na respetiva triangulação. Pode melhorar a sintaxe e a fluidez, mas não pode omitir nem alterar o indicador, os anos letivos, os valores da escola e do nacional, as diferenças em pontos percentuais, a evolução temporal ou a cautela interpretativa. Não faça uma interpretação paralela nem contorne a triangulação recebida.
 - Para cada ciclo ou oferta, privilegie exclusivamente os indicadores de conclusão no tempo esperado, conclusão dos alunos com apoio ASE e sucesso nas provas nacionais após percurso sem retenções (ou a designação oficial equivalente no nível/oferta). Não transforme os restantes gráficos do InfoEscolas em evidência académica autónoma.
 - Nunca redija a partir de um valor isolado da escola. Indique, por ano, os valores da escola e do nacional, a diferença em pontos percentuais e a evolução dessa diferença. Se faltar uma série ou um dos três anos, explicite a incompletude e não formule um juízo comparativo conclusivo.
 - Não apresente perceções isoladas como factos comprovados.

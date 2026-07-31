@@ -60,7 +60,7 @@ export async function POST(request: NextRequest) {
       tipo: String(item?.sourceType || ""),
       localizacao: String(item?.location || "").slice(0, 140),
       estado: String(item?.status || ""),
-      robustez: String(item?.strength || ""),
+      qualidadeRegistada: String(item?.strength || ""),
       indicadores: Array.isArray(item?.indicatorIds) ? item.indicatorIds.map(String) : [],
     }));
 
@@ -79,6 +79,9 @@ REGRAS:
 - Devolva exatamente uma narrativa por campo que tenha evidências; use o campoId recebido.
 - Em cada campo, considere exclusivamente as evidências com o campoId correspondente.
 - Cruze semanticamente fontes independentes; não enumere documentos.
+- Avalie a qualidade na relação evidência–indicador; não atribua força uniforme à fonte nem use a contagem bruta de fontes como robustez.
+- A autoridade institucional só reforça o que a evidência demonstra diretamente e não torna automaticamente atual uma constatação histórica.
+- Trate evidenceQuality e triangulation dos diagnósticos como dimensões autónomas: evidência forte não equivale, por si só, a triangulação confirmada.
 - Distinga intenção, prática, monitorização, resultado e impacto.
 - Identifique convergências, divergências, contradições e lacunas.
 - Documento normativo não prova execução; testemunho isolado não comprova um facto.
@@ -86,8 +89,8 @@ REGRAS:
 - Não invente dados, frequência, causalidade, representatividade ou generalização.
 - Redija 1 a 3 parágrafos contínuos por campo, sem nomes de ficheiros ou páginas no corpo.
 - Não use reservas genéricas ou preventivas. Só formule uma reserva quando o diagnóstico do campo identificar uma limitação concreta.
-- Com coveragePercent igual a 100, não afirme que faltam indicadores. Com independentDiversity verdadeira e hasResultsOrImpact verdadeiro, omita a reserva, salvo contradição identificada.
-- Se houver limitação, nomeie-a com precisão: indicadores sem evidência, pouca diversidade de fontes, contradição ou ausência de resultados/impacto.
+- Com coveragePercent igual a 100, não afirme que faltam indicadores. Com evidenceQuality Forte, triangulation Confirmada e hasResultsOrImpact verdadeiro, omita a reserva, salvo contradição identificada.
+- Se houver limitação, nomeie-a com precisão: indicadores sem evidência, qualidade probatória insuficiente, triangulação parcial/não realizada, contradição ou ausência de resultados/impacto.
 - Não formule classificações globais nem use linguagem promocional.`;
 
     const response = await fetch("https://api.openai.com/v1/responses", {

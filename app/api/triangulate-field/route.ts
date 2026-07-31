@@ -28,6 +28,7 @@ export async function POST(request: NextRequest) {
     const evidence = Array.isArray(body?.evidence) ? body.evidence.slice(0, 40) : [];
     if (!field?.name || !evidence.length) return NextResponse.json({ ok: false, error: "O campo não contém evidências validadas." }, { status: 400 });
 
+    const profiles = new Map((Array.isArray(diagnostic?.evidenceProfiles) ? diagnostic.evidenceProfiles : []).map((item: any) => [Number(item?.evidenceId), item]));
     const compactEvidence = evidence.map((item: any, index: number) => ({
       id: index + 1,
       afirmacao: String(item?.claim || "").slice(0, 900),
@@ -35,7 +36,8 @@ export async function POST(request: NextRequest) {
       tipo: String(item?.sourceType || ""),
       localizacao: String(item?.location || "").slice(0, 180),
       estado: String(item?.status || ""),
-      robustez: String(item?.strength || ""),
+      qualidadeProbatoria: profiles.get(Number(item?.id)) || String(item?.strength || ""),
+      indicadores: Array.isArray(item?.indicatorIds) ? item.indicatorIds.map(String) : [],
     }));
     const prompt = `Produza uma síntese de triangulação para Avaliação Externa das Escolas, em português europeu.
 
@@ -51,6 +53,9 @@ ${JSON.stringify(diagnostic)}
 
 REGRAS:
 - Cruze semanticamente as fontes; não se limite a enumerá-las.
+- Avalie cada evidência na relação com o indicador associado; não atribua força uniforme a uma fonte nem use o número bruto de fontes como medida de robustez.
+- A autoridade institucional da fonte reforça a credibilidade do que ela efetivamente demonstra, mas não cria cobertura automática nem prova a atualidade de evidência histórica.
+- Use evidenceQuality para a qualidade probatória e triangulation como dimensão autónoma. Uma evidência forte pode ter triangulação não realizada sem deixar de ser forte.
 - Distinga fontes independentes de mera repetição e documento normativo de prática comprovada.
 - Distinga intenção, prática, monitorização, resultado e impacto.
 - Identifique convergências, divergências, contradições e lacunas.
@@ -59,8 +64,8 @@ REGRAS:
 - Não invente dados, frequência, causalidade ou representatividade.
 - Redija 1 a 3 parágrafos contínuos, claros e sóbrios, sem citar nomes de ficheiros ou páginas no corpo.
 - Não inclua reservas genéricas ou preventivas. Só formule uma reserva quando o diagnóstico identificar uma limitação concreta.
-- Se coveragePercent for 100, não afirme que faltam indicadores. Se independentDiversity for verdadeira e hasResultsOrImpact for verdadeiro, omita inteiramente a reserva, salvo contradição identificada.
-- Quando exista limitação, nomeie-a com precisão: indicadores sem evidência, pouca diversidade de fontes, contradição ou ausência de resultados/impacto.
+- Se coveragePercent for 100, não afirme que faltam indicadores. Se evidenceQuality for Forte, triangulation for Confirmada, hasResultsOrImpact for verdadeiro e não houver contradições, omita inteiramente a reserva.
+- Quando exista limitação, nomeie-a com precisão: indicadores sem evidência, qualidade probatória insuficiente, triangulação parcial/não realizada, contradição ou ausência de resultados/impacto.
 - Não formule uma classificação global nem use linguagem promocional.`;
 
     const response = await fetch("https://api.openai.com/v1/responses", {

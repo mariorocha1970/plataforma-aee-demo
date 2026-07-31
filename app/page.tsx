@@ -1097,9 +1097,16 @@ function buildReport(evidence: Evidence[], narratives: Record<string, string> = 
   return lines.join("\n");
 }
 
+function isDirectCompletionComparison(value: string) {
+  const normalized = normalizeText(value);
+  if (/\b(?:ase|acao social escolar|provas? nacionais?|sem retencoes|retencao|desistencia)\b/.test(normalized)) return false;
+  return /percentagem de alunos.*(?:concluem|concluiram|conclusao).*(?:ciclo|ensino secundario|curso profissional|curso).*(?:em|no prazo de)\s+(?:dois|tres|quatro|[234])\s+anos/.test(normalized)
+    || /percursos? diretos? de sucesso.*(?:ciclo|secundario|profissional)/.test(normalized);
+}
+
 function requiredAcademicComparisons(records: Evidence[]) {
   return records
-    .filter((item) => item.fieldId === "res-acad" && item.validated && item.sourceType === "Quantitativa" && (item.indicatorIds?.length ?? 0) > 0 && /nacional|país|pais|portugal/i.test(item.claim) && item.claim.trim())
+    .filter((item) => item.fieldId === "res-acad" && item.validated && item.sourceType === "Quantitativa" && (item.indicatorIds?.length ?? 0) > 0 && /nacional|país|pais|portugal/i.test(item.claim) && item.claim.trim() && isDirectCompletionComparison(item.claim))
     .map((item) => item.claim.trim());
 }
 

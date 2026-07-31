@@ -129,7 +129,19 @@ function infoEscolasPayload(html: string, sourceUrl: string) {
       }
     });
   }
-  return records.length ? { kind: "infoescolas", school, sourceUrl, records } : null;
+  if (!records.length) return null;
+  const titles = [...new Set(records.map((record) => record.chartTitle))].join(" ").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  const scopeLabel = /1\s*\.?\s*ciclo|primeiro ciclo/.test(titles) ? "1.º ciclo"
+    : /2\s*\.?\s*ciclo|segundo ciclo/.test(titles) ? "2.º ciclo"
+    : /3\s*\.?\s*ciclo|terceiro ciclo/.test(titles) ? "3.º ciclo"
+    : /profissional/.test(titles) ? "Ensino profissional"
+    : /secundario|cientifico.?humanistico/.test(titles) ? "Ensino secundário"
+    : "Oferta não identificada";
+  const url = new URL(sourceUrl);
+  const organization = url.searchParams.get("code") || school;
+  const explicitLevel = url.searchParams.get("nivel") || "";
+  const scopeKey = `${organization.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase()}|${scopeLabel}|${explicitLevel}`;
+  return { kind: "infoescolas", school, sourceUrl, scopeLabel, scopeKey, records };
 }
 
 function declaredCharset(contentType: string) {

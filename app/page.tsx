@@ -123,6 +123,11 @@ type StatisticalRecord = {
   context: string;
   source: string;
   location: string;
+  dataset?: "infoescolas" | "general";
+  comparisonKey?: string;
+  period?: string;
+  seriesRole?: "school" | "national" | "other";
+  evidenceUse?: "academic-comparison" | "context-only";
 };
 
 type StatisticalTreatment = {
@@ -507,19 +512,85 @@ function treatmentIndicatorKey(record: StatisticalRecord) {
 }
 
 function treatmentPointLabel(record: StatisticalRecord, index: number) {
+  if (record.period) return record.period;
   const period = record.context.match(/\b(?:19|20)\d{2}(?:\s*[-–/]\s*(?:19|20)?\d{2})?\b/);
   return period?.[0] ?? `${record.source.slice(0, 18)} ${index + 1}`;
+}
+
+function latestThreePeriods(records: StatisticalRecord[]) {
+  const periods = [...new Set(records.map((record) => record.period || treatmentPointLabel(record, 0)))];
+  return periods.sort((a, b) => a.localeCompare(b, "pt-PT", { numeric: true })).slice(-3);
+}
+
+function indicatorIdsForInfoEscolasTreatment(treatment: StatisticalTreatment) {
+  const title = normalizeText(treatment.indicator);
+  const ids: string[] = [];
+  if (/1 ciclo|primeiro ciclo/.test(title)) ids.push(indicatorId("res-acad", 0));
+  if (/2 ciclo|segundo ciclo/.test(title)) ids.push(indicatorId("res-acad", 1));
+  if (/3 ciclo|terceiro ciclo/.test(title)) ids.push(indicatorId("res-acad", 2));
+  if (/cientifico humanistico/.test(title)) ids.push(indicatorId("res-acad", 3));
+  if (/profissional/.test(title)) ids.push(indicatorId("res-acad", 4));
+  if (/artistico especializado/.test(title)) ids.push(indicatorId("res-acad", 5));
+  if (/apoio ase|\base\b/.test(title)) ids.push(indicatorId("res-acad", 9));
+  return [...new Set(ids)];
+}
+
+function buildInfoEscolasComparison(items: StatisticalRecord[], id: string): StatisticalTreatment {
+  const periods = latestThreePeriods(items);
+  const selected = items.filter((item) => periods.includes(item.period || treatmentPointLabel(item, 0)));
+  const indicator = selected[0]?.comparisonKey || selected[0]?.indicator.split(" — ")[0] || "Indicador do InfoEscolas";
+  const rows = periods.map((period) => {
+    const school = selected.find((item) => (item.period || treatmentPointLabel(item, 0)) === period && item.seriesRole === "school");
+    const national = selected.find((item) => (item.period || treatmentPointLabel(item, 0)) === period && item.seriesRole === "national");
+    const schoolValue = school ? parseStatisticalValue(school.value) : null;
+    const nationalValue = national ? parseStatisticalValue(national.value) : null;
+    return { period, school, national, schoolValue, nationalValue, difference: schoolValue !== null && nationalValue !== null ? schoolValue - nationalValue : null };
+  });
+  const complete = rows.filter((row) => row.schoolValue !== null && row.nationalValue !== null);
+  const reading = rows.map((row) => {
+    if (row.schoolValue === null || row.nationalValue === null || row.difference === null) return `${row.period}: comparação incompleta por ausência de uma das séries.`;
+    const relation = Math.abs(row.difference) < 0.05 ? "em linha com" : row.difference > 0 ? "acima de" : "abaixo de";
+    return `${row.period}: escola ${row.schoolValue.toLocaleString("pt-PT", { maximumFractionDigits: 1 })}% e nacional ${row.nationalValue.toLocaleString("pt-PT", { maximumFractionDigits: 1 })}% — ${Math.abs(row.difference).toLocaleString("pt-PT", { maximumFractionDigits: 1 })} p.p. ${relation} o valor nacional.`;
+  }).join(" ");
+  const first = complete[0];
+  const last = complete.at(-1);
+  const trend = first && last && first !== last
+    ? `Entre ${first.period} e ${last.period}, a diferença face ao nacional variou de ${first.difference!.toLocaleString("pt-PT", { maximumFractionDigits: 1 })} para ${last.difference!.toLocaleString("pt-PT", { maximumFractionDigits: 1 })} pontos percentuais.`
+    : "A série disponível não permite ainda apurar a evolução da diferença face ao nacional.";
+  const values = complete.flatMap((row) => [row.schoolValue!, row.nationalValue!]);
+  return {
+    id,
+    fieldId: "res-acad",
+    indicator,
+    unit: "%",
+    summary: `No indicador «${indicator}», a leitura comparada dos três últimos anos letivos disponíveis é a seguinte: ${reading} ${trend} A interpretação deve atender à consistência da tendência e não a um valor anual isolado.`,
+    recordIds: selected.map((item) => item.id),
+    sources: [...new Set(selected.map((item) => item.source))],
+    points: complete.flatMap((row) => [
+      { label: `${row.period} · Escola`, value: row.schoolValue!, source: row.school?.source || "InfoEscolas" },
+      { label: `${row.period} · Nacional`, value: row.nationalValue!, source: row.national?.source || "InfoEscolas" },
+    ]),
+    minimum: values.length ? Math.min(...values) : null,
+    maximum: values.length ? Math.max(...values) : null,
+    average: values.length ? values.reduce((total, value) => total + value, 0) / values.length : null,
+    strengths: [],
+    improvements: complete.length < 3 ? ["A comparação não cobre três anos letivos completos com ambas as séries."] : [],
+  };
 }
 
 function buildStatisticalTreatments(records: StatisticalRecord[]) {
   const grouped = new Map<string, StatisticalRecord[]>();
   records.forEach((record) => {
+    if (record.dataset === "infoescolas" && record.evidenceUse !== "academic-comparison") return;
     const unit = record.value.includes("%") ? "%" : "valor";
     const respondentGroup = record.indicator.match(/—\s*(Alunos|Encarregados de educação|Docentes|Não docentes)$/i)?.[1];
-    const key = respondentGroup ? `questionnaire|${respondentGroup}` : `${record.fieldId}|${unit}|${treatmentIndicatorKey(record)}`;
+    const key = record.dataset === "infoescolas" && record.comparisonKey
+      ? `infoescolas|${normalizeText(record.comparisonKey)}`
+      : respondentGroup ? `questionnaire|${respondentGroup}` : `${record.fieldId}|${unit}|${treatmentIndicatorKey(record)}`;
     grouped.set(key, [...(grouped.get(key) ?? []), record]);
   });
   return [...grouped.entries()].map(([id, items]): StatisticalTreatment => {
+    if (id.startsWith("infoescolas|")) return buildInfoEscolasComparison(items, id);
     const respondentGroup = id.startsWith("questionnaire|") ? id.split("|")[1] as StatisticalTreatment["respondentGroup"] : undefined;
     if (respondentGroup) {
       const categories = ["Concordo", "Não concordo", "Não sei"];
@@ -1605,7 +1676,7 @@ export default function Home() {
       const headerName = response.headers.get("x-source-filename");
       const fileName = headerName ? decodeURIComponent(headerName) : decodeURIComponent(sourceUrl.pathname.split("/").pop() || "InfoEscolas-online");
       if (contentType.includes("application/json")) {
-        const payload = await response.json() as { kind?: string; school?: string; records?: Array<{ indicator?: string; value?: string; context?: string; location?: string }> };
+        const payload = await response.json() as { kind?: string; school?: string; records?: Array<{ indicator?: string; value?: string; context?: string; location?: string; chartTitle?: string; period?: string; seriesRole?: "school" | "national" | "other"; evidenceUse?: "academic-comparison" | "context-only" }> };
         if (payload.kind !== "infoescolas" || !Array.isArray(payload.records)) throw new Error("O portal devolveu dados num formato não reconhecido.");
         const source = payload.school ? `InfoEscolas · ${payload.school}` : `InfoEscolas · ${sourceUrl.hostname}`;
         const extracted = payload.records.flatMap((item, index) => {
@@ -1613,12 +1684,12 @@ export default function Home() {
           const value = String(item.value ?? "").trim();
           const context = String(item.context ?? "").trim();
           if (!indicator || !value || !context || !isPlausibleStatisticalLabel(indicator) || looksLikeExecutableCode(indicator)) return [];
-          return [{ id: Date.now() * 1000 + index, fieldId: inferStatisticalField(`${indicator} ${context}`), indicator, value, context, source, location: String(item.location ?? finalUrl) } satisfies StatisticalRecord];
+          return [{ id: Date.now() * 1000 + index, fieldId: "res-acad", indicator, value, context, source, location: String(item.location ?? finalUrl), dataset: "infoescolas", comparisonKey: String(item.chartTitle ?? indicator.split(" — ")[0]).trim(), period: String(item.period ?? "").trim(), seriesRole: item.seriesRole ?? "other", evidenceUse: item.evidenceUse ?? "context-only" } satisfies StatisticalRecord];
         });
         const replacedIds = statisticalRecords.filter((record) => record.source === source).map((record) => record.id);
         setStatisticalRecords((current) => [...current.filter((record) => record.source !== source && validStatisticalRecord(record)), ...extracted]);
         setStatisticalTreatments((current) => current.filter((treatment) => !treatment.recordIds.some((id) => replacedIds.includes(id))));
-        setSelectedStatisticalIds([]);
+        setSelectedStatisticalIds(extracted.filter((record) => record.evidenceUse === "academic-comparison").map((record) => record.id));
         setSelectedTreatmentIds([]);
         setChangesPending(true);
         setStatisticalStatus(extracted.length ? `${extracted.length} observações estatísticas identificadas para ${payload.school || sourceUrl.hostname}, organizadas pelos gráficos do InfoEscolas.` : "A página da escola foi aberta, mas os gráficos não continham observações reconhecíveis.");
@@ -1673,7 +1744,7 @@ export default function Home() {
 
   function treatStatisticalData() {
     const chosen = selectedStatisticalIds.length ? statisticalRecords.filter((record) => selectedStatisticalIds.includes(record.id)) : statisticalRecords;
-    const base = chosen.filter(validStatisticalRecord);
+    const base = chosen.filter(validStatisticalRecord).filter((record) => record.dataset !== "infoescolas" || record.evidenceUse === "academic-comparison");
     const rejected = chosen.length - base.length;
     if (rejected) {
       const rejectedIds = new Set(chosen.filter((record) => !validStatisticalRecord(record)).map((record) => record.id));
@@ -1713,6 +1784,7 @@ export default function Home() {
       status: "Confirmada",
       strength: "Insuficiente",
       validated: true,
+      indicatorIds: treatment.id.startsWith("infoescolas|") ? indicatorIdsForInfoEscolasTreatment(treatment) : [],
     }));
     setEvidence((current) => [...current.filter((item) => !promoted.some((record) => record.source === item.source)), ...promoted]);
     setChangesPending(true);
@@ -2384,7 +2456,7 @@ export default function Home() {
           {statisticalRecords.length === 0 ? <div className="empty-analysis"><strong>Ainda não existem dados estatísticos para rever.</strong><p>Carregue um ficheiro ou indique um endereço público. Os dados só entram nas evidências depois da sua seleção.</p></div> : <div className="statistics-list">
             {statisticalRecords.map((record) => <article className={selectedStatisticalIds.includes(record.id) ? "statistics-card selected" : "statistics-card"} key={record.id}>
               <label className="candidate-check"><input type="checkbox" checked={selectedStatisticalIds.includes(record.id)} onChange={() => toggleStatisticalRecord(record.id)} /><span>Incluir</span></label>
-              <div className="statistics-fields"><label>Indicador<input value={record.indicator} onChange={(event) => updateStatisticalRecord(record.id, { indicator: event.target.value })} /></label><label>Valor<input value={record.value} onChange={(event) => updateStatisticalRecord(record.id, { value: event.target.value })} /></label><div className="statistics-context"><strong>Contexto extraído</strong><span>{record.context}</span><small>{record.source} · {record.location}</small></div></div>
+              <div className="statistics-fields"><label>Indicador<input value={record.indicator} onChange={(event) => updateStatisticalRecord(record.id, { indicator: event.target.value })} /></label><label>Valor<input value={record.value} onChange={(event) => updateStatisticalRecord(record.id, { value: event.target.value })} /></label><div className="statistics-context"><strong>Contexto extraído</strong><span>{record.context}</span><small>{record.source} · {record.location}</small>{record.dataset === "infoescolas" && <small><strong>{record.evidenceUse === "academic-comparison" ? "Evidência académica · exige comparação com o nacional" : "Dado contextual · não entra automaticamente nas evidências"}</strong></small>}</div></div>
               <div className="candidate-classification"><label>Campo de análise<select value={record.fieldId} onChange={(event) => updateStatisticalRecord(record.id, { fieldId: event.target.value })}>{fields.map((field) => <option value={field.id} key={field.id}>{field.section} · {field.name}</option>)}</select></label><button className="text-button danger-text" onClick={() => { setStatisticalRecords((current) => current.filter((item) => item.id !== record.id)); setSelectedStatisticalIds((current) => current.filter((id) => id !== record.id)); }}>Descartar</button></div>
             </article>)}
           </div>}

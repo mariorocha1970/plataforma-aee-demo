@@ -5,6 +5,7 @@ import { ChangeEvent, useEffect, useMemo, useState } from "react";
 type View = "visao" | "documentos" | "privacidade" | "analise" | "estatistica" | "evidencias" | "entrevistas" | "triangulacao" | "relatorio" | "conclusoes";
 type EvidenceStatus = "Confirmada" | "Por triangular" | "Contraditória" | "Ausente";
 type Strength = "Forte" | "Moderada" | "Insuficiente";
+type TriangulationLevel = "Confirmada" | "Parcial" | "Não realizada" | "Contraditória";
 type Rating = "Excelente" | "Muito bom" | "Bom" | "Suficiente" | "Insuficiente" | "Por definir";
 type IndicatorApplicability = "Aplicável" | "Por confirmar" | "Não aplicável";
 type IndicatorSuggestion = {
@@ -803,12 +804,52 @@ function getField(id: string) {
   return fields.find((field) => field.id === id) ?? fields[0];
 }
 
-function strengthFor(records: Evidence[]): Strength {
-  const sources = new Set(records.map((record) => record.source));
+function evidenceProbativeProfile(record: Evidence) {
+  const text = normalizeText(`${record.claim} ${record.location}`);
+  const linkedIndicators = record.indicatorIds?.length ?? 0;
+  const hasSpecificLocation = Boolean(record.location.trim()) && !/^(amostra|sem pagina|nao identificada)$/i.test(normalizeText(record.location));
+  const hasConcreteData = /\b\d+(?:[.,]\d+)?\s*%|\b(taxa|percentagem|media|resultado|evolucao|aumento|reducao|meta|impacto|efeito|progresso)\b/.test(text);
+  const demonstratesPractice = /\b(implementa|realiza|executa|monitoriza|acompanha|aplica|desenvolve|funciona|assegura)\b/.test(text);
+  const merelyIntended = /\b(preve|pretende|visa|devera|objetivo|orientacao|regulamento|criterio)\b/.test(text) && !demonstratesPractice && !hasConcreteData;
+  const historical = /\b(20(?:0\d|1\d|2[0-4]))\b/.test(text);
+  let score = 0;
+  if (linkedIndicators > 0) score += linkedIndicators <= 2 ? 3 : 2;
+  if (record.claim.trim().length >= 70) score += 1;
+  if (hasSpecificLocation) score += 1;
+  if (hasConcreteData) score += 2;
+  else if (demonstratesPractice) score += 1;
+  if (merelyIntended) score -= 1;
+  if (historical) score -= 1;
+  if (record.status === "Confirmada") score += 1;
+  if (record.status === "Contraditória") score -= 2;
+  const quality: Strength = score >= 7 ? "Forte" : score >= 4 ? "Moderada" : "Insuficiente";
+  const demonstration = hasConcreteData ? (/\b(impacto|efeito|mudanca)\b/.test(text) ? "impacto" : "resultado") : demonstratesPractice ? "prática" : "intenção";
+  return { quality, score, demonstration, historical };
+}
+
+function independentSourceKey(record: Evidence) {
+  return normalizeText(record.source)
+    .replace(/\b(anexo|volume|parte|capitulo|pagina|pp?|ficheiro)\b.*$/g, "")
+    .replace(/\b(versao|revisto|final)\b/g, "")
+    .replace(/\s+/g, " ").trim();
+}
+
+function triangulationFor(records: Evidence[]): TriangulationLevel {
+  if (records.some((record) => record.status === "Contraditória")) return "Contraditória";
+  const sourceFamilies = new Set(records.map(independentSourceKey).filter(Boolean));
   const sourceTypes = new Set(records.map((record) => record.sourceType));
-  if (records.some((record) => record.status === "Contraditória")) return "Insuficiente";
-  if (records.length >= 3 && sources.size >= 2 && sourceTypes.size >= 2) return "Forte";
-  if (records.length >= 2 && sources.size >= 2) return "Moderada";
+  if (sourceFamilies.size >= 2 && sourceTypes.size >= 2) return "Confirmada";
+  if (sourceFamilies.size >= 2 || sourceTypes.size >= 2) return "Parcial";
+  return "Não realizada";
+}
+
+function strengthFor(records: Evidence[]): Strength {
+  if (!records.length) return "Insuficiente";
+  const profiles = records.map(evidenceProbativeProfile);
+  const average = profiles.reduce((sum, item) => sum + item.score, 0) / profiles.length;
+  const strongIndicators = profiles.filter((item) => item.quality === "Forte").length;
+  if (average >= 6.5 || strongIndicators >= Math.ceil(records.length / 2)) return "Forte";
+  if (average >= 3.5) return "Moderada";
   return "Insuficiente";
 }
 
@@ -817,10 +858,12 @@ function fieldDiagnostic(field: Field, records: Evidence[], applicability: Recor
   const expected = applicableIds.length;
   const applicableSet = new Set(applicableIds);
   const linked = new Set(records.flatMap((record) => record.indicatorIds ?? []).filter((id) => applicableSet.has(id)));
-  const sources = new Set(records.map((record) => normalizeText(record.source)).filter(Boolean));
+  const sources = new Set(records.map(independentSourceKey).filter(Boolean));
   const sourceTypes = new Set(records.map((record) => record.sourceType));
   const corpus = normalizeText(records.map((record) => record.claim).join(" "));
   const hasResults = /\b(resultado|resultados|evolucao|melhoria|reducao|aumento|taxa|percentagem|impacto|efeito|mudanca|progresso|eficacia)\b/.test(corpus);
+  const profiles = records.map((record) => ({ evidenceId: record.id, indicatorIds: record.indicatorIds ?? [], ...evidenceProbativeProfile(record) }));
+  const triangulation = triangulationFor(records);
   return {
     indicatorTotal: expected,
     indicatorCovered: linked.size,
@@ -828,9 +871,12 @@ function fieldDiagnostic(field: Field, records: Evidence[], applicability: Recor
     evidenceCount: records.length,
     sourceCount: sources.size,
     sourceTypes: [...sourceTypes],
-    independentDiversity: sources.size >= 2 && sourceTypes.size >= 2,
+    independentDiversity: triangulation === "Confirmada",
+    triangulation,
     hasContradictions: records.some((record) => record.status === "Contraditória"),
     hasResultsOrImpact: hasResults,
+    evidenceQuality: strengthFor(records),
+    evidenceProfiles: profiles,
     strength: strengthFor(records),
   };
 }
@@ -928,8 +974,12 @@ function composeFieldNarrative(field: Field, records: Evidence[], applicability:
     paragraphs.push("A existência de informação contraditória impede, nesta fase, uma conclusão estável e requer esclarecimento através de fonte independente ou dos painéis de entrevista.");
   } else if (diagnostic.coveragePercent < 100) {
     paragraphs.push(`A análise cobre ${diagnostic.indicatorCovered} dos ${diagnostic.indicatorTotal} indicadores aplicáveis (${diagnostic.coveragePercent}%), permanecendo os restantes sem evidência validada.`);
-  } else if (!diagnostic.independentDiversity) {
-    paragraphs.push("Todos os indicadores do campo estão cobertos, embora a interpretação assente em fontes pouco diversificadas, pelo que importa triangulá-la com evidência de natureza independente.");
+  } else if (diagnostic.evidenceQuality === "Insuficiente") {
+    paragraphs.push("Todos os indicadores do campo estão cobertos, mas a qualidade probatória das evidências associadas é ainda insuficiente para sustentar uma interpretação robusta.");
+  } else if (diagnostic.triangulation === "Não realizada") {
+    paragraphs.push("Todos os indicadores do campo estão cobertos por evidência pertinente, embora a interpretação dependa de uma única linha probatória e ainda não esteja triangulada.");
+  } else if (diagnostic.triangulation === "Parcial") {
+    paragraphs.push("Todos os indicadores do campo estão cobertos por evidência pertinente; a triangulação é parcial, por assentar em fontes próximas ou de natureza pouco diversificada.");
   } else if (!diagnostic.hasResultsOrImpact) {
     paragraphs.push("Todos os indicadores estão cobertos por fontes diversificadas; contudo, a evidência sustenta sobretudo práticas e processos, não permitindo ainda demonstrar resultados ou impacto.");
   } else if (strength === "Forte") paragraphs.push("A cobertura integral dos indicadores e a diversidade das fontes conferem robustez à interpretação.");

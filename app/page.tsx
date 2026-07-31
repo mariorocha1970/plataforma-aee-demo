@@ -476,7 +476,7 @@ function extractStatisticalRecords(source: string, chunks: TextChunk[]) {
           .trim();
         const indicator = (localLabel.length >= 6 ? localLabel : generalLabel).slice(0, 220) || "Indicador estatístico";
         if (!isPlausibleStatisticalLabel(indicator) || indicator.includes("�")) return;
-        records.push({ id: Date.now() * 1000 + records.length, fieldId: inferStatisticalField(line), indicator, value: rawValue, context: line, source, location: chunk.location });
+        records.push({ id: Date.now() * 1000 + records.length, fieldId: inferStatisticalField(line), indicator, value: rawValue, context: line, source, location: chunk.location, dataset: "general", sourceKey: `local|${normalizeText(source)}` });
       });
     });
   });
@@ -606,12 +606,14 @@ function buildStatisticalTreatments(records: StatisticalRecord[]) {
       ? `infoescolas|${record.sourceKey || normalizeText(record.source)}|${normalizeText(record.comparisonKey)}`
       : record.dataset === "infoescolas" && record.evidenceUse === "context-only"
         ? `infoescolas-context|${record.sourceKey || normalizeText(record.source)}|${record.fieldId}|${unit}|${treatmentIndicatorKey(record)}`
-      : respondentGroup ? `questionnaire|${respondentGroup}` : `${record.fieldId}|${unit}|${treatmentIndicatorKey(record)}`;
+      : respondentGroup
+        ? `questionnaire|${record.sourceKey || normalizeText(record.source)}|${respondentGroup}`
+        : `local|${record.sourceKey || normalizeText(record.source)}|${record.fieldId}|${unit}|${treatmentIndicatorKey(record)}`;
     grouped.set(key, [...(grouped.get(key) ?? []), record]);
   });
   return [...grouped.entries()].map(([id, items]): StatisticalTreatment => {
     if (id.startsWith("infoescolas|")) return buildInfoEscolasComparison(items, id);
-    const respondentGroup = id.startsWith("questionnaire|") ? id.split("|")[1] as StatisticalTreatment["respondentGroup"] : undefined;
+    const respondentGroup = id.startsWith("questionnaire|") ? id.split("|").at(-1) as StatisticalTreatment["respondentGroup"] : undefined;
     if (respondentGroup) {
       const categories = ["Concordo", "Não concordo", "Não sei"];
       const uniqueQuestions = new Set<string>();
@@ -1709,7 +1711,8 @@ export default function Home() {
   }
 
   function addStatisticalRecords(source: string, chunks: TextChunk[]) {
-    const extracted = extractStatisticalRecords(source, chunks);
+    const sourceKey = `local|${normalizeText(source)}`;
+    const extracted = extractStatisticalRecords(source, chunks).map((record) => ({ ...record, dataset: "general" as const, sourceKey }));
     const replacedIds = statisticalRecords.filter((record) => record.source === source).map((record) => record.id);
     setStatisticalRecords((current) => [...current.filter((record) => record.source !== source && validStatisticalRecord(record)), ...extracted]);
     setStatisticalTreatments((current) => current.filter((treatment) => !treatment.recordIds.some((id) => replacedIds.includes(id))));
@@ -1834,8 +1837,10 @@ export default function Home() {
     setSelectedStatisticalIds(allStatisticalSelected ? [] : statisticalRecords.map((record) => record.id));
   }
 
-  function treatStatisticalData() {
-    const chosen = selectedStatisticalIds.length ? statisticalRecords.filter((record) => selectedStatisticalIds.includes(record.id)) : statisticalRecords;
+  function treatStatisticalData(dataset?: "general" | "infoescolas") {
+    const available = dataset ? statisticalRecords.filter((record) => (record.dataset || "general") === dataset) : statisticalRecords;
+    const selectedInScope = available.filter((record) => selectedStatisticalIds.includes(record.id));
+    const chosen = selectedInScope.length ? selectedInScope : available;
     const base = chosen.filter(validStatisticalRecord);
     const rejected = chosen.length - base.length;
     if (rejected) {
@@ -1847,7 +1852,8 @@ export default function Home() {
     const treatmentIds = new Set(treatments.map((treatment) => treatment.id));
     setStatisticalTreatments((current) => [...current.filter((treatment) => !treatmentIds.has(treatment.id)), ...treatments]);
     setSelectedTreatmentIds((current) => [...new Set([...current.filter((id) => !treatmentIds.has(id)), ...treatments.filter((treatment) => treatment.evidenceUse !== "context-only").map((treatment) => treatment.id)])]);
-    setStatisticalStatus(`${treatments.length} síntese(s) de tratamento produzida(s) a partir de ${base.length} registo(s).${rejected ? ` ${rejected} registo(s) inválido(s), com código ou rótulo não interpretável, foram removidos.` : ""}`);
+    const scopeLabel = dataset === "general" ? "ficheiros locais" : dataset === "infoescolas" ? "InfoEscolas" : "todas as fontes";
+    setStatisticalStatus(`${treatments.length} síntese(s) de ${scopeLabel} produzida(s) a partir de ${base.length} registo(s). Os tratamentos das restantes fontes foram preservados.${rejected ? ` ${rejected} registo(s) inválido(s), com código ou rótulo não interpretável, foram removidos.` : ""}`);
     setChangesPending(true);
   }
 
@@ -2586,12 +2592,13 @@ export default function Home() {
         </section>}
 
         {view === "estatistica" && <section className="view">
-          <div className="page-heading"><div><p className="eyebrow">Agente 3 · Análise estatística</p><h2>Tratamento de dados quantitativos</h2><p>Selecione os dados-base, produza o tratamento por campo de análise e reveja a síntese antes de a exportar ou enviar para a matriz.</p></div><div className="analysis-actions"><span className="badge">{statisticalRecords.length} registos</span><button className="button secondary" disabled={!statisticalRecords.length} onClick={toggleAllStatisticalRecords}>{allStatisticalSelected ? "Desmarcar todos" : "Selecionar todos"}</button><button className="button primary" disabled={!statisticalRecords.length} onClick={treatStatisticalData}>Tratar {selectedStatisticalIds.length || "todos os"} dados</button></div></div>
+          <div className="page-heading"><div><p className="eyebrow">Agente 3 · Análise estatística</p><h2>Tratamento de dados quantitativos</h2><p>Os ficheiros locais e o InfoEscolas são conservados e tratados separadamente. Os tratamentos selecionados convergem depois na Matriz de evidências.</p></div><div className="analysis-actions"><span className="badge">{statisticalRecords.length} registos</span><button className="button secondary" disabled={!statisticalRecords.length} onClick={toggleAllStatisticalRecords}>{allStatisticalSelected ? "Desmarcar todos" : "Selecionar todos"}</button><button className="button primary" disabled={!statisticalRecords.length} onClick={() => treatStatisticalData()}>Tratar todos</button></div></div>
           <div className="statistics-import">
             <div className="statistics-upload"><strong>Ficheiros locais</strong><p>Formatos aceites: XLS, XLSX, CSV, PDF e TXT.</p><label className="button primary file-button">Carregar dados<input type="file" multiple accept=".pdf,.xls,.xlsx,.csv,.txt" onChange={handleStatisticalFiles} /></label></div>
             <div className="statistics-online"><strong>InfoEscolas ou outro endereço público</strong><p>Cole o endereço da página ou do ficheiro disponibilizado publicamente.</p><div><input type="url" value={statisticalUrl} onChange={(event) => setStatisticalUrl(event.target.value)} placeholder="https://infoescolas.medu.pt/…" /><button className="button secondary" onClick={loadStatisticalUrl}>Ler endereço público</button></div><small>A plataforma lê o endereço através do servidor. Páginas que dependam de autenticação ou gerem todos os dados apenas no navegador podem exigir o carregamento do ficheiro original.</small></div>
           </div>
           {statisticalStatus && <div className="statistics-status" role="status">{statisticalStatus}</div>}
+          {statisticalRecords.length > 0 && <div className="quality-gate"><strong>Tratamento independente por origem</strong><span>{statisticalRecords.filter((record) => (record.dataset || "general") === "general").length} registos de ficheiros locais · {statisticalRecords.filter((record) => record.dataset === "infoescolas").length} registos do InfoEscolas. Tratar um grupo não elimina o outro.</span><div className="action-row"><button className="button secondary" disabled={!statisticalRecords.some((record) => (record.dataset || "general") === "general")} onClick={() => treatStatisticalData("general")}>Tratar ficheiros locais</button><button className="button secondary" disabled={!statisticalRecords.some((record) => record.dataset === "infoescolas")} onClick={() => treatStatisticalData("infoescolas")}>Tratar InfoEscolas</button></div></div>}
           {statisticalRecords.length === 0 ? <div className="empty-analysis"><strong>Ainda não existem dados estatísticos para rever.</strong><p>Carregue um ficheiro ou indique um endereço público. Os dados só entram nas evidências depois da sua seleção.</p></div> : <div className="statistics-list">
             {statisticalRecords.map((record) => <article className={selectedStatisticalIds.includes(record.id) ? "statistics-card selected" : "statistics-card"} key={record.id}>
               <label className="candidate-check"><input type="checkbox" checked={selectedStatisticalIds.includes(record.id)} onChange={() => toggleStatisticalRecord(record.id)} /><span>Incluir</span></label>

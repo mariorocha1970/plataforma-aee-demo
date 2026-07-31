@@ -49,6 +49,9 @@ REGRAS:
 - Quando exista uma limitação, identifique-a concretamente: indicadores sem evidência, qualidade probatória insuficiente, triangulação parcial/não realizada, contradição ou ausência de resultados/impacto.
 - Nunca repita a mesma reserva por rotina em vários campos e não produza pontuação duplicada.
 - Distinga intenção, prática, monitorização, resultado e impacto.
+- No campo 5.4.1 — Resultados académicos, trate os dados do InfoEscolas apenas em leitura comparada entre a escola/agrupamento e a referência nacional, considerando os três últimos anos letivos disponíveis.
+- Para cada ciclo ou oferta, privilegie exclusivamente os indicadores de conclusão no tempo esperado, conclusão dos alunos com apoio ASE e sucesso nas provas nacionais após percurso sem retenções (ou a designação oficial equivalente no nível/oferta). Não transforme os restantes gráficos do InfoEscolas em evidência académica autónoma.
+- Nunca redija a partir de um valor isolado da escola. Indique, por ano, os valores da escola e do nacional, a diferença em pontos percentuais e a evolução dessa diferença. Se faltar uma série ou um dos três anos, explicite a incompletude e não formule um juízo comparativo conclusivo.
 - Não apresente perceções isoladas como factos comprovados.
 - Não cite nomes de ficheiros, páginas ou identificadores no corpo do relatório.
 - Evite repetições, generalizações e linguagem promocional.

@@ -41,6 +41,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json().catch(() => null) as any;
     const fields = Array.isArray(body?.fields) ? body.fields.slice(0, 20) : [];
     const evidence = Array.isArray(body?.evidence) ? body.evidence.slice(0, 180) : [];
+    const diagnostics = body?.diagnostics && typeof body.diagnostics === "object" ? body.diagnostics : {};
     if (!fields.length || !evidence.length) {
       return NextResponse.json({ ok: false, error: "Não existem campos com evidências validadas para triangular." }, { status: 400 });
     }
@@ -71,6 +72,9 @@ ${JSON.stringify(compactFields)}
 EVIDÊNCIAS VALIDADAS:
 ${JSON.stringify(compactEvidence)}
 
+DIAGNÓSTICOS PROBATÓRIOS POR CAMPO:
+${JSON.stringify(diagnostics)}
+
 REGRAS:
 - Devolva exatamente uma narrativa por campo que tenha evidências; use o campoId recebido.
 - Em cada campo, considere exclusivamente as evidências com o campoId correspondente.
@@ -81,7 +85,9 @@ REGRAS:
 - Não transforme ausência de evidência em evidência de ausência.
 - Não invente dados, frequência, causalidade, representatividade ou generalização.
 - Redija 1 a 3 parágrafos contínuos por campo, sem nomes de ficheiros ou páginas no corpo.
-- Use uma reserva proporcional quando não seja possível demonstrar alcance, regularidade, resultados ou impacto.
+- Não use reservas genéricas ou preventivas. Só formule uma reserva quando o diagnóstico do campo identificar uma limitação concreta.
+- Com coveragePercent igual a 100, não afirme que faltam indicadores. Com independentDiversity verdadeira e hasResultsOrImpact verdadeiro, omita a reserva, salvo contradição identificada.
+- Se houver limitação, nomeie-a com precisão: indicadores sem evidência, pouca diversidade de fontes, contradição ou ausência de resultados/impacto.
 - Não formule classificações globais nem use linguagem promocional.`;
 
     const response = await fetch("https://api.openai.com/v1/responses", {

@@ -1533,7 +1533,7 @@ export default function Home() {
           const indicator = String(item.indicator ?? "").trim();
           const value = String(item.value ?? "").trim();
           const context = String(item.context ?? "").trim();
-          if (!indicator || !value || !context || !isPlausibleStatisticalLabel(indicator) || looksLikeExecutableCode(context)) return [];
+          if (!indicator || !value || !context || !isPlausibleStatisticalLabel(indicator) || looksLikeExecutableCode(indicator)) return [];
           return [{ id: Date.now() * 1000 + index, fieldId: inferStatisticalField(`${indicator} ${context}`), indicator, value, context, source, location: String(item.location ?? finalUrl) } satisfies StatisticalRecord];
         });
         const replacedIds = statisticalRecords.filter((record) => record.source === source).map((record) => record.id);

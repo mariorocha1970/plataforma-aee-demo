@@ -1525,6 +1525,26 @@ export default function Home() {
       const sourceUrl = new URL(finalUrl);
       const headerName = response.headers.get("x-source-filename");
       const fileName = headerName ? decodeURIComponent(headerName) : decodeURIComponent(sourceUrl.pathname.split("/").pop() || "InfoEscolas-online");
+      if (contentType.includes("application/json")) {
+        const payload = await response.json() as { kind?: string; school?: string; records?: Array<{ indicator?: string; value?: string; context?: string; location?: string }> };
+        if (payload.kind !== "infoescolas" || !Array.isArray(payload.records)) throw new Error("O portal devolveu dados num formato não reconhecido.");
+        const source = payload.school ? `InfoEscolas · ${payload.school}` : `InfoEscolas · ${sourceUrl.hostname}`;
+        const extracted = payload.records.flatMap((item, index) => {
+          const indicator = String(item.indicator ?? "").trim();
+          const value = String(item.value ?? "").trim();
+          const context = String(item.context ?? "").trim();
+          if (!indicator || !value || !context || !isPlausibleStatisticalLabel(indicator) || looksLikeExecutableCode(context)) return [];
+          return [{ id: Date.now() * 1000 + index, fieldId: inferStatisticalField(`${indicator} ${context}`), indicator, value, context, source, location: String(item.location ?? finalUrl) } satisfies StatisticalRecord];
+        });
+        const replacedIds = statisticalRecords.filter((record) => record.source === source).map((record) => record.id);
+        setStatisticalRecords((current) => [...current.filter((record) => record.source !== source && validStatisticalRecord(record)), ...extracted]);
+        setStatisticalTreatments((current) => current.filter((treatment) => !treatment.recordIds.some((id) => replacedIds.includes(id))));
+        setSelectedStatisticalIds([]);
+        setSelectedTreatmentIds([]);
+        setChangesPending(true);
+        setStatisticalStatus(extracted.length ? `${extracted.length} observações estatísticas identificadas para ${payload.school || sourceUrl.hostname}, organizadas pelos gráficos do InfoEscolas.` : "A página da escola foi aberta, mas os gráficos não continham observações reconhecíveis.");
+        return;
+      }
       let chunks: TextChunk[];
       if (/pdf|spreadsheet|excel|csv/.test(contentType) || /\.(pdf|xlsx?|csv)$/i.test(fileName)) {
         chunks = await extractFile(new File([await response.blob()], fileName, { type: contentType }));

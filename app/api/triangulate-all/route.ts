@@ -86,6 +86,8 @@ REGRAS:
 - Identifique convergências, divergências, contradições e lacunas.
 - Documento normativo não prova execução; testemunho isolado não comprova um facto.
 - Não transforme ausência de evidência em evidência de ausência.
+- Em 5.4.1, os dados do InfoEscolas só sustentam resultados académicos quando apresentam, para o mesmo indicador, a escola/agrupamento e o nacional em leitura comparada dos três últimos anos letivos. Não analise séries isoladas nem use outros gráficos contextuais como evidência académica.
+- Na leitura comparada, preserve os valores por ano, a diferença em pontos percentuais e a evolução da distância face ao nacional. Se a série estiver incompleta, declare essa limitação sem preencher valores nem concluir uma tendência.
 - Não invente dados, frequência, causalidade, representatividade ou generalização.
 - Redija 1 a 3 parágrafos contínuos por campo, sem nomes de ficheiros ou páginas no corpo.
 - Não use reservas genéricas ou preventivas. Só formule uma reserva quando o diagnóstico do campo identificar uma limitação concreta.

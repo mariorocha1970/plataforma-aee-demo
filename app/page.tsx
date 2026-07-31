@@ -1470,22 +1470,35 @@ export default function Home() {
     try {
       const url = new URL(value);
       if (!/^https?:$/.test(url.protocol)) throw new Error("Utilize um endereço público HTTP ou HTTPS.");
-      const response = await fetch(url.toString());
-      if (!response.ok) throw new Error(`O endereço devolveu o estado ${response.status}.`);
+      const response = await fetch("/api/import-public", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: url.toString() }),
+      });
+      if (!response.ok) {
+        const data = await response.json().catch(() => null) as { error?: string } | null;
+        throw new Error(data?.error || `Não foi possível ler o endereço (estado ${response.status}).`);
+      }
       const contentType = response.headers.get("content-type") ?? "";
-      const fileName = decodeURIComponent(url.pathname.split("/").pop() || "InfoEscolas-online");
+      const finalUrl = response.headers.get("x-source-url") || url.toString();
+      const sourceUrl = new URL(finalUrl);
+      const headerName = response.headers.get("x-source-filename");
+      const fileName = headerName ? decodeURIComponent(headerName) : decodeURIComponent(sourceUrl.pathname.split("/").pop() || "InfoEscolas-online");
       let chunks: TextChunk[];
       if (/pdf|spreadsheet|excel|csv/.test(contentType) || /\.(pdf|xlsx?|csv)$/i.test(fileName)) {
         chunks = await extractFile(new File([await response.blob()], fileName, { type: contentType }));
       } else {
         const html = await response.text();
         const text = contentType.includes("html") ? new DOMParser().parseFromString(html, "text/html").body.textContent ?? "" : html;
-        chunks = [{ text, location: url.toString() }];
+        const cleaned = text.replace(/\s+/g, " ").trim();
+        if (cleaned.length < 40) throw new Error("A página foi aberta, mas não devolveu dados legíveis. Pode depender de conteúdo gerado dinamicamente ou de uma sessão.");
+        chunks = [{ text: cleaned, location: finalUrl }];
       }
-      const count = addStatisticalRecords(url.hostname, chunks);
-      setStatisticalStatus(`${count} registos identificados no endereço indicado.`);
+      if (!chunks.length) throw new Error("O recurso foi aberto, mas não contém texto ou dados legíveis.");
+      const count = addStatisticalRecords(sourceUrl.hostname, chunks);
+      setStatisticalStatus(count > 0 ? `${count} registos identificados em ${sourceUrl.hostname}.` : `O endereço foi lido, mas não foram reconhecidos registos estatísticos. Reveja o conteúdo ou carregue o ficheiro original.`);
     } catch (error) {
-      setStatisticalStatus(`${error instanceof Error ? error.message : "Não foi possível carregar o endereço."} Se o portal bloquear a leitura direta, descarregue o ficheiro e carregue-o nesta página.`);
+      setStatisticalStatus(error instanceof Error ? error.message : "Não foi possível carregar o endereço público.");
     }
   }
 
@@ -2201,7 +2214,7 @@ export default function Home() {
           <div className="page-heading"><div><p className="eyebrow">Agente 3 · Análise estatística</p><h2>Tratamento de dados quantitativos</h2><p>Selecione os dados-base, produza o tratamento por campo de análise e reveja a síntese antes de a exportar ou enviar para a matriz.</p></div><div className="analysis-actions"><span className="badge">{statisticalRecords.length} registos</span><button className="button secondary" disabled={!statisticalRecords.length} onClick={toggleAllStatisticalRecords}>{allStatisticalSelected ? "Desmarcar todos" : "Selecionar todos"}</button><button className="button primary" disabled={!statisticalRecords.length} onClick={treatStatisticalData}>Tratar {selectedStatisticalIds.length || "todos os"} dados</button></div></div>
           <div className="statistics-import">
             <div className="statistics-upload"><strong>Ficheiros locais</strong><p>Formatos aceites: XLS, XLSX, CSV, PDF e TXT.</p><label className="button primary file-button">Carregar dados<input type="file" multiple accept=".pdf,.xls,.xlsx,.csv,.txt" onChange={handleStatisticalFiles} /></label></div>
-            <div className="statistics-online"><strong>InfoEscolas ou outro endereço público</strong><p>Cole o endereço da página ou do ficheiro disponibilizado publicamente.</p><div><input type="url" value={statisticalUrl} onChange={(event) => setStatisticalUrl(event.target.value)} placeholder="https://infoescolas.medu.pt/…" /><button className="button secondary" onClick={loadStatisticalUrl}>Carregar endereço</button></div><small>A leitura direta depende das permissões do portal. Se for bloqueada, descarregue o ficheiro e carregue-o localmente.</small></div>
+            <div className="statistics-online"><strong>InfoEscolas ou outro endereço público</strong><p>Cole o endereço da página ou do ficheiro disponibilizado publicamente.</p><div><input type="url" value={statisticalUrl} onChange={(event) => setStatisticalUrl(event.target.value)} placeholder="https://infoescolas.medu.pt/…" /><button className="button secondary" onClick={loadStatisticalUrl}>Ler endereço público</button></div><small>A plataforma lê o endereço através do servidor. Páginas que dependam de autenticação ou gerem todos os dados apenas no navegador podem exigir o carregamento do ficheiro original.</small></div>
           </div>
           {statisticalStatus && <div className="statistics-status" role="status">{statisticalStatus}</div>}
           {statisticalRecords.length === 0 ? <div className="empty-analysis"><strong>Ainda não existem dados estatísticos para rever.</strong><p>Carregue um ficheiro ou indique um endereço público. Os dados só entram nas evidências depois da sua seleção.</p></div> : <div className="statistics-list">

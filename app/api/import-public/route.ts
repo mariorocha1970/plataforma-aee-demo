@@ -63,7 +63,9 @@ function infoEscolasPayload(html: string, sourceUrl: string) {
   if (!/infoescolas\.medu\.pt/i.test(sourceUrl) || !/google\.visualization\.DataTable/.test(html)) return null;
   const clean = (value: string) => value.replace(/<[^>]*>/g, " ").replace(/&nbsp;|&#160;/gi, " ").replace(/&ordm;|&#186;/gi, "º").replace(/&amp;/gi, "&").replace(/\s+/g, " ").trim();
   const titleMap = new Map<string, string>();
-  for (const match of html.matchAll(/id=['"]DivTit(\d+)['"][^>]*>([\s\S]*?)(?:<span\b|<\/div>)/gi)) titleMap.set(match[1], clean(match[2]));
+  // Exige uma etiqueta HTML real. Sem este prefixo, a expressão podia começar
+  // num getElementById('DivTitN') e capturar o número como título.
+  for (const match of html.matchAll(/<(?:div|td)\b[^>]*\bid=['"]DivTit(\d+)['"][^>]*>([\s\S]*?)(?:<span\b|<\/div>)/gi)) titleMap.set(match[1], clean(match[2]));
   const school = clean(html.match(/class=['"]titEstCur['"][^>]*>([\s\S]*?)(?:<br|<\/td>)/i)?.[1] ?? "InfoEscolas");
   const records: Array<{ indicator: string; value: string; context: string; location: string }> = [];
   const functions = [...html.matchAll(/function\s+drawChart\d+\(\)\s*\{([\s\S]*?)(?=google\.setOnLoadCallback\(drawChart\d+\)|<\/script>)/g)];
@@ -105,7 +107,7 @@ function infoEscolasPayload(html: string, sourceUrl: string) {
         records.push({
           indicator: `${title} — ${displayColumn}`,
           value: `${formatted}${suffix}`,
-          context: `${school}; período/categoria=${period}; série=${displayColumn}; valor=${formatted}${suffix}${sample}`,
+          context: `${school}. Período ou categoria: ${period}. Série: ${displayColumn}. Valor: ${formatted}${suffix}${sample ? sample.replace(/^; amostra=/, ". Amostra: ") : ""}`,
           location: `${title} · ${period}`,
         });
       }

@@ -43,8 +43,10 @@ REGRAS:
 - Preserve o sentido e as reservas das triangulações; não acrescente factos, causalidade ou classificações.
 - Use o diagnóstico probatório incluído em cada campo para rever as reservas metodológicas.
 - Elimine fórmulas genéricas sobre “representatividade restrita” ou “evidência independente adicional” quando não sejam justificadas pelo diagnóstico.
-- Se coveragePercent for 100, não afirme que faltam indicadores. Se independentDiversity for verdadeira, hasResultsOrImpact for verdadeiro e não houver contradições, omita inteiramente a reserva metodológica.
-- Quando exista uma limitação, identifique-a concretamente: indicadores sem evidência, pouca diversidade de fontes, contradição ou ausência de resultados/impacto.
+- Não equipare quantidade de fontes a robustez. Use evidenceQuality para a qualidade probatória das evidências face aos indicadores e triangulation para a confirmação independente.
+- A autoridade de uma fonte não cria cobertura automática; uma constatação histórica deve ser apresentada como histórica se não houver confirmação atual.
+- Se coveragePercent for 100, não afirme que faltam indicadores. Se evidenceQuality for Forte, triangulation for Confirmada, hasResultsOrImpact for verdadeiro e não houver contradições, omita inteiramente a reserva metodológica.
+- Quando exista uma limitação, identifique-a concretamente: indicadores sem evidência, qualidade probatória insuficiente, triangulação parcial/não realizada, contradição ou ausência de resultados/impacto.
 - Nunca repita a mesma reserva por rotina em vários campos e não produza pontuação duplicada.
 - Distinga intenção, prática, monitorização, resultado e impacto.
 - Não apresente perceções isoladas como factos comprovados.

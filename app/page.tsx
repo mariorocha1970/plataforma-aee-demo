@@ -663,6 +663,7 @@ function buildStatisticalTreatments(records: StatisticalRecord[]) {
         average: null,
         strengths,
         improvements,
+        sourceKeys: [...new Set(items.map((item) => item.sourceKey).filter((value): value is string => Boolean(value)))],
       };
     }
     const fieldId = items[0].fieldId;
@@ -699,6 +700,7 @@ function buildStatisticalTreatments(records: StatisticalRecord[]) {
       strengths: [],
       improvements: [],
       evidenceUse: id.startsWith("infoescolas-context|") ? "context-only" : undefined,
+      sourceKeys: [...new Set(items.map((item) => item.sourceKey).filter((value): value is string => Boolean(value)))],
     };
   });
 }
@@ -1713,10 +1715,15 @@ export default function Home() {
   function addStatisticalRecords(source: string, chunks: TextChunk[]) {
     const sourceKey = `local|${normalizeText(source)}`;
     const extracted = extractStatisticalRecords(source, chunks).map((record) => ({ ...record, dataset: "general" as const, sourceKey }));
-    const replacedIds = statisticalRecords.filter((record) => record.source === source).map((record) => record.id);
-    setStatisticalRecords((current) => [...current.filter((record) => record.source !== source && validStatisticalRecord(record)), ...extracted]);
-    setStatisticalTreatments((current) => current.filter((treatment) => !treatment.recordIds.some((id) => replacedIds.includes(id))));
-    setSelectedTreatmentIds((current) => current.filter((id) => statisticalTreatments.some((treatment) => treatment.id === id && !treatment.recordIds.some((recordId) => replacedIds.includes(recordId)))));
+    // Recarregar um ficheiro substitui apenas esse ficheiro. Não se volta a
+    // validar nem a filtrar aqui os registos das restantes origens.
+    setStatisticalRecords((current) => [...current.filter((record) => (record.sourceKey || `local|${normalizeText(record.source)}`) !== sourceKey), ...extracted]);
+    setStatisticalTreatments((current) => current.filter((treatment) => !(treatment.sourceKeys ?? []).includes(sourceKey) && !treatment.sources.includes(source)));
+    setSelectedTreatmentIds((current) => current.filter((id) => !id.includes(sourceKey)));
+    setSelectedStatisticalIds((current) => [...new Set([
+      ...current.filter((id) => !statisticalRecords.some((record) => record.id === id && (record.sourceKey || `local|${normalizeText(record.source)}`) === sourceKey)),
+      ...extracted.map((record) => record.id),
+    ])]);
     setChangesPending(true);
     return extracted.length;
   }
@@ -1763,29 +1770,42 @@ export default function Home() {
         const scopeLabel = payload.scopeLabel || "Oferta não identificada";
         const requestedLevel = url.searchParams.get("nivel") || sourceUrl.searchParams.get("nivel") || "";
         const scopeCode = payload.scopeCode || requestedLevel || scopeLabel;
-        // A chave canónica vem do endereço originalmente inserido. Assim, um
-        // redirecionamento do portal nunca funde dois níveis de ensino.
-        const sourceKey = payload.scopeKey || `infoescolas|${payload.school || sourceUrl.hostname}|${scopeCode}`;
+        // A identidade não depende da chave devolvida pelo portal: para a mesma
+        // escola e o mesmo ciclo/oferta é sempre igual, mesmo após redirects.
+        const schoolKey = normalizeText(payload.school || sourceUrl.hostname);
+        const sourceKey = `infoescolas|${schoolKey}|${String(scopeCode)}`;
         const source = `InfoEscolas · ${payload.school || sourceUrl.hostname} · ${scopeLabel}`;
-        const extracted = payload.records.flatMap((item, index) => {
+        const extractedCandidates = payload.records.flatMap((item, index) => {
           const indicator = String(item.indicator ?? "").trim();
           const value = String(item.value ?? "").trim();
           const context = String(item.context ?? "").trim();
           if (!indicator || !value || !context || !isPlausibleStatisticalLabel(indicator) || looksLikeExecutableCode(indicator)) return [];
           return [{ id: Date.now() * 1000 + index, fieldId: "res-acad", indicator, value, context, source, location: String(item.location ?? finalUrl), dataset: "infoescolas", comparisonKey: String(item.chartTitle ?? indicator.split(" — ")[0]).trim(), period: String(item.period ?? "").trim(), seriesRole: item.seriesRole ?? "other", evidenceUse: item.evidenceUse ?? "context-only", sourceKey, sourceScope: scopeLabel, sourceScopeCode: scopeCode } satisfies StatisticalRecord];
         });
-        const sameScope = (record: StatisticalRecord) => (record.sourceKey || record.source) === sourceKey
-          || (record.dataset === "infoescolas" && Boolean(scopeCode) && infoEscolasRecordScope(record) === String(scopeCode));
+        const seenRecords = new Set<string>();
+        const extracted = extractedCandidates.filter((record) => {
+          const key = [normalizeText(record.comparisonKey || record.indicator), normalizeText(record.indicator), record.period, record.seriesRole, record.value].join("|");
+          if (seenRecords.has(key)) return false;
+          seenRecords.add(key);
+          return true;
+        });
+        const sameSchool = (record: StatisticalRecord) => normalizeText(record.source).includes(schoolKey);
+        const sameScope = (record: StatisticalRecord) => record.dataset === "infoescolas" && (
+          record.sourceKey === sourceKey
+          || (Boolean(scopeCode) && infoEscolasRecordScope(record) === String(scopeCode) && sameSchool(record))
+        );
         // A segunda condição repara dados guardados pela v62 cuja chave ficou
         // errada devido a um redirecionamento: só substitui registos cujo próprio
         // indicador demonstra pertencer ao ciclo agora reimportado.
-        const replacedIds = statisticalRecords.filter(sameScope).map((record) => record.id);
-        setStatisticalRecords((current) => [...current.filter((record) => !sameScope(record) && validStatisticalRecord(record)), ...extracted]);
-        setStatisticalTreatments((current) => current.filter((treatment) => !treatment.recordIds.some((id) => replacedIds.includes(id))));
+        setStatisticalRecords((current) => [...current.filter((record) => !sameScope(record)), ...extracted]);
+        setStatisticalTreatments((current) => current.filter((treatment) => !(treatment.sourceKeys ?? []).some((key) => key === sourceKey || (key.startsWith("infoescolas|") && key.endsWith(`|${String(scopeCode)}`) && normalizeText(treatment.sources.join(" ")).includes(schoolKey)))));
         // Todos os dados permanecem disponíveis para tratamento e consulta.
         // Só as comparações académicas serão pré-selecionadas para promoção.
-        setSelectedStatisticalIds(extracted.map((record) => record.id));
-        setSelectedTreatmentIds((current) => current.filter((id) => statisticalTreatments.some((treatment) => treatment.id === id && !treatment.recordIds.some((recordId) => replacedIds.includes(recordId)))));
+        setSelectedStatisticalIds((current) => [...new Set([
+          ...current.filter((id) => !statisticalRecords.some((record) => record.id === id && sameScope(record))),
+          ...extracted.map((record) => record.id),
+        ])]);
+        setSelectedTreatmentIds((current) => current.filter((id) => !id.includes(sourceKey)));
         setChangesPending(true);
         setStatisticalStatus(extracted.length ? `${extracted.length} observações estatísticas de ${scopeLabel} acrescentadas. Os restantes ciclos/ofertas foram preservados.` : "A página da escola foi aberta, mas os gráficos não continham observações reconhecíveis.");
         return;
@@ -1843,17 +1863,14 @@ export default function Home() {
     const chosen = selectedInScope.length ? selectedInScope : available;
     const base = chosen.filter(validStatisticalRecord);
     const rejected = chosen.length - base.length;
-    if (rejected) {
-      const rejectedIds = new Set(chosen.filter((record) => !validStatisticalRecord(record)).map((record) => record.id));
-      setStatisticalRecords((current) => current.filter((record) => !rejectedIds.has(record.id)));
-      setSelectedStatisticalIds((current) => current.filter((id) => !rejectedIds.has(id)));
-    }
+    // O tratamento pode ignorar uma linha não interpretável, mas nunca apaga os
+    // dados de origem. O utilizador pode revê-los ou voltar a carregá-los.
     const treatments = buildStatisticalTreatments(base);
     const treatmentIds = new Set(treatments.map((treatment) => treatment.id));
     setStatisticalTreatments((current) => [...current.filter((treatment) => !treatmentIds.has(treatment.id)), ...treatments]);
     setSelectedTreatmentIds((current) => [...new Set([...current.filter((id) => !treatmentIds.has(id)), ...treatments.filter((treatment) => treatment.evidenceUse !== "context-only").map((treatment) => treatment.id)])]);
     const scopeLabel = dataset === "general" ? "ficheiros locais" : dataset === "infoescolas" ? "InfoEscolas" : "todas as fontes";
-    setStatisticalStatus(`${treatments.length} síntese(s) de ${scopeLabel} produzida(s) a partir de ${base.length} registo(s). Os tratamentos das restantes fontes foram preservados.${rejected ? ` ${rejected} registo(s) inválido(s), com código ou rótulo não interpretável, foram removidos.` : ""}`);
+    setStatisticalStatus(`${treatments.length} síntese(s) de ${scopeLabel} produzida(s) a partir de ${base.length} registo(s). Os tratamentos e dados das restantes fontes foram preservados.${rejected ? ` ${rejected} linha(s) sem estrutura estatística interpretável foram ignoradas no tratamento, mas permanecem nos dados de origem.` : ""}`);
     setChangesPending(true);
   }
 

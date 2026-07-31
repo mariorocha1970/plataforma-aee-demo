@@ -499,7 +499,14 @@ function deduplicateStatisticalRecords(records: StatisticalRecord[]) {
     const scope = record.dataset === "infoescolas"
       ? `infoescolas|${normalizeText(record.source.replace(/·[^·]+$/, ""))}|${record.sourceScopeCode || infoEscolasRecordScope(record) || normalizeText(record.sourceScope || "")}`
       : `local|${normalizeText(record.source)}`;
-    const key = [scope, record.fieldId, normalizeText(record.comparisonKey || record.indicator), record.period || "", record.seriesRole || "", normalizeText(record.context.replace(record.value, ""))].join("|");
+    // No InfoEscolas, uma observação é identificada pela escola/oferta,
+    // indicador, período e série. O endereço, o texto de contexto e até o valor
+    // podem mudar numa reimportação; a versão mais recente deve substituir a
+    // anterior, não surgir como uma nova linha. Nos ficheiros locais conserva-se
+    // também a localização para não fundir linhas distintas do mesmo ficheiro.
+    const key = record.dataset === "infoescolas"
+      ? [scope, record.fieldId, normalizeText(record.comparisonKey || record.indicator), record.period || "", record.seriesRole || ""].join("|")
+      : [scope, record.fieldId, normalizeText(record.indicator), record.period || "", normalizeText(record.location), record.value].join("|");
     unique.set(key, record);
   });
   return [...unique.values()];
@@ -588,7 +595,11 @@ function isPlausibleStatisticalLabel(label: string) {
 }
 
 function validStatisticalRecord(record: StatisticalRecord) {
-  return isPlausibleStatisticalLabel(record.indicator) && !looksLikeExecutableCode(record.context);
+  // O contexto é apenas rastreabilidade. Em questionários e tabelas reconstruídas
+  // contém legitimamente expressões como "question=...; category=...", que o
+  // filtro genérico de código confundia com conteúdo executável. A admissão ao
+  // tratamento deve depender do indicador e do valor efetivamente tratável.
+  return isPlausibleStatisticalLabel(record.indicator) && parseStatisticalValue(record.value) !== null;
 }
 
 function parseStatisticalValue(value: string) {

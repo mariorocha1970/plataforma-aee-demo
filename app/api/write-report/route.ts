@@ -41,6 +41,11 @@ REGRAS:
 - Preserve rigorosamente a organização pelos domínios e campos 5.1.1 a 5.4.3 presentes na minuta.
 - Redija texto contínuo, claro, conciso e avaliativo, sem listas de evidências.
 - Preserve o sentido e as reservas das triangulações; não acrescente factos, causalidade ou classificações.
+- Use o diagnóstico probatório incluído em cada campo para rever as reservas metodológicas.
+- Elimine fórmulas genéricas sobre “representatividade restrita” ou “evidência independente adicional” quando não sejam justificadas pelo diagnóstico.
+- Se coveragePercent for 100, não afirme que faltam indicadores. Se independentDiversity for verdadeira, hasResultsOrImpact for verdadeiro e não houver contradições, omita inteiramente a reserva metodológica.
+- Quando exista uma limitação, identifique-a concretamente: indicadores sem evidência, pouca diversidade de fontes, contradição ou ausência de resultados/impacto.
+- Nunca repita a mesma reserva por rotina em vários campos e não produza pontuação duplicada.
 - Distinga intenção, prática, monitorização, resultado e impacto.
 - Não apresente perceções isoladas como factos comprovados.
 - Não cite nomes de ficheiros, páginas ou identificadores no corpo do relatório.

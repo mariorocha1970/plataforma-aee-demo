@@ -111,7 +111,10 @@ function infoEscolasPayload(html: string, sourceUrl: string) {
         else if (isEquity) suffix = " p.p.";
         const displayColumn = column.replace(/^Perc(\d)$/i, "$1.º ano").replace(/Media Nacional/gi, "Média nacional");
         const normalizedColumn = displayColumn.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
-        const seriesRole: "school" | "national" | "other" = /nacional/.test(normalizedColumn) ? "national" : /amostra|balanco/.test(normalizedColumn) ? "other" : "school";
+        // A referência nacional surge muitas vezes como "Alunos do país...",
+        // e não com a palavra "nacional".
+        const nationalReference = /\b(?:nacional|pais|portugal)\b/.test(normalizedColumn);
+        const seriesRole: "school" | "national" | "other" = nationalReference ? "national" : /amostra|balanco/.test(normalizedColumn) ? "other" : "school";
         const formatted = Number(value.toFixed(2)).toLocaleString("pt-PT", { maximumFractionDigits: 2 });
         records.push({
           indicator: `${title} — ${displayColumn}`,

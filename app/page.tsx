@@ -428,7 +428,7 @@ function extractStatisticalRecords(source: string, chunks: TextChunk[]) {
       records.push(...questionnaireRates);
       return;
     }
-    const rawLines = chunk.text.split(/\n+|(?<=[.!?])\s+/).map((line) => line.replace(/[•●▪◦*]+/g, " ").replace(/\s+/g, " ").trim());
+    const rawLines = chunk.text.split(/\n+|(?<=[.!?])\s+/).map((line) => line.replace(/[•●▪◦*]+/g, " ").replace(/[ \t]+/g, " ").trim());
     const lines = rawLines.flatMap((line) => {
       if (line.length <= 520) return [line];
       const windows: string[] = [];
@@ -442,14 +442,30 @@ function extractStatisticalRecords(source: string, chunks: TextChunk[]) {
     lines.forEach((line) => {
       if (line.length < 12 || line.length > 520) return;
       if (looksLikeExecutableCode(line)) return;
-      const valueMatch = line.match(/\b\d+(?:[.,]\d+)?\s*%|\b\d+(?:[.,]\d+)?\b/);
-      if (!valueMatch) return;
+      const percentageMatches = [...line.matchAll(/(?<![\d.,])[-+]?\d{1,3}(?:[.,]\d+)?\s*%/g)];
+      const explicitValue = !percentageMatches.length
+        ? line.match(/(?:^|[|;\t]|\s[-–—:]\s*)\s*([-+]?\d+(?:[.,]\d+)?)\s*(?=$|[|;\t])/)
+        : null;
+      const valueMatches = percentageMatches.length ? percentageMatches : explicitValue ? [explicitValue] : [];
+      if (!valueMatches.length) return;
       const statisticalLanguage = /%|taxa|média|media|valor|número|numero|índice|indice|percentagem|alunos?|resultados?|participação|participacao|transição|transicao|conclusão|conclusao|retenção|retencao/i.test(line);
-      if (!statisticalLanguage || (/^(?:19|20)\d{2}$/.test(valueMatch[0]) && !/%/.test(line))) return;
-      const value = valueMatch[0].trim();
-      const indicator = line.replace(valueMatch[0], " ").replace(/^[\s:;,.–—-]+|[\s:;,.–—-]+$/g, "").slice(0, 220) || "Indicador estatístico";
-      if (!isPlausibleStatisticalLabel(indicator)) return;
-      records.push({ id: Date.now() * 1000 + records.length, fieldId: inferStatisticalField(line), indicator, value, context: line, source, location: chunk.location });
+      if (!statisticalLanguage) return;
+      valueMatches.forEach((match) => {
+        const rawValue = (percentageMatches.length ? match[0] : match[1]).trim();
+        if (!rawValue.includes("%") && /^(?:19|20)\d{2}$/.test(rawValue)) return;
+        const matchIndex = match.index ?? line.indexOf(rawValue);
+        const before = line.slice(0, matchIndex).replace(/[|;\t]\s*[^|;\t]{0,45}$/, (tail) => tail);
+        const localLabel = before.split(/[|;\t]/).at(-1)?.replace(/^[\s:;,.–—-]+|[\s:;,.–—-]+$/g, "").trim() ?? "";
+        const generalLabel = line
+          .replace(/(?<![\d.,])[-+]?\d{1,3}(?:[.,]\d+)?\s*%/g, " ")
+          .replace(/\b(?:19|20)\d{2}(?:\s*[-–/]\s*(?:19|20)?\d{2})?\b/g, " ")
+          .replace(/\s+/g, " ")
+          .replace(/^[\s:;,.–—-]+|[\s:;,.–—-]+$/g, "")
+          .trim();
+        const indicator = (localLabel.length >= 6 ? localLabel : generalLabel).slice(0, 220) || "Indicador estatístico";
+        if (!isPlausibleStatisticalLabel(indicator) || indicator.includes("�")) return;
+        records.push({ id: Date.now() * 1000 + records.length, fieldId: inferStatisticalField(line), indicator, value: rawValue, context: line, source, location: chunk.location });
+      });
     });
   });
   return records.slice(0, 60);
@@ -1519,7 +1535,16 @@ export default function Home() {
           const document = new DOMParser().parseFromString(html, "text/html");
           document.querySelectorAll("script, style, noscript, template, svg, canvas").forEach((node) => node.remove());
           const root = document.querySelector("main, [role='main']") ?? document.body;
-          root.querySelectorAll("br, p, li, tr, h1, h2, h3, h4, h5, h6, section, article").forEach((node) => node.append("\n"));
+          root.querySelectorAll("img[alt], [aria-label], [title]").forEach((node) => {
+            const label = node.getAttribute("alt") || node.getAttribute("aria-label") || node.getAttribute("title");
+            if (label && !node.textContent?.trim()) node.append(` ${label} `);
+          });
+          root.querySelectorAll("tr").forEach((row) => {
+            const cells = [...row.querySelectorAll(":scope > th, :scope > td")].map((cell) => cell.textContent?.replace(/\s+/g, " ").trim()).filter(Boolean);
+            if (cells.length) row.replaceChildren(document.createTextNode(cells.join("\t")));
+            row.append("\n");
+          });
+          root.querySelectorAll("br, p, li, h1, h2, h3, h4, h5, h6, section, article, option").forEach((node) => node.append("\n"));
           text = root.textContent ?? "";
         }
         const cleaned = text.replace(/[ \t]+/g, " ").replace(/\n\s*\n+/g, "\n").trim();

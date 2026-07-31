@@ -522,6 +522,29 @@ function deduplicateStatisticalTreatments(treatments: StatisticalTreatment[], re
   return [...unique.values()];
 }
 
+function statisticalScopeRank(record: StatisticalRecord) {
+  if (record.dataset !== "infoescolas") return 100;
+  const explicit = Number(record.sourceScopeCode);
+  if (Number.isFinite(explicit) && explicit >= 1 && explicit <= 5) return explicit;
+  const scope = normalizeText(`${record.sourceScope || ""} ${record.source} ${record.indicator}`);
+  if (/1\s*(?:o|º)?\s*ciclo|primeiro ciclo/.test(scope)) return 1;
+  if (/2\s*(?:o|º)?\s*ciclo|segundo ciclo/.test(scope)) return 2;
+  if (/3\s*(?:o|º)?\s*ciclo|terceiro ciclo/.test(scope)) return 3;
+  if (/profissional/.test(scope)) return 5;
+  if (/secundario|cientifico humanistico/.test(scope)) return 4;
+  return 90;
+}
+
+function compareStatisticalRecords(a: StatisticalRecord, b: StatisticalRecord) {
+  const rank = statisticalScopeRank(a) - statisticalScopeRank(b);
+  if (rank) return rank;
+  const source = a.source.localeCompare(b.source, "pt-PT", { numeric: true, sensitivity: "base" });
+  if (source) return source;
+  const indicator = (a.comparisonKey || a.indicator).localeCompare(b.comparisonKey || b.indicator, "pt-PT", { numeric: true, sensitivity: "base" });
+  if (indicator) return indicator;
+  return (a.period || "").localeCompare(b.period || "", "pt-PT", { numeric: true });
+}
+
 function extractStatisticalRecords(source: string, chunks: TextChunk[]) {
   const records: StatisticalRecord[] = [];
   chunks.forEach((chunk) => {
@@ -1454,7 +1477,17 @@ export default function Home() {
   const sourceTypeCount = new Set(evidence.filter((record) => record.validated).map((record) => record.sourceType)).size;
   const allCandidatesSelected = documentCandidates.length > 0 && documentCandidates.every((candidate) => selectedCandidates.includes(candidate.id));
   const allStatisticalSelected = statisticalRecords.length > 0 && statisticalRecords.every((record) => selectedStatisticalIds.includes(record.id));
+  const orderedStatisticalRecords = useMemo(() => [...statisticalRecords].sort(compareStatisticalRecords), [statisticalRecords]);
   const promotableTreatments = statisticalTreatments.filter((treatment) => treatment.evidenceUse !== "context-only");
+  const orderedStatisticalTreatments = useMemo(() => {
+    const recordsById = new Map(statisticalRecords.map((record) => [record.id, record]));
+    return [...statisticalTreatments].sort((a, b) => {
+      const aRecord = a.recordIds.map((id) => recordsById.get(id)).filter((record): record is StatisticalRecord => Boolean(record)).sort(compareStatisticalRecords)[0];
+      const bRecord = b.recordIds.map((id) => recordsById.get(id)).filter((record): record is StatisticalRecord => Boolean(record)).sort(compareStatisticalRecords)[0];
+      const rank = (aRecord ? statisticalScopeRank(aRecord) : 100) - (bRecord ? statisticalScopeRank(bRecord) : 100);
+      return rank || a.indicator.localeCompare(b.indicator, "pt-PT", { numeric: true, sensitivity: "base" });
+    });
+  }, [statisticalRecords, statisticalTreatments]);
   const allTreatmentsSelected = promotableTreatments.length > 0 && promotableTreatments.every((treatment) => selectedTreatmentIds.includes(treatment.id));
 
   function saveLocal() {
@@ -1956,6 +1989,36 @@ export default function Home() {
 
   function toggleAllStatisticalRecords() {
     setSelectedStatisticalIds(allStatisticalSelected ? [] : statisticalRecords.map((record) => record.id));
+  }
+
+  function deleteSelectedStatisticalSources() {
+    const selected = statisticalRecords.filter((record) => selectedStatisticalIds.includes(record.id));
+    if (!selected.length) return;
+    const sourceKeys = new Set(selected.map((record) => record.sourceKey || `${record.dataset || "general"}|${normalizeText(record.source)}`));
+    const recordsToDelete = statisticalRecords.filter((record) => sourceKeys.has(record.sourceKey || `${record.dataset || "general"}|${normalizeText(record.source)}`));
+    const recordIds = new Set(recordsToDelete.map((record) => record.id));
+    const treatmentsToDelete = statisticalTreatments.filter((treatment) =>
+      treatment.recordIds.some((id) => recordIds.has(id)) ||
+      (treatment.sourceKeys ?? []).some((key) => sourceKeys.has(key))
+    );
+    const treatmentIds = new Set(treatmentsToDelete.map((treatment) => treatment.id));
+    const affectedFields = new Set(treatmentsToDelete.map((treatment) => treatment.fieldId));
+    const sourceNames = [...new Set(recordsToDelete.map((record) => record.dataset === "infoescolas" && record.sourceScope ? `${record.sourceScope} — ${record.source}` : record.source))];
+    const confirmed = window.confirm(`Eliminar definitivamente ${sourceNames.length} origem(ns)?\n\n${sourceNames.join("\n")}\n\nSerão também removidos os tratamentos, as evidências estatísticas associadas e as conclusões já produzidas a partir destes dados. O Relatório terá de ser gerado novamente.`);
+    if (!confirmed) return;
+
+    setStatisticalRecords((current) => current.filter((record) => !recordIds.has(record.id)));
+    setStatisticalTreatments((current) => current.filter((treatment) => !treatmentIds.has(treatment.id)));
+    setEvidence((current) => current.filter((item) => !item.statisticalTreatmentId || !treatmentIds.has(item.statisticalTreatmentId)));
+    setSelectedStatisticalIds([]);
+    setSelectedTreatmentIds((current) => current.filter((id) => !treatmentIds.has(id)));
+    setNarratives((current) => Object.fromEntries(Object.entries(current).filter(([fieldId]) => !affectedFields.has(fieldId))));
+    setTriangulationRevisions((current) => Object.fromEntries(Object.entries(current).filter(([fieldId]) => !affectedFields.has(fieldId))));
+    setReport("");
+    setConclusions([]);
+    setAiTriangulationStatus("Os dados selecionados e toda a cadeia estatística associada foram eliminados. Repita a triangulação dos campos afetados e gere novamente o Relatório.");
+    setStatisticalStatus(`${recordsToDelete.length} registo(s), ${treatmentsToDelete.length} tratamento(s) e as respetivas evidências foram eliminados definitivamente.`);
+    setChangesPending(true);
   }
 
   function treatStatisticalData(dataset?: "general" | "infoescolas") {
@@ -2710,7 +2773,7 @@ export default function Home() {
         </section>}
 
         {view === "estatistica" && <section className="view">
-          <div className="page-heading"><div><p className="eyebrow">Agente 3 · Análise estatística</p><h2>Tratamento de dados quantitativos</h2><p>Os ficheiros locais e o InfoEscolas são conservados e tratados separadamente. Os tratamentos selecionados convergem depois na Matriz de evidências.</p></div><div className="analysis-actions"><span className="badge">{statisticalRecords.length} registos</span><button className="button secondary" disabled={!statisticalRecords.length} onClick={toggleAllStatisticalRecords}>{allStatisticalSelected ? "Desmarcar todos" : "Selecionar todos"}</button><button className="button primary" disabled={!statisticalRecords.length} onClick={() => treatStatisticalData()}>Tratar todos</button></div></div>
+          <div className="page-heading"><div><p className="eyebrow">Agente 3 · Análise estatística</p><h2>Tratamento de dados quantitativos</h2><p>Os ficheiros locais e o InfoEscolas são conservados e tratados separadamente. Os tratamentos selecionados convergem depois na Matriz de evidências.</p></div><div className="analysis-actions"><span className="badge">{statisticalRecords.length} registos</span><button className="button secondary" disabled={!statisticalRecords.length} onClick={toggleAllStatisticalRecords}>{allStatisticalSelected ? "Desmarcar todos" : "Selecionar todos"}</button><button className="text-button danger-text" disabled={!selectedStatisticalIds.length} onClick={deleteSelectedStatisticalSources}>Eliminar origens selecionadas</button><button className="button primary" disabled={!statisticalRecords.length} onClick={() => treatStatisticalData()}>Tratar todos</button></div></div>
           <div className="statistics-import">
             <div className="statistics-upload"><strong>Ficheiros locais</strong><p>Formatos aceites: XLS, XLSX, CSV, PDF e TXT.</p><label className="button primary file-button">Carregar dados<input type="file" multiple accept=".pdf,.xls,.xlsx,.csv,.txt" onChange={handleStatisticalFiles} /></label></div>
             <div className="statistics-online"><strong>InfoEscolas ou outro endereço público</strong><p>Cole o endereço da página ou do ficheiro disponibilizado publicamente.</p><div><input type="url" value={statisticalUrl} onChange={(event) => setStatisticalUrl(event.target.value)} placeholder="https://infoescolas.medu.pt/…" /><button className="button secondary" onClick={loadStatisticalUrl}>Ler endereço público</button></div><small>A plataforma lê o endereço através do servidor. Páginas que dependam de autenticação ou gerem todos os dados apenas no navegador podem exigir o carregamento do ficheiro original.</small></div>
@@ -2718,7 +2781,7 @@ export default function Home() {
           {statisticalStatus && <div className="statistics-status" role="status">{statisticalStatus}</div>}
           {statisticalRecords.length > 0 && <div className="quality-gate"><strong>Tratamento independente por origem</strong><span>{statisticalRecords.filter((record) => (record.dataset || "general") === "general").length} registos de ficheiros locais · {statisticalRecords.filter((record) => record.dataset === "infoescolas").length} registos do InfoEscolas. Tratar um grupo não elimina o outro.</span><div className="action-row"><button className="button secondary" disabled={!statisticalRecords.some((record) => (record.dataset || "general") === "general")} onClick={() => treatStatisticalData("general")}>Tratar ficheiros locais</button><button className="button secondary" disabled={!statisticalRecords.some((record) => record.dataset === "infoescolas")} onClick={() => treatStatisticalData("infoescolas")}>Tratar InfoEscolas</button></div></div>}
           {statisticalRecords.length === 0 ? <div className="empty-analysis"><strong>Ainda não existem dados estatísticos para rever.</strong><p>Carregue um ficheiro ou indique um endereço público. Os dados só entram nas evidências depois da sua seleção.</p></div> : <div className="statistics-list">
-            {statisticalRecords.map((record) => <article className={selectedStatisticalIds.includes(record.id) ? "statistics-card selected" : "statistics-card"} key={record.id}>
+            {orderedStatisticalRecords.map((record) => <article className={selectedStatisticalIds.includes(record.id) ? "statistics-card selected" : "statistics-card"} key={record.id}>
               <label className="candidate-check"><input type="checkbox" checked={selectedStatisticalIds.includes(record.id)} onChange={() => toggleStatisticalRecord(record.id)} /><span>Incluir</span></label>
               <div className="statistics-fields"><label>Indicador<input value={record.indicator} onChange={(event) => updateStatisticalRecord(record.id, { indicator: event.target.value })} /></label><label>Valor<input value={record.value} onChange={(event) => updateStatisticalRecord(record.id, { value: event.target.value })} /></label><div className="statistics-context"><strong>Contexto extraído</strong><span>{record.context}</span><small>{record.source} · {record.location}</small>{record.dataset === "infoescolas" && <small><strong>{record.evidenceUse === "academic-comparison" ? "Evidência académica · exige comparação com o nacional" : "Dado contextual · não entra automaticamente nas evidências"}</strong></small>}</div></div>
               <div className="candidate-classification"><label>Campo de análise<select value={record.fieldId} onChange={(event) => updateStatisticalRecord(record.id, { fieldId: event.target.value })}>{fields.map((field) => <option value={field.id} key={field.id}>{field.section} · {field.name}</option>)}</select></label><button className="text-button danger-text" onClick={() => { setStatisticalRecords((current) => current.filter((item) => item.id !== record.id)); setSelectedStatisticalIds((current) => current.filter((id) => id !== record.id)); }}>Descartar</button></div>
@@ -2727,7 +2790,7 @@ export default function Home() {
           {statisticalTreatments.length > 0 && <section className="treatment-panel">
             <div className="section-heading"><div><p className="eyebrow">Resultado intermédio</p><h3>Apresentação do tratamento por indicador</h3><p>Nos questionários, os dados são agregados por grupo e questões repetidas são deduplicadas. Critérios de sinalização: concordância ≥75% para ponto forte; não concordância ≥15%, “Não sei” ≥10% ou concordância &lt;60% para área de melhoria.</p></div><div className="action-row"><button className="button secondary" onClick={toggleAllTreatments}>{allTreatmentsSelected ? "Desmarcar tratamentos" : "Selecionar tratamentos"}</button><button className="button secondary" onClick={exportStatisticalServer}>Guardar Word (.docx)</button><button className="button primary" disabled={!selectedTreatmentIds.length} onClick={promoteStatisticalTreatments}>Enviar para a Matriz ({selectedTreatmentIds.length || ""})</button></div></div>
             {statisticalTreatments.some((treatment) => treatment.respondentGroup) && <QuestionnaireOverviewChart treatments={statisticalTreatments.filter((treatment) => treatment.respondentGroup)} />}
-            <div className="treatment-grid">{statisticalTreatments.map((treatment) => { const field = getField(treatment.fieldId); return <article className={selectedTreatmentIds.includes(treatment.id) ? "treatment-card selected" : "treatment-card"} key={treatment.id}>
+            <div className="treatment-grid">{orderedStatisticalTreatments.map((treatment) => { const field = getField(treatment.fieldId); return <article className={selectedTreatmentIds.includes(treatment.id) ? "treatment-card selected" : "treatment-card"} key={treatment.id}>
               <div className="treatment-top"><label className="check"><input type="checkbox" disabled={treatment.evidenceUse === "context-only"} checked={selectedTreatmentIds.includes(treatment.id)} onChange={() => toggleTreatment(treatment.id)} />{treatment.evidenceUse === "context-only" ? "Consulta/contexto" : "Usar tratamento"}</label><span className="badge">{field.section} · {treatment.recordIds.length} registos</span></div>
               <h4>{treatment.indicator}</h4><small className="treatment-field">{field.name}</small>
               <TreatmentChart treatment={treatment} />

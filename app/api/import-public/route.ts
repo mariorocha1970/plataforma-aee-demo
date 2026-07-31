@@ -45,6 +45,14 @@ function sourceFilename(url: URL, disposition: string | null) {
   return candidate.replace(/[\r\n]/g, "").slice(0, 180) || "recurso-publico";
 }
 
+function removeExecutableHtml(html: string) {
+  return html
+    .replace(/<!--[\s\S]*?-->/g, " ")
+    .replace(/<(script|style|noscript|template|svg|canvas)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, " ")
+    .replace(/<script\b[^>]*\/?\s*>/gi, " ")
+    .replace(/\s(?:on\w+|srcdoc)\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, " ");
+}
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json().catch(() => null) as { url?: unknown } | null;
@@ -69,11 +77,15 @@ export async function POST(request: NextRequest) {
     if (!response?.ok) return NextResponse.json({ error: `O portal recusou a leitura (estado ${response?.status || 502}).` }, { status: response?.status && response.status >= 400 && response.status < 600 ? response.status : 502 });
     const declaredLength = Number(response.headers.get("content-length") || 0);
     if (declaredLength > MAX_BYTES) return NextResponse.json({ error: "O recurso excede o limite de 20 MB. Descarregue-o e carregue-o como ficheiro local." }, { status: 413 });
-    const bytes = await response.arrayBuffer();
+    let bytes = await response.arrayBuffer();
     if (bytes.byteLength > MAX_BYTES) return NextResponse.json({ error: "O recurso excede o limite de 20 MB. Descarregue-o e carregue-o como ficheiro local." }, { status: 413 });
     if (!bytes.byteLength) return NextResponse.json({ error: "O portal devolveu uma resposta vazia." }, { status: 422 });
 
     const contentType = (response.headers.get("content-type") || "application/octet-stream").split(";")[0].trim();
+    if (contentType.includes("html")) {
+      const decoded = new TextDecoder("utf-8").decode(bytes);
+      bytes = new TextEncoder().encode(removeExecutableHtml(decoded)).buffer;
+    }
     const filename = sourceFilename(current, response.headers.get("content-disposition"));
     return new NextResponse(bytes, {
       status: 200,

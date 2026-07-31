@@ -53,6 +53,33 @@ function removeExecutableHtml(html: string) {
     .replace(/\s(?:on\w+|srcdoc)\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, " ");
 }
 
+function declaredCharset(contentType: string) {
+  return contentType.match(/charset\s*=\s*["']?([^;\s"']+)/i)?.[1]?.trim().toLowerCase() || "";
+}
+
+function decodeText(bytes: ArrayBuffer, contentType: string) {
+  const raw = new Uint8Array(bytes);
+  const bom = raw.length >= 3 && raw[0] === 0xef && raw[1] === 0xbb && raw[2] === 0xbf ? "utf-8"
+    : raw.length >= 2 && raw[0] === 0xff && raw[1] === 0xfe ? "utf-16le"
+    : raw.length >= 2 && raw[0] === 0xfe && raw[1] === 0xff ? "utf-16be"
+    : "";
+  const declared = declaredCharset(contentType);
+  const candidates = [...new Set([bom, declared, "utf-8", "windows-1252", "iso-8859-1"].filter(Boolean))];
+  let best = "";
+  let bestScore = Number.POSITIVE_INFINITY;
+  for (const charset of candidates) {
+    try {
+      const decoded = new TextDecoder(charset, { fatal: false }).decode(raw);
+      const replacements = (decoded.match(/\uFFFD/g) ?? []).length;
+      const mojibake = (decoded.match(/(?:Ã.|Â.|â€|ï¿½)/g) ?? []).length;
+      const score = replacements * 100 + mojibake * 10;
+      if (score < bestScore) { best = decoded; bestScore = score; }
+      if (score === 0) break;
+    } catch { /* tenta a codificação seguinte */ }
+  }
+  return best || new TextDecoder("utf-8").decode(raw);
+}
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json().catch(() => null) as { url?: unknown } | null;
@@ -81,16 +108,17 @@ export async function POST(request: NextRequest) {
     if (bytes.byteLength > MAX_BYTES) return NextResponse.json({ error: "O recurso excede o limite de 20 MB. Descarregue-o e carregue-o como ficheiro local." }, { status: 413 });
     if (!bytes.byteLength) return NextResponse.json({ error: "O portal devolveu uma resposta vazia." }, { status: 422 });
 
-    const contentType = (response.headers.get("content-type") || "application/octet-stream").split(";")[0].trim();
-    if (contentType.includes("html")) {
-      const decoded = new TextDecoder("utf-8").decode(bytes);
+    const originalContentType = response.headers.get("content-type") || "application/octet-stream";
+    const contentType = originalContentType.split(";")[0].trim();
+    if (contentType.includes("html") || contentType.startsWith("text/")) {
+      const decoded = decodeText(bytes, originalContentType);
       bytes = new TextEncoder().encode(removeExecutableHtml(decoded)).buffer;
     }
     const filename = sourceFilename(current, response.headers.get("content-disposition"));
     return new NextResponse(bytes, {
       status: 200,
       headers: {
-        "Content-Type": contentType,
+        "Content-Type": contentType.startsWith("text/") ? `${contentType}; charset=utf-8` : contentType,
         "Content-Length": String(bytes.byteLength),
         "Cache-Control": "no-store",
         "X-Content-Type-Options": "nosniff",

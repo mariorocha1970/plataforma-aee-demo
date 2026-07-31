@@ -812,13 +812,36 @@ function strengthFor(records: Evidence[]): Strength {
   return "Insuficiente";
 }
 
+function fieldDiagnostic(field: Field, records: Evidence[], applicability: Record<string, IndicatorApplicability> = {}) {
+  const applicableIds = (indicatorLabels[field.id] ?? []).map((_, index) => indicatorId(field.id, index)).filter((id) => applicability[id] !== "Não aplicável");
+  const expected = applicableIds.length;
+  const applicableSet = new Set(applicableIds);
+  const linked = new Set(records.flatMap((record) => record.indicatorIds ?? []).filter((id) => applicableSet.has(id)));
+  const sources = new Set(records.map((record) => normalizeText(record.source)).filter(Boolean));
+  const sourceTypes = new Set(records.map((record) => record.sourceType));
+  const corpus = normalizeText(records.map((record) => record.claim).join(" "));
+  const hasResults = /\b(resultado|resultados|evolucao|melhoria|reducao|aumento|taxa|percentagem|impacto|efeito|mudanca|progresso|eficacia)\b/.test(corpus);
+  return {
+    indicatorTotal: expected,
+    indicatorCovered: linked.size,
+    coveragePercent: expected ? Math.round((linked.size / expected) * 100) : 0,
+    evidenceCount: records.length,
+    sourceCount: sources.size,
+    sourceTypes: [...sourceTypes],
+    independentDiversity: sources.size >= 2 && sourceTypes.size >= 2,
+    hasContradictions: records.some((record) => record.status === "Contraditória"),
+    hasResultsOrImpact: hasResults,
+    strength: strengthFor(records),
+  };
+}
+
 function reportHeading(domain: string) {
   const index = domainOrder.indexOf(domain);
   return [`5.1 — Autoavaliação`, `5.2 — Liderança e gestão`, `5.3 — Prestação do serviço educativo`, `5.4 — Resultados`][index];
 }
 
 function completeSentence(value: string) {
-  const sentence = value.trim().replace(/\s+/g, " ");
+  const sentence = value.trim().replace(/\s+/g, " ").replace(/\.{2,}$/g, ".").replace(/([!?])\1+$/g, "$1");
   return /[.!?]$/.test(sentence) ? sentence : `${sentence}.`;
 }
 
@@ -883,10 +906,10 @@ function composeGenericAnalyticalNarrative(field: Field, records: Array<Evidence
   const synthesis = distinct.length === 1
     ? lowerInitial(distinct[0])
     : `${distinct.slice(0, -1).map(lowerInitial).join("; ")}; e ${lowerInitial(distinct.at(-1) ?? "")}`;
-  return `No campo ${field.name.toLocaleLowerCase("pt-PT")}, a informação validada permite identificar como elementos centrais ${synthesis}. Consideradas em conjunto, estas evidências caracterizam práticas e opções organizacionais coerentes com os referentes do campo, mas não demonstram, por si só, a amplitude, a regularidade ou o impacto dos processos descritos. A formulação do juízo deve, por isso, atender à representatividade das fontes e aos resultados observáveis associados a estas práticas.`;
+  return `No campo ${field.name.toLocaleLowerCase("pt-PT")}, a informação validada permite identificar como elementos centrais ${synthesis}. Consideradas em conjunto, estas evidências caracterizam as práticas e opções organizacionais abrangidas pelos referentes do campo.`;
 }
 
-function composeFieldNarrative(field: Field, records: Evidence[]) {
+function composeFieldNarrative(field: Field, records: Evidence[], applicability: Record<string, IndicatorApplicability> = {}) {
   if (!records.length) return "Não existe ainda evidência validada suficiente para caracterizar este campo de análise ou formular um juízo avaliativo sustentado.";
 
   const confirmed = records.filter((record) => record.status === "Confirmada");
@@ -896,24 +919,30 @@ function composeFieldNarrative(field: Field, records: Evidence[]) {
     .map((record) => ({ ...record, narrativeClaim: cleanEvidenceClaim(record.claim) }))
     .filter((record) => record.narrativeClaim);
   const strength = strengthFor(ordered);
+  const diagnostic = fieldDiagnostic(field, records, applicability);
   if (!ordered.length) return `No campo ${field.name.toLocaleLowerCase("pt-PT")}, os registos validados correspondem sobretudo a fragmentos de tabelas ou listas e não permitem, sem reformulação, construir uma caracterização sintaticamente segura.`;
 
   const paragraphs: string[] = [field.id === "auto-impacto" ? composeImpactNarrative(ordered) : composeGenericAnalyticalNarrative(field, ordered)];
 
   if (contradictory.length) {
     paragraphs.push("A existência de informação contraditória impede, nesta fase, uma conclusão estável e requer esclarecimento através de fonte independente ou dos painéis de entrevista.");
-  } else if (strength === "Forte") paragraphs.push("A diversidade e independência das fontes conferem robustez à interpretação, sem dispensar a validação do respetivo alcance pela equipa de avaliação.");
-  else if (strength === "Insuficiente") paragraphs.push("A base probatória disponível é ainda limitada, pelo que esta interpretação deve ser aprofundada através de evidência independente adicional.");
+  } else if (diagnostic.coveragePercent < 100) {
+    paragraphs.push(`A análise cobre ${diagnostic.indicatorCovered} dos ${diagnostic.indicatorTotal} indicadores aplicáveis (${diagnostic.coveragePercent}%), permanecendo os restantes sem evidência validada.`);
+  } else if (!diagnostic.independentDiversity) {
+    paragraphs.push("Todos os indicadores do campo estão cobertos, embora a interpretação assente em fontes pouco diversificadas, pelo que importa triangulá-la com evidência de natureza independente.");
+  } else if (!diagnostic.hasResultsOrImpact) {
+    paragraphs.push("Todos os indicadores estão cobertos por fontes diversificadas; contudo, a evidência sustenta sobretudo práticas e processos, não permitindo ainda demonstrar resultados ou impacto.");
+  } else if (strength === "Forte") paragraphs.push("A cobertura integral dos indicadores e a diversidade das fontes conferem robustez à interpretação.");
 
   return paragraphs.join(" ");
 }
 
-function buildNarratives(evidence: Evidence[]) {
-  return Object.fromEntries(fields.map((field) => [field.id, composeFieldNarrative(field, evidence.filter((record) => record.fieldId === field.id && record.validated))]));
+function buildNarratives(evidence: Evidence[], applicability: Record<string, IndicatorApplicability> = {}) {
+  return Object.fromEntries(fields.map((field) => [field.id, composeFieldNarrative(field, evidence.filter((record) => record.fieldId === field.id && record.validated), applicability)]));
 }
 
-function preserveReviewedNarratives(evidence: Evidence[], narratives: Record<string, string>) {
-  const completed = buildNarratives(evidence);
+function preserveReviewedNarratives(evidence: Evidence[], narratives: Record<string, string>, applicability: Record<string, IndicatorApplicability> = {}) {
+  const completed = buildNarratives(evidence, applicability);
   Object.entries(narratives).forEach(([fieldId, narrative]) => {
     const normalized = normalizeText(narrative);
     const containsStructuralFragments = /[•●▪◦*]|publico[- ]alvo|metas? especificas?|objetivos? especificos?|calendarizacao|recursos necessarios|total de questionarios|concordo totalmente.*discordo|n\.?[oº]\s*%.*n\.?[oº]\s*%/.test(normalized);
@@ -923,7 +952,7 @@ function preserveReviewedNarratives(evidence: Evidence[], narratives: Record<str
   return completed;
 }
 
-function buildReport(evidence: Evidence[], narratives: Record<string, string> = {}) {
+function buildReport(evidence: Evidence[], narratives: Record<string, string> = {}, applicability: Record<string, IndicatorApplicability> = {}) {
   const lines: string[] = [
     "MINUTA DE TRABALHO — SUJEITA A VALIDAÇÃO HUMANA",
     "",
@@ -935,7 +964,7 @@ function buildReport(evidence: Evidence[], narratives: Record<string, string> = 
     lines.push(reportHeading(domain), "");
     fields.filter((field) => field.domain === domain).forEach((field) => {
       const records = evidence.filter((record) => record.fieldId === field.id && record.validated);
-      const narrative = narratives[field.id]?.trim() || composeFieldNarrative(field, records);
+      const narrative = narratives[field.id]?.trim() || composeFieldNarrative(field, records, applicability);
       lines.push(`${field.section}. ${field.name}`, "", completeSentence(narrative), "");
     });
   });
@@ -1209,8 +1238,8 @@ export default function Home() {
 
   function updateAnalysis() {
     setUpdating(true);
-    const refreshedNarratives = preserveReviewedNarratives(evidence, narratives);
-    const refreshedReport = report ? buildReport(evidence, refreshedNarratives) : report;
+    const refreshedNarratives = preserveReviewedNarratives(evidence, narratives, indicatorApplicability);
+    const refreshedReport = report ? buildReport(evidence, refreshedNarratives, indicatorApplicability) : report;
     const timestamp = new Intl.DateTimeFormat("pt-PT", {
       day: "2-digit",
       month: "2-digit",
@@ -1771,14 +1800,14 @@ export default function Home() {
   }
 
   function generateReport() {
-    const completedNarratives = preserveReviewedNarratives(evidence, narratives);
+    const completedNarratives = preserveReviewedNarratives(evidence, narratives, indicatorApplicability);
     setNarratives(completedNarratives);
-    setReport(buildReport(evidence, completedNarratives));
+    setReport(buildReport(evidence, completedNarratives, indicatorApplicability));
     setView("relatorio");
   }
 
   function refreshNarratives() {
-    setNarratives(buildNarratives(evidence));
+    setNarratives(buildNarratives(evidence, indicatorApplicability));
     setChangesPending(true);
   }
 
@@ -1866,7 +1895,7 @@ export default function Home() {
       const response = await fetch("/api/triangulate-field", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ field, evidence: records }),
+        body: JSON.stringify({ field, evidence: records, diagnostic: fieldDiagnostic(field, records, indicatorApplicability) }),
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok || payload?.ok === false) throw new Error(payload?.error || `O servidor devolveu o estado ${response.status}.`);
@@ -1900,7 +1929,7 @@ export default function Home() {
       const response = await fetch("/api/triangulate-all", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fields: activeFields, evidence: records }),
+        body: JSON.stringify({ fields: activeFields, evidence: records, diagnostics: Object.fromEntries(activeFields.map((field) => [field.id, fieldDiagnostic(field, records.filter((record) => record.fieldId === field.id), indicatorApplicability)])) }),
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok || payload?.ok === false) throw new Error(payload?.error || `O servidor devolveu o estado ${response.status}.`);
@@ -1924,10 +1953,11 @@ export default function Home() {
   }
 
   async function improveReportWithAi() {
-    const completedNarratives = preserveReviewedNarratives(evidence, narratives);
-    const localDraft = report.trim() || buildReport(evidence, completedNarratives);
+    const completedNarratives = preserveReviewedNarratives(evidence, narratives, indicatorApplicability);
+    const localDraft = report.trim() || buildReport(evidence, completedNarratives, indicatorApplicability);
     const usable = fields.filter((field) => completedNarratives[field.id]?.trim()).map((field) => ({
       section: field.section, domain: field.domain, name: field.name, narrative: completedNarratives[field.id].trim(),
+      diagnostic: fieldDiagnostic(field, evidence.filter((record) => record.fieldId === field.id && record.validated), indicatorApplicability),
     }));
     if (!usable.length) {
       setExportStatus("Valide e reveja primeiro as narrativas da triangulação.");
@@ -1986,7 +2016,7 @@ export default function Home() {
   }
 
   function generateConclusions() {
-    const completedNarratives = preserveReviewedNarratives(evidence, narratives);
+    const completedNarratives = preserveReviewedNarratives(evidence, narratives, indicatorApplicability);
     setNarratives(completedNarratives);
     setConclusions(localDomainConclusions(completedNarratives, evidence));
     setConclusionsStatus("Proposta local gerada sem utilização da API. Reveja todos os enunciados e menções.");
@@ -2000,7 +2030,7 @@ export default function Home() {
   }
 
   async function improveConclusionsWithAi() {
-    const completedNarratives = preserveReviewedNarratives(evidence, narratives);
+    const completedNarratives = preserveReviewedNarratives(evidence, narratives, indicatorApplicability);
     const base = conclusions.length ? conclusions : localDomainConclusions(completedNarratives, evidence);
     const payloadDomains = domainOrder.map((domain) => ({
       domain,

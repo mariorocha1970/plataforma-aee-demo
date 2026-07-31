@@ -1374,6 +1374,7 @@ export default function Home() {
   const [selectedTreatmentIds, setSelectedTreatmentIds] = useState<string[]>([]);
   const [statisticalUrl, setStatisticalUrl] = useState("");
   const [statisticalStatus, setStatisticalStatus] = useState("");
+  const [statisticalWorkspace, setStatisticalWorkspace] = useState<"infoescolas" | "general">("infoescolas");
   const [questionnaireComments, setQuestionnaireComments] = useState<QuestionnaireComment[]>([]);
   const [commentGroup, setCommentGroup] = useState<QuestionnaireComment["group"]>("Alunos");
   const [commentSource, setCommentSource] = useState("Relato escrito");
@@ -1476,8 +1477,9 @@ export default function Home() {
   const indicatorCoverage = applicableIndicatorIds.length ? (coveredIndicatorIds.size / applicableIndicatorIds.length) * 100 : 0;
   const sourceTypeCount = new Set(evidence.filter((record) => record.validated).map((record) => record.sourceType)).size;
   const allCandidatesSelected = documentCandidates.length > 0 && documentCandidates.every((candidate) => selectedCandidates.includes(candidate.id));
-  const allStatisticalSelected = statisticalRecords.length > 0 && statisticalRecords.every((record) => selectedStatisticalIds.includes(record.id));
   const orderedStatisticalRecords = useMemo(() => [...statisticalRecords].sort(compareStatisticalRecords), [statisticalRecords]);
+  const workspaceStatisticalRecords = useMemo(() => orderedStatisticalRecords.filter((record) => (record.dataset || "general") === statisticalWorkspace), [orderedStatisticalRecords, statisticalWorkspace]);
+  const allStatisticalSelected = workspaceStatisticalRecords.length > 0 && workspaceStatisticalRecords.every((record) => selectedStatisticalIds.includes(record.id));
   const promotableTreatments = statisticalTreatments.filter((treatment) => treatment.evidenceUse !== "context-only");
   const orderedStatisticalTreatments = useMemo(() => {
     const recordsById = new Map(statisticalRecords.map((record) => [record.id, record]));
@@ -1488,7 +1490,12 @@ export default function Home() {
       return rank || a.indicator.localeCompare(b.indicator, "pt-PT", { numeric: true, sensitivity: "base" });
     });
   }, [statisticalRecords, statisticalTreatments]);
-  const allTreatmentsSelected = promotableTreatments.length > 0 && promotableTreatments.every((treatment) => selectedTreatmentIds.includes(treatment.id));
+  const recordDatasetById = useMemo(() => new Map(statisticalRecords.map((record) => [record.id, record.dataset || "general"])), [statisticalRecords]);
+  const workspaceStatisticalTreatments = useMemo(() => orderedStatisticalTreatments.filter((treatment) => treatment.recordIds.some((id) => recordDatasetById.get(id) === statisticalWorkspace)), [orderedStatisticalTreatments, recordDatasetById, statisticalWorkspace]);
+  const workspacePromotableTreatments = workspaceStatisticalTreatments.filter((treatment) => treatment.evidenceUse !== "context-only");
+  const workspaceSelectedTreatmentCount = workspacePromotableTreatments.filter((treatment) => selectedTreatmentIds.includes(treatment.id)).length;
+  const allTreatmentsSelected = workspacePromotableTreatments.length > 0 && workspacePromotableTreatments.every((treatment) => selectedTreatmentIds.includes(treatment.id));
+  const quantitativeEvidence = evidence.filter((record) => record.sourceType === "Quantitativa" && record.statisticalTreatmentId);
 
   function saveLocal() {
     window.localStorage.setItem("aee-piloto-v2", JSON.stringify({ schoolName, evidence, documentCandidates, statisticalRecords, statisticalTreatments, questionnaireComments, questionnaireReport, interviews, interviewCandidates, files, fileAnalysis, narratives, triangulationRevisions, report, conclusions, indicatorApplicability, lastUpdated }));
@@ -1988,7 +1995,10 @@ export default function Home() {
   }
 
   function toggleAllStatisticalRecords() {
-    setSelectedStatisticalIds(allStatisticalSelected ? [] : statisticalRecords.map((record) => record.id));
+    const workspaceIds = new Set(workspaceStatisticalRecords.map((record) => record.id));
+    setSelectedStatisticalIds((current) => allStatisticalSelected
+      ? current.filter((id) => !workspaceIds.has(id))
+      : [...new Set([...current, ...workspaceIds])]);
   }
 
   function deleteSelectedStatisticalSources() {
@@ -2048,17 +2058,29 @@ export default function Home() {
   }
 
   function toggleAllTreatments() {
-    setSelectedTreatmentIds(allTreatmentsSelected ? [] : promotableTreatments.map((treatment) => treatment.id));
+    const workspaceIds = new Set(workspacePromotableTreatments.map((treatment) => treatment.id));
+    setSelectedTreatmentIds((current) => allTreatmentsSelected
+      ? current.filter((id) => !workspaceIds.has(id))
+      : [...new Set([...current, ...workspaceIds])]);
+  }
+
+  function matrixStateForTreatment(treatment: StatisticalTreatment) {
+    const matrixRecord = evidence.find((record) => record.statisticalTreatmentId === treatment.id);
+    if (!matrixRecord) return "Por enviar";
+    const expectedLocation = `${treatment.recordIds.length} registos · ${treatment.sources.join("; ")}`;
+    return matrixRecord.claim === treatment.summary && matrixRecord.fieldId === treatment.fieldId && matrixRecord.location === expectedLocation
+      ? "Na Matriz"
+      : "Alterado após envio";
   }
 
   function promoteStatisticalTreatments() {
-    const selected = statisticalTreatments.filter((treatment) => selectedTreatmentIds.includes(treatment.id) && treatment.evidenceUse !== "context-only");
+    const selected = workspacePromotableTreatments.filter((treatment) => selectedTreatmentIds.includes(treatment.id));
     if (!selected.length) return;
     const promoted: Evidence[] = selected.map((treatment, index) => ({
       id: Date.now() + index,
       fieldId: treatment.fieldId,
       claim: treatment.summary,
-      source: `Tratamento estatístico — ${getField(treatment.fieldId).name}`,
+      source: `Tratamento estatístico — ${treatment.recordIds.some((id) => recordDatasetById.get(id) === "infoescolas") ? "InfoEscolas" : "Ficheiro local"} — ${getField(treatment.fieldId).name}`,
       sourceType: "Quantitativa",
       location: `${treatment.recordIds.length} registos · ${treatment.sources.join("; ")}`,
       status: "Confirmada",
@@ -2083,6 +2105,7 @@ export default function Home() {
       setAiTriangulationStatus("Foram acrescentadas ou atualizadas evidências estatísticas em 5.4.1. A triangulação anterior está desatualizada e deve ser repetida antes do Relatório.");
     }
     setChangesPending(true);
+    setStatisticalStatus(`${promoted.length} tratamento(s) enviado(s) para a Matriz de evidências. A triangulação só os utilizará enquanto evidências validadas na Matriz.`);
     setView("evidencias");
   }
 
@@ -2447,7 +2470,8 @@ export default function Home() {
   }
 
   function exportStatisticalServer() {
-    const treatments = selectedTreatmentIds.length ? statisticalTreatments.filter((item) => selectedTreatmentIds.includes(item.id)) : statisticalTreatments;
+    const selectedHere = workspaceStatisticalTreatments.filter((item) => selectedTreatmentIds.includes(item.id));
+    const treatments = selectedHere.length ? selectedHere : workspaceStatisticalTreatments;
     const detail = treatments.map((item) => `${getField(item.fieldId).section}. ${item.indicator}\n${item.points.map((point) => `${point.label}: ${point.value.toLocaleString("pt-PT", { maximumFractionDigits: 1 })}${item.unit === "%" ? "%" : ""}`).join("\n")}\n${item.summary}\nFontes: ${item.sources.join("; ")}`).join("\n\n");
     const content = [questionnaireReport.trim(), detail].filter(Boolean).join("\n\nANEXO — DETALHE DO TRATAMENTO\n\n");
     openExportCenter(content, "relatorio-tratamento-estatistico-aee", "docx", setStatisticalStatus);
@@ -2773,25 +2797,24 @@ export default function Home() {
         </section>}
 
         {view === "estatistica" && <section className="view">
-          <div className="page-heading"><div><p className="eyebrow">Agente 3 · Análise estatística</p><h2>Tratamento de dados quantitativos</h2><p>Os ficheiros locais e o InfoEscolas são conservados e tratados separadamente. Os tratamentos selecionados convergem depois na Matriz de evidências.</p></div><div className="analysis-actions"><span className="badge">{statisticalRecords.length} registos</span><button className="button secondary" disabled={!statisticalRecords.length} onClick={toggleAllStatisticalRecords}>{allStatisticalSelected ? "Desmarcar todos" : "Selecionar todos"}</button><button className="text-button danger-text" disabled={!selectedStatisticalIds.length} onClick={deleteSelectedStatisticalSources}>Eliminar origens selecionadas</button><button className="button primary" disabled={!statisticalRecords.length} onClick={() => treatStatisticalData()}>Tratar todos</button></div></div>
+          <div className="page-heading"><div><p className="eyebrow">Agente 3 · Análise estatística</p><h2>Tratamento de dados quantitativos</h2><p>Trabalhe separadamente no InfoEscolas e nos ficheiros estatísticos. Em ambos os espaços, cada tratamento mostra se já está efetivamente na Matriz.</p></div><div className="analysis-actions"><span className="badge">{quantitativeEvidence.length} evidências quantitativas na Matriz</span><button className="button secondary" disabled={!workspaceStatisticalRecords.length} onClick={toggleAllStatisticalRecords}>{allStatisticalSelected ? "Desmarcar esta origem" : "Selecionar esta origem"}</button><button className="text-button danger-text" disabled={!selectedStatisticalIds.length} onClick={deleteSelectedStatisticalSources}>Eliminar origens selecionadas</button><button className="button primary" disabled={!workspaceStatisticalRecords.length} onClick={() => treatStatisticalData(statisticalWorkspace)}>Tratar dados deste espaço</button></div></div>
+          <div className="quality-gate"><strong>Dois espaços independentes</strong><span>A separação evita misturar carregamento, seleção e tratamento. A convergência ocorre apenas quando usa «Enviar para a Matriz».</span><div className="action-row"><button className={statisticalWorkspace === "infoescolas" ? "button primary" : "button secondary"} onClick={() => { setStatisticalWorkspace("infoescolas"); setSelectedStatisticalIds([]); setSelectedTreatmentIds([]); setStatisticalStatus(""); }}>InfoEscolas · {statisticalRecords.filter((record) => record.dataset === "infoescolas").length} registos</button><button className={statisticalWorkspace === "general" ? "button primary" : "button secondary"} onClick={() => { setStatisticalWorkspace("general"); setSelectedStatisticalIds([]); setSelectedTreatmentIds([]); setStatisticalStatus(""); }}>Ficheiros estatísticos · {statisticalRecords.filter((record) => (record.dataset || "general") === "general").length} registos</button></div></div>
           <div className="statistics-import">
-            <div className="statistics-upload"><strong>Ficheiros locais</strong><p>Formatos aceites: XLS, XLSX, CSV, PDF e TXT.</p><label className="button primary file-button">Carregar dados<input type="file" multiple accept=".pdf,.xls,.xlsx,.csv,.txt" onChange={handleStatisticalFiles} /></label></div>
-            <div className="statistics-online"><strong>InfoEscolas ou outro endereço público</strong><p>Cole o endereço da página ou do ficheiro disponibilizado publicamente.</p><div><input type="url" value={statisticalUrl} onChange={(event) => setStatisticalUrl(event.target.value)} placeholder="https://infoescolas.medu.pt/…" /><button className="button secondary" onClick={loadStatisticalUrl}>Ler endereço público</button></div><small>A plataforma lê o endereço através do servidor. Páginas que dependam de autenticação ou gerem todos os dados apenas no navegador podem exigir o carregamento do ficheiro original.</small></div>
+            {statisticalWorkspace === "general" ? <div className="statistics-upload"><strong>Ficheiros estatísticos</strong><p>Formatos aceites: XLS, XLSX, CSV, PDF e TXT.</p><label className="button primary file-button">Carregar dados<input type="file" multiple accept=".pdf,.xls,.xlsx,.csv,.txt" onChange={handleStatisticalFiles} /></label></div> : <div className="statistics-online"><strong>InfoEscolas ou outro endereço público</strong><p>Cole o endereço da página ou do ficheiro disponibilizado publicamente.</p><div><input type="url" value={statisticalUrl} onChange={(event) => setStatisticalUrl(event.target.value)} placeholder="https://infoescolas.medu.pt/…" /><button className="button secondary" onClick={loadStatisticalUrl}>Ler endereço público</button></div><small>Os ciclos são conservados separadamente e ordenados do 1.º ciclo ao ensino profissional.</small></div>}
           </div>
           {statisticalStatus && <div className="statistics-status" role="status">{statisticalStatus}</div>}
-          {statisticalRecords.length > 0 && <div className="quality-gate"><strong>Tratamento independente por origem</strong><span>{statisticalRecords.filter((record) => (record.dataset || "general") === "general").length} registos de ficheiros locais · {statisticalRecords.filter((record) => record.dataset === "infoescolas").length} registos do InfoEscolas. Tratar um grupo não elimina o outro.</span><div className="action-row"><button className="button secondary" disabled={!statisticalRecords.some((record) => (record.dataset || "general") === "general")} onClick={() => treatStatisticalData("general")}>Tratar ficheiros locais</button><button className="button secondary" disabled={!statisticalRecords.some((record) => record.dataset === "infoescolas")} onClick={() => treatStatisticalData("infoescolas")}>Tratar InfoEscolas</button></div></div>}
-          {statisticalRecords.length === 0 ? <div className="empty-analysis"><strong>Ainda não existem dados estatísticos para rever.</strong><p>Carregue um ficheiro ou indique um endereço público. Os dados só entram nas evidências depois da sua seleção.</p></div> : <div className="statistics-list">
-            {orderedStatisticalRecords.map((record) => <article className={selectedStatisticalIds.includes(record.id) ? "statistics-card selected" : "statistics-card"} key={record.id}>
+          {workspaceStatisticalRecords.length === 0 ? <div className="empty-analysis"><strong>Ainda não existem dados neste espaço.</strong><p>{statisticalWorkspace === "infoescolas" ? "Indique um endereço do InfoEscolas." : "Carregue um ficheiro estatístico."} Os dados só chegam à triangulação depois de tratados e enviados para a Matriz.</p></div> : <div className="statistics-list">
+            {workspaceStatisticalRecords.map((record) => <article className={selectedStatisticalIds.includes(record.id) ? "statistics-card selected" : "statistics-card"} key={record.id}>
               <label className="candidate-check"><input type="checkbox" checked={selectedStatisticalIds.includes(record.id)} onChange={() => toggleStatisticalRecord(record.id)} /><span>Incluir</span></label>
               <div className="statistics-fields"><label>Indicador<input value={record.indicator} onChange={(event) => updateStatisticalRecord(record.id, { indicator: event.target.value })} /></label><label>Valor<input value={record.value} onChange={(event) => updateStatisticalRecord(record.id, { value: event.target.value })} /></label><div className="statistics-context"><strong>Contexto extraído</strong><span>{record.context}</span><small>{record.source} · {record.location}</small>{record.dataset === "infoescolas" && <small><strong>{record.evidenceUse === "academic-comparison" ? "Evidência académica · exige comparação com o nacional" : "Dado contextual · não entra automaticamente nas evidências"}</strong></small>}</div></div>
               <div className="candidate-classification"><label>Campo de análise<select value={record.fieldId} onChange={(event) => updateStatisticalRecord(record.id, { fieldId: event.target.value })}>{fields.map((field) => <option value={field.id} key={field.id}>{field.section} · {field.name}</option>)}</select></label><button className="text-button danger-text" onClick={() => { setStatisticalRecords((current) => current.filter((item) => item.id !== record.id)); setSelectedStatisticalIds((current) => current.filter((id) => id !== record.id)); }}>Descartar</button></div>
             </article>)}
           </div>}
-          {statisticalTreatments.length > 0 && <section className="treatment-panel">
-            <div className="section-heading"><div><p className="eyebrow">Resultado intermédio</p><h3>Apresentação do tratamento por indicador</h3><p>Nos questionários, os dados são agregados por grupo e questões repetidas são deduplicadas. Critérios de sinalização: concordância ≥75% para ponto forte; não concordância ≥15%, “Não sei” ≥10% ou concordância &lt;60% para área de melhoria.</p></div><div className="action-row"><button className="button secondary" onClick={toggleAllTreatments}>{allTreatmentsSelected ? "Desmarcar tratamentos" : "Selecionar tratamentos"}</button><button className="button secondary" onClick={exportStatisticalServer}>Guardar Word (.docx)</button><button className="button primary" disabled={!selectedTreatmentIds.length} onClick={promoteStatisticalTreatments}>Enviar para a Matriz ({selectedTreatmentIds.length || ""})</button></div></div>
-            {statisticalTreatments.some((treatment) => treatment.respondentGroup) && <QuestionnaireOverviewChart treatments={statisticalTreatments.filter((treatment) => treatment.respondentGroup)} />}
-            <div className="treatment-grid">{orderedStatisticalTreatments.map((treatment) => { const field = getField(treatment.fieldId); return <article className={selectedTreatmentIds.includes(treatment.id) ? "treatment-card selected" : "treatment-card"} key={treatment.id}>
-              <div className="treatment-top"><label className="check"><input type="checkbox" disabled={treatment.evidenceUse === "context-only"} checked={selectedTreatmentIds.includes(treatment.id)} onChange={() => toggleTreatment(treatment.id)} />{treatment.evidenceUse === "context-only" ? "Consulta/contexto" : "Usar tratamento"}</label><span className="badge">{field.section} · {treatment.recordIds.length} registos</span></div>
+          {workspaceStatisticalTreatments.length > 0 && <section className="treatment-panel">
+            <div className="section-heading"><div><p className="eyebrow">Resultado intermédio</p><h3>Apresentação do tratamento por indicador</h3><p>Nos questionários, os dados são agregados por grupo e questões repetidas são deduplicadas. Critérios de sinalização: concordância ≥75% para ponto forte; não concordância ≥15%, “Não sei” ≥10% ou concordância &lt;60% para área de melhoria.</p></div><div className="action-row"><button className="button secondary" onClick={toggleAllTreatments}>{allTreatmentsSelected ? "Desmarcar tratamentos" : "Selecionar tratamentos"}</button><button className="button secondary" onClick={exportStatisticalServer}>Guardar Word (.docx)</button><button className="button primary" disabled={!workspaceSelectedTreatmentCount} onClick={promoteStatisticalTreatments}>Enviar para a Matriz ({workspaceSelectedTreatmentCount || ""})</button></div></div>
+            {workspaceStatisticalTreatments.some((treatment) => treatment.respondentGroup) && <QuestionnaireOverviewChart treatments={workspaceStatisticalTreatments.filter((treatment) => treatment.respondentGroup)} />}
+            <div className="treatment-grid">{workspaceStatisticalTreatments.map((treatment) => { const field = getField(treatment.fieldId); const matrixState = matrixStateForTreatment(treatment); return <article className={selectedTreatmentIds.includes(treatment.id) ? "treatment-card selected" : "treatment-card"} key={treatment.id}>
+              <div className="treatment-top"><label className="check"><input type="checkbox" disabled={treatment.evidenceUse === "context-only"} checked={selectedTreatmentIds.includes(treatment.id)} onChange={() => toggleTreatment(treatment.id)} />{treatment.evidenceUse === "context-only" ? "Consulta/contexto" : "Usar tratamento"}</label><span className="badge">{matrixState}</span><span className="badge">{field.section} · {treatment.recordIds.length} registos</span></div>
               <h4>{treatment.indicator}</h4><small className="treatment-field">{field.name}</small>
               <TreatmentChart treatment={treatment} />
               {treatment.respondentGroup ? <div className="treatment-metrics questionnaire-metrics">{treatment.points.map((point) => <span key={point.label}><strong>{point.value.toLocaleString("pt-PT", { maximumFractionDigits: 1 })}%</strong>{point.label}</span>)}</div> : <div className="treatment-metrics"><span><strong>{treatment.points.length}</strong> observações</span><span><strong>{treatment.minimum?.toLocaleString("pt-PT", { maximumFractionDigits: 1 }) ?? "—"}{treatment.unit === "%" ? "%" : ""}</strong> mínimo</span><span><strong>{treatment.maximum?.toLocaleString("pt-PT", { maximumFractionDigits: 1 }) ?? "—"}{treatment.unit === "%" ? "%" : ""}</strong> máximo</span><span><strong>{treatment.average?.toLocaleString("pt-PT", { maximumFractionDigits: 1 }) ?? "—"}{treatment.unit === "%" ? "%" : ""}</strong> média</span></div>}
@@ -2799,7 +2822,7 @@ export default function Home() {
               <label>Análise descritiva para eventual utilização como evidência<textarea value={treatment.summary} onChange={(event) => updateStatisticalTreatment(treatment.id, event.target.value)} /></label>
               <small>Fontes de base: {treatment.sources.join("; ")}</small>
             </article>; })}</div>
-            {statisticalTreatments.some((treatment) => treatment.respondentGroup) && <section className="questionnaire-report-panel">
+            {workspaceStatisticalTreatments.some((treatment) => treatment.respondentGroup) && <section className="questionnaire-report-panel">
               <div className="section-heading"><div><p className="eyebrow">Relatos escritos e interpretação</p><h3>Relatório analítico dos questionários</h3><p>Introduza comentários abertos por público. A classificação temática é automática e editável; só são redigidos temas sustentados pelos relatos inseridos.</p></div></div>
               <div className="comment-entry"><label>Público-alvo<select value={commentGroup} onChange={(event) => setCommentGroup(event.target.value as QuestionnaireComment["group"])}><option>Alunos</option><option>Docentes</option><option>Não docentes</option><option>Encarregados de educação</option></select></label><label>Fonte<input value={commentSource} onChange={(event) => setCommentSource(event.target.value)} placeholder="Q2 · comentários abertos" /></label><label className="comment-text">Relato ou conjunto de relatos<textarea value={commentText} onChange={(event) => setCommentText(event.target.value)} placeholder="Cole aqui o comentário relevante, sem identificação nominal…" /></label><button className="button secondary" onClick={addQuestionnaireComment}>Adicionar relato</button></div>
               {questionnaireComments.length > 0 && <div className="comment-list">{questionnaireComments.map((comment) => <article key={comment.id}><div><span className="badge">{comment.group}</span><small>{themeForComment(comment.text)} · {comment.source}</small></div><p>{comment.text}</p><button className="text-button danger-text" onClick={() => setQuestionnaireComments((current) => current.filter((item) => item.id !== comment.id))}>Remover</button></article>)}</div>}
@@ -2811,6 +2834,7 @@ export default function Home() {
 
         {view === "evidencias" && <section className="view">
           <div className="page-heading"><div><p className="eyebrow">Agente 4 · Matriz probatória</p><h2>Matriz de evidências</h2><p>Aqui convergem evidências documentais, quantitativas e testemunhais, mantendo a respetiva fonte e localização.</p></div><span className="badge">{visibleEvidence.length} registos · {validatedCount} validados</span></div>
+          <div className="quality-gate"><strong>Confirmação da Análise estatística</strong><span>{quantitativeEvidence.length ? `${quantitativeEvidence.length} tratamento(s) quantitativo(s) encontram-se efetivamente na Matriz e podem seguir para a triangulação. A origem e o número de registos constam em cada evidência.` : "Ainda não existe qualquer tratamento estatístico na Matriz. Volte à Análise estatística, trate os dados, selecione os tratamentos e use «Enviar para a Matriz»."}</span><div className="action-row"><button className="button secondary" onClick={() => setView("estatistica")}>Voltar à Análise estatística</button><button className="button primary" disabled={!quantitativeEvidence.length} onClick={() => setView("triangulacao")}>Seguir para a triangulação</button></div></div>
           <section className="interview-review-panel">
             <div className="section-heading"><div><p className="eyebrow">Associação assistida · validação humana</p><h3>Associar evidências aos indicadores</h3><p>Use uma única chamada para todos os campos. Se precisar de corrigir apenas uma parte, pode repetir a operação para um campo específico. As sugestões só alteram a cobertura depois de confirmadas.</p></div><span className="badge auto-badge">1 chamada global</span></div>
             <div className="filters">

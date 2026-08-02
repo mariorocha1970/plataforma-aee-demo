@@ -1543,6 +1543,8 @@ export default function Home() {
   const workspaceSelectedTreatmentCount = workspacePromotableTreatments.filter((treatment) => selectedTreatmentIds.includes(treatment.id)).length;
   const allTreatmentsSelected = workspacePromotableTreatments.length > 0 && workspacePromotableTreatments.every((treatment) => selectedTreatmentIds.includes(treatment.id));
   const quantitativeEvidence = evidence.filter((record) => record.sourceType === "Quantitativa" && record.statisticalTreatmentId);
+  const validatedEvidenceCount = evidence.filter((record) => record.validated).length;
+  const triangulationBatchCount = Math.max(1, Math.ceil(validatedEvidenceCount / 180));
 
   function saveLocal() {
     window.localStorage.setItem("aee-piloto-v2", JSON.stringify({ schoolName, evidence, documentCandidates, statisticalRecords, statisticalTreatments, questionnaireComments, questionnaireReport, interviews, interviewCandidates, files, fileAnalysis, narratives, triangulationRevisions, report, conclusions, indicatorApplicability, lastUpdated }));
@@ -2307,7 +2309,17 @@ export default function Home() {
   }
 
   function refreshNarratives() {
-    setNarratives(buildNarratives(evidence, indicatorApplicability));
+    const validated = evidence.filter((record) => record.validated);
+    const refreshed = buildNarratives(validated, indicatorApplicability);
+    const comparisons = requiredAcademicComparisons(validated);
+    if (refreshed["res-acad"] && comparisons.length) {
+      refreshed["res-acad"] = ensureAcademicComparisonsInNarrative(refreshed["res-acad"], comparisons);
+    }
+    setNarratives(refreshed);
+    setTriangulationRevisions(Object.fromEntries(fields
+      .filter((field) => validated.some((record) => record.fieldId === field.id))
+      .map((field) => [field.id, evidenceRevision(evidence, field.id)])));
+    setAiTriangulationStatus(`${validated.length} evidência(s) validada(s) atualizada(s) localmente. A triangulação está sincronizada com a Matriz; pode rever as narrativas e gerar o Relatório sem utilizar a API.`);
     setChangesPending(true);
   }
 
@@ -2388,23 +2400,31 @@ export default function Home() {
       setAiTriangulationStatus(`${field.section}: não existem evidências validadas para triangular.`);
       return;
     }
-    if (!window.confirm(`Esta operação utiliza IA e faz 1 chamada à API para o campo ${field.section}. Pretende continuar?`)) return;
+    const batches = Array.from({ length: Math.ceil(records.length / 40) }, (_, index) => records.slice(index * 40, (index + 1) * 40));
+    if (!window.confirm(`Esta operação utiliza IA e processará as ${records.length} evidência(s) do campo ${field.section} em ${batches.length} chamada(s), com um máximo de 40 por lote. Pretende continuar?`)) return;
     setAiTriangulatingField(field.id);
-    setAiTriangulationStatus(`${field.section}: triangulação por IA em curso · 1 chamada…`);
+    setAiTriangulationStatus(`${field.section}: triangulação por IA em curso · lote 1 de ${batches.length}…`);
     try {
-      const response = await fetch("/api/triangulate-field", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ field, evidence: records, diagnostic: fieldDiagnostic(field, records, indicatorApplicability), mandatoryAcademicComparisons: field.id === "res-acad" ? requiredAcademicComparisons(records) : [] }),
-      });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok || payload?.ok === false) throw new Error(payload?.error || `O servidor devolveu o estado ${response.status}.`);
-      const narrative = ensureAcademicComparisonsInNarrative(String(payload?.narrative || "").trim(), field.id === "res-acad" ? requiredAcademicComparisons(records) : []);
+      const narrativesForBatches: string[] = [];
+      for (let index = 0; index < batches.length; index += 1) {
+        const batch = batches[index];
+        setAiTriangulationStatus(`${field.section}: triangulação por IA em curso · lote ${index + 1} de ${batches.length}…`);
+        const response = await fetch("/api/triangulate-field", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ field, evidence: batch, diagnostic: fieldDiagnostic(field, batch, indicatorApplicability), mandatoryAcademicComparisons: field.id === "res-acad" ? requiredAcademicComparisons(batch) : [] }),
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || payload?.ok === false) throw new Error(`Lote ${index + 1}: ${payload?.error || `o servidor devolveu o estado ${response.status}`}.`);
+        const part = String(payload?.narrative || "").trim();
+        if (part) narrativesForBatches.push(part);
+      }
+      const narrative = ensureAcademicComparisonsInNarrative(narrativesForBatches.join("\n\n"), field.id === "res-acad" ? requiredAcademicComparisons(records) : []);
       if (!narrative) throw new Error("A IA não devolveu uma narrativa utilizável.");
       setNarratives((current) => ({ ...current, [field.id]: narrative }));
       setTriangulationRevisions((current) => ({ ...current, [field.id]: evidenceRevision(evidence, field.id) }));
       setChangesPending(true);
-      setAiTriangulationStatus(`${field.section}: triangulação concluída numa chamada. Reveja e valide o texto.`);
+      setAiTriangulationStatus(`${field.section}: todas as ${records.length} evidências foram trianguladas em ${batches.length} lote(s). Reveja e valide o texto.`);
     } catch (error) {
       setAiTriangulationStatus(`${field.section}: ${error instanceof Error ? error.message : "Não foi possível triangular."} Não foi feita repetição automática paga.`);
     } finally {
@@ -2419,23 +2439,56 @@ export default function Home() {
       setAiTriangulationStatus("Não existem evidências validadas para triangular.");
       return;
     }
-    if (records.length > 180) {
-      setAiTriangulationStatus(`Existem ${records.length} evidências validadas. Para evitar truncagem, use a triangulação por campo nos casos que necessitem de revisão.`);
-      return;
-    }
-    if (!window.confirm(`Esta operação utiliza IA e faz uma única chamada para triangular ${records.length} evidência(s) em ${activeFields.length} campo(s). As narrativas atuais desses campos serão substituídas, mas continuarão editáveis. Pretende continuar?`)) return;
-    setAiTriangulatingAll(true);
-    setAiTriangulationStatus(`Triangulação global de ${activeFields.length} campo(s) em curso · 1 chamada…`);
-    try {
-      const response = await fetch("/api/triangulate-all", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fields: activeFields, evidence: records, diagnostics: Object.fromEntries(activeFields.map((field) => [field.id, fieldDiagnostic(field, records.filter((record) => record.fieldId === field.id), indicatorApplicability)])), mandatoryAcademicComparisons: requiredAcademicComparisons(records) }),
+    const batches: { fields: Field[]; evidence: Evidence[] }[] = [];
+    let batchFields: Field[] = [];
+    let batchEvidence: Evidence[] = [];
+    activeFields.forEach((field) => {
+      const fieldRecords = records.filter((record) => record.fieldId === field.id);
+      const chunks = Array.from({ length: Math.ceil(fieldRecords.length / 180) }, (_, index) => fieldRecords.slice(index * 180, (index + 1) * 180));
+      chunks.forEach((chunk) => {
+        if (batchEvidence.length && batchEvidence.length + chunk.length > 180) {
+          batches.push({ fields: batchFields, evidence: batchEvidence });
+          batchFields = [];
+          batchEvidence = [];
+        }
+        if (!batchFields.some((item) => item.id === field.id)) batchFields.push(field);
+        batchEvidence.push(...chunk);
+        if (batchEvidence.length === 180) {
+          batches.push({ fields: batchFields, evidence: batchEvidence });
+          batchFields = [];
+          batchEvidence = [];
+        }
       });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok || payload?.ok === false) throw new Error(payload?.error || `O servidor devolveu o estado ${response.status}.`);
-      const received = Array.isArray(payload?.narratives) ? payload.narratives : [];
-      const usable = received.filter((item: any) => activeFields.some((field) => field.id === String(item?.fieldId)) && String(item?.narrative || "").trim());
+    });
+    if (batchEvidence.length) batches.push({ fields: batchFields, evidence: batchEvidence });
+    const batchNote = batches.length > 1 ? `, distribuídas por ${batches.length} chamadas/lotes, sem exclusão silenciosa` : " numa única chamada";
+    if (!window.confirm(`Esta operação utiliza IA para triangular ${records.length} evidência(s) em ${activeFields.length} campo(s)${batchNote}. As narrativas atuais desses campos serão substituídas, mas continuarão editáveis. Pretende continuar?`)) return;
+    setAiTriangulatingAll(true);
+    setAiTriangulationStatus(`Triangulação global em curso · lote 1 de ${batches.length}…`);
+    try {
+      const received: any[] = [];
+      for (let index = 0; index < batches.length; index += 1) {
+        const batch = batches[index];
+        setAiTriangulationStatus(`Triangulação global em curso · lote ${index + 1} de ${batches.length} · ${batch.evidence.length} evidência(s)…`);
+        const response = await fetch("/api/triangulate-all", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ fields: batch.fields, evidence: batch.evidence, diagnostics: Object.fromEntries(batch.fields.map((field) => [field.id, fieldDiagnostic(field, batch.evidence.filter((record) => record.fieldId === field.id), indicatorApplicability)])), mandatoryAcademicComparisons: requiredAcademicComparisons(batch.evidence) }),
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || payload?.ok === false) throw new Error(`Lote ${index + 1}: ${payload?.error || `o servidor devolveu o estado ${response.status}`}.`);
+        if (Array.isArray(payload?.narratives)) received.push(...payload.narratives);
+      }
+      const mergedReceived = Object.values(received.reduce((acc: Record<string, any>, item: any) => {
+        const fieldId = String(item?.fieldId || "");
+        const value = String(item?.narrative || "").trim();
+        if (!fieldId || !value) return acc;
+        acc[fieldId] = acc[fieldId]
+          ? { fieldId, narrative: `${acc[fieldId].narrative}\n\n${value}` }
+          : { fieldId, narrative: value };
+        return acc;
+      }, {}));
+      const usable = mergedReceived.filter((item: any) => activeFields.some((field) => field.id === String(item?.fieldId)) && String(item?.narrative || "").trim());
       if (!usable.length) throw new Error("A IA não devolveu narrativas utilizáveis.");
       setNarratives((current) => ({
         ...current,
@@ -2452,8 +2505,8 @@ export default function Home() {
       setChangesPending(true);
       const missing = activeFields.length - usable.length;
       setAiTriangulationStatus(missing
-        ? `Foram concluídos ${usable.length} de ${activeFields.length} campos numa chamada. Reveja os ${missing} campo(s) em falta individualmente.`
-        : `${usable.length} campos triangulados numa única chamada. Reveja e valide as narrativas.`);
+        ? `Foram processadas todas as ${records.length} evidências em ${batches.length} lote(s) e concluídos ${usable.length} de ${activeFields.length} campos. Reveja os ${missing} campo(s) em falta individualmente.`
+        : `${usable.length} campos e todas as ${records.length} evidências foram triangulados em ${batches.length} lote(s). Reveja e valide as narrativas.`);
     } catch (error) {
       setAiTriangulationStatus(`${error instanceof Error ? error.message : "Não foi possível triangular globalmente."} As narrativas existentes foram preservadas e não houve repetição automática paga.`);
     } finally {
@@ -2763,7 +2816,7 @@ export default function Home() {
         </section>}
 
         {view === "documentos" && <section className="view">
-          <div className="page-heading"><div><p className="eyebrow">Agente 1 · Diagnóstico</p><h2>Mapa de fontes</h2><p>Os ficheiros são lidos no navegador e passam primeiro pelo Agente de Privacidade. Só o texto validado segue para análise documental.</p></div><label className="button primary file-button">Ler documentos localmente<input type="file" multiple accept=".pdf,.docx,.xls,.xlsx,.csv,.txt" onChange={handleFiles} /></label></div>
+          <div className="page-heading"><div><p className="eyebrow">Agente 1 · Diagnóstico</p><h2>Mapa de fontes</h2><p>Os ficheiros são lidos no navegador e passam primeiro pelo Agente de Privacidade. Só o texto validado segue para análise documental.</p></div><div className="analysis-actions"><span className="badge">{files.length} documento(s) carregado(s)</span><label className="button primary file-button">Ler documentos localmente<input type="file" multiple accept=".pdf,.docx,.xls,.xlsx,.csv,.txt" onChange={handleFiles} /></label></div></div>
           <section className="limitation-panel" aria-labelledby="limitation-title">
             <div className="limitation-header">
               <div>
@@ -2943,7 +2996,8 @@ export default function Home() {
         </section>}
 
         {view === "triangulacao" && <section className="view">
-          <div className="page-heading"><div><p className="eyebrow">Agente 6 · Cruzamento de fontes</p><h2>Triangulação e narrativa avaliativa</h2><p>A opção recomendada cruza todos os campos numa única chamada. A operação por campo fica disponível apenas para correções pontuais.</p></div><div className="action-row"><span className="badge auto-badge">Só evidência validada</span><button className="button secondary" onClick={refreshNarratives}>Atualizar localmente · sem API</button><button className="button primary" disabled={aiTriangulatingAll || Boolean(aiTriangulatingField) || !validatedCount} onClick={triangulateAllWithAi}>{aiTriangulatingAll ? "A triangular todos…" : "Triangular todos os campos com IA · 1 chamada"}</button></div></div>
+          <div className="page-heading"><div><p className="eyebrow">Agente 6 · Cruzamento de fontes</p><h2>Triangulação e narrativa avaliativa</h2><p>A opção recomendada cruza todos os campos e divide automaticamente volumes elevados em lotes. A operação por campo fica disponível para correções pontuais.</p></div><div className="action-row"><span className="badge auto-badge">Só evidência validada</span><button className="button secondary" onClick={refreshNarratives}>Atualizar localmente · sem API</button><button className="button primary" disabled={aiTriangulatingAll || Boolean(aiTriangulatingField) || !validatedCount} onClick={triangulateAllWithAi}>{aiTriangulatingAll ? "A triangular todos…" : validatedEvidenceCount > 180 ? `Triangular com IA · ${triangulationBatchCount}+ lotes` : "Triangular todos os campos com IA · 1 chamada"}</button></div></div>
+          <div className="statistics-status" role="status"><strong>Volume da operação:</strong> {files.length} documento(s) carregado(s) · {evidence.length} evidência(s) na Matriz · {validatedEvidenceCount} validada(s) e consideradas na triangulação · {pendingEvidenceCount} pendente(s), que não serão consideradas. {validatedEvidenceCount > 180 ? `A triangulação com IA será dividida automaticamente em ${triangulationBatchCount} ou mais lotes de até 180 evidências, respeitando os campos; nenhuma evidência validada será excluída silenciosamente.` : "O volume atual cabe numa chamada global à IA."}</div>
           {aiTriangulationStatus && <div className="statistics-status" role="status">{aiTriangulationStatus}</div>}
           <div className="narrative-guidance"><strong>Do dado ao juízo</strong><span>As narrativas são propostas de trabalho editáveis. Reveja o alcance, confirme as referências e não transforme previsão, atividade ou testemunho isolado em impacto demonstrado.</span></div>
           <div className="triangulation-grid narrative-grid">

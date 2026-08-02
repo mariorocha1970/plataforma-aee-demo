@@ -56,13 +56,15 @@ REGRAS:
 - Distinga intenção, prática, monitorização, resultado e impacto.
 - No campo 5.4.1 — Resultados académicos, trate os dados do InfoEscolas apenas em leitura comparada entre a escola/agrupamento e a referência nacional, considerando os três últimos anos letivos disponíveis.
 - Em 5.4.1, reporte séries quantitativas anuais apenas para os percursos diretos de sucesso: percentagem de alunos que concluem cada ciclo no tempo esperado (1.º ciclo em quatro anos, 2.º ciclo em dois anos, 3.º ciclo em três anos e, no secundário e profissional, no prazo definido pelo indicador oficial). Para cada ciclo/oferta existente, explicite a comparação com o nacional nos três últimos anos letivos disponíveis e sintetize as oscilações ou a tendência.
+- Integre cada série numa única passagem narrativa por ciclo/oferta. Não repita os mesmos anos, valores ou conclusões num parágrafo subsequente e não acrescente, no fim do campo, um segundo bloco estatístico que reproduza informação já apresentada.
+- Evite a fórmula mecânica «a leitura comparada é a seguinte». Articule os três anos numa progressão textual fluida, usando corretamente «abaixo do valor nacional» e «acima do valor nacional», e conclua com uma leitura prudente da evolução.
 - Não transcreva para o Relatório séries anuais autónomas relativas a ASE, provas nacionais, retenção/desistência ou outros gráficos. Essas evidências podem sustentar a interpretação triangulada e referências qualitativas sintéticas, mas não devem avolumar o texto com novos inventários de valores.
 - Preserve na narrativa de 5.4.1 todos os factos estatísticos já integrados na respetiva triangulação. Pode melhorar a sintaxe e a fluidez, mas não pode omitir nem alterar o indicador, os anos letivos, os valores da escola e do nacional, as diferenças em pontos percentuais, a evolução temporal ou a cautela interpretativa. Não faça uma interpretação paralela nem contorne a triangulação recebida.
 - Para cada ciclo ou oferta, privilegie exclusivamente, na apresentação quantitativa do Relatório, o indicador de conclusão no tempo esperado (ou a designação oficial equivalente). Não transforme os restantes gráficos do InfoEscolas em séries estatísticas autónomas na narrativa.
 - Nunca redija a partir de um valor isolado da escola. Indique, por ano, os valores da escola e do nacional, a diferença em pontos percentuais e a evolução dessa diferença. Se faltar uma série ou um dos três anos, explicite a incompletude e não formule um juízo comparativo conclusivo.
 - Não apresente perceções isoladas como factos comprovados.
 - Não cite nomes de ficheiros, páginas ou identificadores no corpo do relatório.
-- Evite repetições, generalizações e linguagem promocional.
+- Evite repetições substantivas, generalizações e linguagem promocional. Antes de devolver o relatório, reveja especificamente 5.4.1 e elimine qualquer duplicação factual entre parágrafos, conservando apenas a formulação mais integrada e fluida.
 - Mantenha a indicação de minuta sujeita a validação humana.
 - Devolva apenas o relatório integral.`;
 

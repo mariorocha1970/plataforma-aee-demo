@@ -45,6 +45,8 @@ type Evidence = {
   statisticalTreatmentId?: string;
   statisticalEvidenceUse?: "academic-comparison" | "context-only";
   statisticalScopeCode?: string;
+  interviewAgendaId?: InterviewAgenda["id"];
+  interviewPanel?: string;
 };
 
 type CandidateEvidence = Evidence & {
@@ -54,6 +56,7 @@ type CandidateEvidence = Evidence & {
 
 type Interview = {
   id: number;
+  agendaId?: InterviewAgenda["id"];
   panel: string;
   fieldId: string;
   summary: string;
@@ -61,6 +64,7 @@ type Interview = {
 
 type InterviewCandidate = {
   id: number;
+  agendaId?: InterviewAgenda["id"];
   panel: string;
   fieldId: string;
   synthesis: string;
@@ -70,6 +74,54 @@ type InterviewCandidate = {
   reservations: string[];
   questions: string[];
 };
+
+type InterviewAgenda = {
+  id: "1A" | "1B" | "1C" | "1D" | "1E" | "2A" | "2B" | "2C";
+  group: "1" | "2";
+  title: string;
+  subtitle?: string;
+  source: string;
+  panels: string[];
+  note?: string;
+};
+
+const interviewAgendas: InterviewAgenda[] = [
+  {
+    id: "1A", group: "1", title: "Escola com ensino secundário", subtitle: "Eventualmente com 2.º e 3.º ciclos.", source: "Agenda_Trabalho_1A-2024.pdf",
+    panels: ["Conselho Geral", "Equipa de Autoavaliação", "Coordenadores de Departamento e de Curso, responsáveis por outras estruturas de coordenação educativa e supervisão pedagógica e Secção de Formação e Monitorização do CFAE", "Alunos, Associação de Estudantes e Ex-alunos", "Docentes e técnicos dos serviços técnico-pedagógicos e de orientação vocacional e EMAEI", "Associação de Pais e Encarregados de Educação e representantes dos pais de turma", "Diretores de Turma e respetivos coordenadores", "Assistentes Técnicos e Operacionais", "Empresas, Autarquia e outros representantes da comunidade local", "Docentes sem cargos, incluindo professores e formadores dos cursos profissionais", "Elementos da comunidade educativa que a equipa considere importantes", "Diretor e respetiva equipa"]
+  },
+  {
+    id: "1B", group: "1", title: "Escola profissional pública ou privada", source: "Agenda_Trabalho_1B-2024.pdf",
+    panels: ["Conselho Geral, órgão consultivo ou entidade proprietária", "Equipa de Autoavaliação", "Alunos, Associação de Estudantes e Ex-alunos", "Diretores de Curso, orientadores da PAP e orientadores da FCT", "Docentes e técnicos dos serviços técnico-pedagógicos e de orientação vocacional e EMAEI", "Associação de Pais e Encarregados de Educação e representantes dos pais de turma", "Coordenadores de Departamento, responsáveis por outras estruturas de coordenação educativa e supervisão pedagógica e responsável pela formação contínua", "Assistentes Técnicos e Operacionais ou pessoal administrativo e auxiliar", "Diretores de Turma e respetivos coordenadores", "Docentes e formadores sem cargos", "Elementos da comunidade educativa que a equipa considere importantes", "Tutores, empresas, Autarquia e outros representantes da comunidade local", "Diretor ou Diretor Pedagógico e respetiva equipa"]
+  },
+  {
+    id: "1C", group: "1", title: "Estabelecimento particular e cooperativo com ensino secundário", subtitle: "Eventualmente com 2.º e 3.º ciclos.", source: "Agenda_Trabalho_1C-2024.pdf",
+    panels: ["Entidade titular", "Equipa de Autoavaliação", "Coordenadores de Departamento e de Curso, responsáveis por outras estruturas de coordenação educativa e supervisão pedagógica e responsável pela formação contínua", "Alunos, Associação de Estudantes e Ex-alunos", "Docentes e técnicos dos serviços técnico-pedagógicos e de orientação vocacional e EMAEI", "Associação de Pais e Encarregados de Educação e representantes dos pais de turma", "Diretores de Turma e respetivos coordenadores", "Pessoal administrativo e auxiliar", "Empresas, Autarquia e outros representantes da comunidade local", "Docentes sem cargos, incluindo professores e formadores dos cursos profissionais", "Elementos da comunidade educativa que a equipa considere importantes", "Diretor Pedagógico e respetiva equipa"]
+  },
+  {
+    id: "1D", group: "1", title: "Estabelecimento particular e cooperativo com educação pré-escolar e ensino básico", subtitle: "Eventualmente com ensino secundário.", source: "Agenda_Trabalho_1D-2024.pdf",
+    panels: ["Entidade titular", "Equipa de Autoavaliação", "Alunos do 4.º ano, durante a visita às salas do 1.º ciclo", "Alunos, Associação de Estudantes e Ex-alunos", "Coordenadores de Departamento e de Curso, responsáveis por outras estruturas de coordenação educativa e supervisão pedagógica e responsável pela formação contínua", "Associação de Pais e Encarregados de Educação e representantes dos pais de turma", "Diretores de Turma e respetivos coordenadores", "Pessoal administrativo e auxiliar", "Docentes e técnicos dos serviços técnico-pedagógicos e de orientação vocacional e EMAEI", "Docentes sem cargos, incluindo professores e formadores dos cursos profissionais", "Elementos da comunidade educativa que a equipa considere importantes", "Empresas, Autarquia e outros representantes da comunidade local", "Diretor Pedagógico e respetiva equipa"]
+  },
+  {
+    id: "1E", group: "1", title: "Escola de ensino artístico especializado", source: "Agenda_Trabalho_1E-2024.pdf",
+    panels: ["Conselho Geral ou entidade titular", "Equipa de Autoavaliação", "Alunos, Associação de Estudantes e Ex-alunos", "Coordenadores de Departamento, responsáveis por outras estruturas de coordenação educativa e supervisão pedagógica e responsável pela formação contínua", "Docentes e técnicos dos serviços técnico-pedagógicos e de orientação vocacional e EMAEI", "Associação de Pais e Encarregados de Educação e representantes dos pais de turma", "Assistentes Técnicos e Operacionais ou pessoal administrativo e auxiliar", "Diretores de Turma e respetivos coordenadores", "Representantes de outras escolas, para análise da articulação", "Docentes e formadores sem cargos", "Elementos da comunidade educativa que a equipa considere importantes", "Parceiros, Autarquia e outros representantes da comunidade local", "Diretor ou Diretor Pedagógico e respetiva equipa"]
+  },
+  {
+    id: "2A", group: "2", title: "Agrupamento com apenas uma escola de 2.º e 3.º ciclos e/ou secundário", source: "Agenda_Trabalho_2A-2024.pdf",
+    panels: ["Conselho Geral", "Equipa de Autoavaliação", "Alunos do 4.º ano, durante a visita às escolas do 1.º ciclo", "Coordenadores de Departamento e de Curso, responsáveis por outras estruturas de coordenação educativa e supervisão pedagógica e Secção de Formação e Monitorização do CFAE", "Associação de Pais e Encarregados de Educação e representantes dos pais de turma", "Alunos, Associação de Estudantes e Ex-alunos", "Diretores de Turma e respetivos coordenadores", "Assistentes Técnicos e Operacionais", "Docentes e técnicos dos serviços técnico-pedagógicos e de orientação vocacional e EMAEI", "Docentes sem cargos, incluindo professores dos cursos profissionais", "Elementos da comunidade educativa que a equipa considere importantes", "Empresas, Autarquia e outros representantes da comunidade local", "Diretor e respetiva equipa"],
+    note: "A agenda admite a entrevista a dois painéis de alunos do 4.º ano, em escolas de contextos diferenciados, se a equipa o considerar imprescindível."
+  },
+  {
+    id: "2B", group: "2", title: "Agrupamento com uma EB2,3 além da escola-sede", source: "Agenda_Trabalho_2B-2024.pdf",
+    panels: ["Conselho Geral", "Equipa de Autoavaliação", "Em simultâneo — Grupo 1: alunos do 4.º ano numa EB1; Grupo 2: alunos dos 2.º e 3.º ciclos na EB2,3", "Coordenadores de Departamento e de Curso, responsáveis por outras estruturas de coordenação educativa e supervisão pedagógica e Secção de Formação e Monitorização do CFAE", "Associação de Pais e Encarregados de Educação e representantes dos pais de turma", "Alunos, Associação de Estudantes e Ex-alunos da escola-sede", "Diretores de Turma e respetivos coordenadores", "Assistentes Técnicos e Operacionais", "Docentes e técnicos dos serviços técnico-pedagógicos e de orientação vocacional e EMAEI", "Docentes sem cargos, incluindo professores e formadores dos cursos profissionais", "Elementos da comunidade educativa que a equipa considere importantes", "Empresas, Autarquia e outros representantes da comunidade local", "Diretor e respetiva equipa"],
+    note: "O terceiro momento decorre em simultâneo, através da divisão da equipa de avaliação nos dois grupos indicados."
+  },
+  {
+    id: "2C", group: "2", title: "Agrupamento com duas ou mais EB2,3 além da escola-sede", source: "Agenda_Trabalho_2C-2024.pdf",
+    panels: ["Conselho Geral", "Alunos dos 2.º e 3.º ciclos da primeira EB2,3 visitada — entrevista realizada por uma parte da equipa", "Equipa de Autoavaliação", "Em simultâneo — Grupo 1: alunos do 4.º ano numa EB1; Grupo 2: alunos dos 2.º e 3.º ciclos da segunda EB2,3 visitada", "Coordenadores de Departamento e de Curso, responsáveis por outras estruturas de coordenação educativa e supervisão pedagógica e Secção de Formação e Monitorização do CFAE", "Associação de Pais e Encarregados de Educação e representantes dos pais de turma", "Alunos, Associação de Estudantes e Ex-alunos da escola-sede", "Diretores de Turma e respetivos coordenadores", "Assistentes Técnicos e Operacionais", "Docentes e técnicos dos serviços técnico-pedagógicos e de orientação vocacional e EMAEI", "Docentes sem cargos, incluindo professores e formadores dos cursos profissionais", "Elementos da comunidade educativa que a equipa considere importantes", "Empresas, Autarquia e outros representantes da comunidade local", "Diretor e respetiva equipa"],
+    note: "O quarto momento decorre em simultâneo, através da divisão da equipa de avaliação nos dois grupos indicados."
+  }
+];
 
 type FileAnalysis = {
   status: "A aguardar" | "A ler" | "Privacidade" | "Lido" | "OCR necessário" | "Erro";
@@ -1435,7 +1487,9 @@ export default function Home() {
   const [preparedDocuments, setPreparedDocuments] = useState<PreparedDocument[]>([]);
   const [filterDomain, setFilterDomain] = useState("Todos");
   const [filterStatus, setFilterStatus] = useState("Todos");
-  const [interviewPanel, setInterviewPanel] = useState("Docentes");
+  const [interviewPanel, setInterviewPanel] = useState("Conselho Geral");
+  const [interviewAgendaId, setInterviewAgendaId] = useState<InterviewAgenda["id"]>("2A");
+  const [interviewPanelSearch, setInterviewPanelSearch] = useState("");
   const [interviewField, setInterviewField] = useState(fields[0].id);
   const [interviewText, setInterviewText] = useState("");
   const [interviewCandidates, setInterviewCandidates] = useState<InterviewCandidate[]>([]);
@@ -2192,17 +2246,19 @@ export default function Home() {
     const summary = interviewText.trim();
     if (!summary) return;
     const id = Date.now();
-    setInterviews((current) => [...current, { id, panel: interviewPanel, fieldId: interviewField, summary }]);
+    setInterviews((current) => [...current, { id, agendaId: interviewAgendaId, panel: interviewPanel, fieldId: interviewField, summary }]);
     setEvidence((current) => [...current, {
       id,
       fieldId: interviewField,
       claim: summary,
-      source: `Painel — ${interviewPanel}`,
+      source: `Entrevista · Agenda ${interviewAgendaId} · Painel — ${interviewPanel}`,
       sourceType: "Testemunhal",
-      location: "registo de entrevista",
+      location: `Agenda ${interviewAgendaId} · registo de entrevista`,
       status: "Por triangular",
       strength: "Insuficiente",
       validated: false,
+      interviewAgendaId,
+      interviewPanel,
     }]);
     setInterviewText("");
     setChangesPending(true);
@@ -2215,12 +2271,14 @@ export default function Home() {
       return;
     }
     setInterviewAnalyzing(true);
+    const analysisAgendaId = interviewAgendaId;
+    const analysisPanel = interviewPanel;
     setInterviewAnalysisStatus("A extrair evidências testemunhais numa única chamada, sem consolidações…");
     try {
       const response = await fetch("/api/analyze-interview", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ panel: interviewPanel, text }),
+        body: JSON.stringify({ agenda: analysisAgendaId, panel: analysisPanel, text }),
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok || payload?.ok === false) throw new Error(payload?.error || `O servidor devolveu o estado ${response.status}.`);
@@ -2231,7 +2289,8 @@ export default function Home() {
           const field = fields.find((candidate) => normalizeText(candidate.name) === normalizeText(item.campo ?? "")) ?? fields[0];
           return {
             id: Date.now() + index,
-            panel: interviewPanel,
+            agendaId: analysisAgendaId,
+            panel: analysisPanel,
             fieldId: field.id,
             synthesis: item.afirmacao.trim(),
             location: typeof item.localizacao === "string" && item.localizacao.trim() ? item.localizacao.trim() : "relato de entrevista",
@@ -2270,17 +2329,19 @@ export default function Home() {
   function promoteInterviewCandidates() {
     const selected = interviewCandidates.filter((item) => selectedInterviewCandidates.includes(item.id));
     if (!selected.length) return;
-    setInterviews((current) => [...current, ...selected.map((item) => ({ id: item.id, panel: item.panel, fieldId: item.fieldId, summary: item.synthesis }))]);
+    setInterviews((current) => [...current, ...selected.map((item) => ({ id: item.id, agendaId: item.agendaId, panel: item.panel, fieldId: item.fieldId, summary: item.synthesis }))]);
     setEvidence((current) => [...current, ...selected.map((item): Evidence => ({
       id: item.id,
       fieldId: item.fieldId,
       claim: item.synthesis,
-      source: `Painel — ${item.panel}`,
+      source: `Entrevista · ${item.agendaId ? `Agenda ${item.agendaId}` : "agenda não registada"} · Painel — ${item.panel}`,
       sourceType: "Testemunhal",
-      location: `${item.location} · ${item.nature} · validação humana`,
+      location: `${item.agendaId ? `Agenda ${item.agendaId}` : "Agenda não registada"} · ${item.location} · ${item.nature} · validação humana`,
       status: "Por triangular",
       strength: "Insuficiente",
       validated: true,
+      interviewAgendaId: item.agendaId,
+      interviewPanel: item.panel,
     }))]);
     setInterviewCandidates((current) => current.filter((item) => !selectedInterviewCandidates.includes(item.id)));
     setSelectedInterviewCandidates([]);
@@ -2288,6 +2349,26 @@ export default function Home() {
     setInterviewAnalysisStatus(`${selected.length} síntese(s) validada(s) e enviadas para as Evidências.`);
     setChangesPending(true);
     setView("evidencias");
+  }
+
+  function changeInterviewContext(nextAgendaId: InterviewAgenda["id"], nextPanel: string) {
+    if (interviewAnalyzing) {
+      setInterviewAnalysisStatus("A agenda e o painel não podem ser alterados enquanto a análise está em curso.");
+      return;
+    }
+    const hasDraft = interviewText.trim().length > 0;
+    const hasPendingProposals = interviewCandidates.length > 0;
+    if ((hasDraft || hasPendingProposals) && (nextAgendaId !== interviewAgendaId || nextPanel !== interviewPanel)) {
+      const confirmed = window.confirm(`Existem ${hasPendingProposals ? "propostas por validar e " : ""}notas associadas à Agenda ${interviewAgendaId} — ${interviewPanel}.\n\nOK: descartar estes elementos e mudar de painel.\nCancelar: permanecer no painel atual.`);
+      if (!confirmed) return;
+      setInterviewText("");
+      setInterviewCandidates([]);
+      setSelectedInterviewCandidates([]);
+      setInterviewAnalysisStatus("As notas e propostas não validadas foram descartadas antes da mudança de painel.");
+    }
+    setInterviewAgendaId(nextAgendaId);
+    setInterviewPanel(nextPanel);
+    setInterviewPanelSearch("");
   }
 
   function generateReport() {
@@ -2975,12 +3056,30 @@ export default function Home() {
           </tbody></table></div>
         </section>}
 
-        {view === "entrevistas" && <section className="view">
+        {view === "entrevistas" && (() => {
+          const selectedAgenda = interviewAgendas.find((agenda) => agenda.id === interviewAgendaId) ?? interviewAgendas[0];
+          const normalizedSearch = normalizeText(interviewPanelSearch.trim());
+          const filteredPanels = selectedAgenda.panels.map((panel, index) => ({ panel, index })).filter(({ panel }) => !normalizedSearch || normalizeText(panel).includes(normalizedSearch));
+          return <section className="view">
           <div className="page-heading"><div><p className="eyebrow">Agente 5 · Extração testemunhal por IA</p><h2>Evidências dos painéis</h2><p>Introduza as notas de cada painel. A IA extrai apenas evidências testemunhais para os campos pertinentes, sem formular juízos nem realizar consolidações; a equipa revê e valida antes de as enviar para a Matriz.</p></div></div>
           <div className="interview-workflow-note"><strong>Menos classificação manual</strong><span>Não é necessário dividir antecipadamente o relato pelos campos de análise. Evite apenas nomes e outros dados pessoais desnecessários.</span></div>
+          <section className="agenda-browser">
+            <div className="section-heading"><div><p className="eyebrow">Agenda de trabalho aplicável</p><h3>Seleção do painel entrevistado</h3><p>Escolha a tipologia da unidade orgânica. Os painéis são apresentados pela ordem prevista na respetiva agenda.</p></div><span className="badge">{selectedAgenda.panels.length} painéis</span></div>
+            <div className="agenda-filters">
+              <label>Grupo<select disabled={interviewAnalyzing} value={selectedAgenda.group} onChange={(event) => { const group = event.target.value as InterviewAgenda["group"]; const firstAgenda = interviewAgendas.find((agenda) => agenda.group === group); if (firstAgenda) changeInterviewContext(firstAgenda.id, firstAgenda.panels[0]); }}><option value="1">Grupo 1 — Escolas não agrupadas e estabelecimentos particulares</option><option value="2">Grupo 2 — Agrupamentos de escolas</option></select></label>
+              <label>Agenda e tipologia<select disabled={interviewAnalyzing} value={selectedAgenda.id} onChange={(event) => { const agenda = interviewAgendas.find((item) => item.id === event.target.value); if (agenda) changeInterviewContext(agenda.id, agenda.panels[0]); }}>{interviewAgendas.filter((agenda) => agenda.group === selectedAgenda.group).map((agenda) => <option value={agenda.id} key={agenda.id}>Agenda {agenda.id} — {agenda.title}</option>)}</select></label>
+              <label>Pesquisar painel<input type="search" value={interviewPanelSearch} onChange={(event) => setInterviewPanelSearch(event.target.value)} placeholder="Ex.: alunos, docentes, autarquia…" /></label>
+            </div>
+            <div className="agenda-summary"><div><span className="agenda-code">{selectedAgenda.id}</span><div><strong>Agenda {selectedAgenda.id} — {selectedAgenda.title}</strong>{selectedAgenda.subtitle && <p>{selectedAgenda.subtitle}</p>}<small>Fonte: {selectedAgenda.source}</small></div></div></div>
+            {selectedAgenda.note && <div className="agenda-note"><strong>Nota operacional</strong><span>{selectedAgenda.note}</span></div>}
+            <div className="panel-list" role="list" aria-label={`Painéis da Agenda ${selectedAgenda.id}`}>
+              {filteredPanels.map(({ panel, index }) => <button type="button" role="listitem" disabled={interviewAnalyzing} className={interviewPanel === panel ? "panel-option selected" : "panel-option"} key={`${selectedAgenda.id}-${index}`} onClick={() => { changeInterviewContext(selectedAgenda.id, panel); window.setTimeout(() => document.getElementById("interview-notes")?.focus(), 0); }}><span>{index + 1}</span><strong>{panel}</strong><small>{interviewPanel === panel ? "Selecionado" : "Selecionar painel"}</small></button>)}
+              {!filteredPanels.length && <div className="empty-panel-search">Nenhum painel corresponde à pesquisa nesta agenda.</div>}
+            </div>
+          </section>
           <div className="interview-import-card">
-            <label>Painel entrevistado<select value={interviewPanel} onChange={(event) => setInterviewPanel(event.target.value)}><option>Direção</option><option>Conselho Geral</option><option>Elementos do Conselho Pedagógico</option><option>Equipa de Autoavaliação</option><option>Diretores de Turma</option><option>Docentes</option><option>Alunos</option><option>Encarregados de educação</option><option>Pessoal não docente</option><option>Parceiros</option></select></label>
-            <label className="interview-full-text">Notas completas ou síntese global da entrevista<textarea value={interviewText} onChange={(event) => setInterviewText(event.target.value)} placeholder="Cole aqui as notas da entrevista, sem identificação nominal. A organização por campos será proposta automaticamente…" /></label>
+            <div className="selected-panel-banner"><span>Agenda {selectedAgenda.id}</span><div><small>Painel selecionado</small><strong>{interviewPanel}</strong></div></div>
+            <label className="interview-full-text">Notas completas ou síntese global da entrevista<textarea id="interview-notes" value={interviewText} onChange={(event) => setInterviewText(event.target.value)} placeholder="Cole aqui as notas da entrevista, sem identificação nominal. A organização por campos será proposta automaticamente…" /></label>
             <div className="interview-import-actions"><small>{interviewText.trim().length.toLocaleString("pt-PT")} caracteres</small><button className="button primary" disabled={interviewAnalyzing || interviewText.trim().length < 40} onClick={analyzeInterviewNotes}>{interviewAnalyzing ? "A analisar…" : "Analisar relato integralmente"}</button></div>
           </div>
           {interviewAnalysisStatus && <div className="statistics-status" role="status">{interviewAnalysisStatus}</div>}
@@ -2988,12 +3087,35 @@ export default function Home() {
             <div className="section-heading"><div><p className="eyebrow">Validação humana obrigatória</p><h3>Evidências testemunhais propostas</h3><p>Reveja a afirmação, o campo, a natureza e a reserva. Uma declaração do painel permanece por triangular, mesmo depois de validada.</p></div><div className="action-row"><button className="button secondary" onClick={toggleAllInterviewCandidates}>{interviewCandidates.every((item) => selectedInterviewCandidates.includes(item.id)) ? "Desmarcar todas" : "Selecionar todas"}</button><button className="button primary" disabled={!selectedInterviewCandidates.length} onClick={promoteInterviewCandidates}>Validar e enviar ({selectedInterviewCandidates.length})</button></div></div>
             <div className="interview-candidate-list">{interviewCandidates.map((candidate) => { const field = getField(candidate.fieldId); return <article className={selectedInterviewCandidates.includes(candidate.id) ? "interview-candidate selected" : "interview-candidate"} key={candidate.id}>
               <label className="candidate-check"><input type="checkbox" checked={selectedInterviewCandidates.includes(candidate.id)} onChange={() => toggleInterviewCandidate(candidate.id)} /><span>Validar</span></label>
-              <div className="interview-candidate-main"><label>Afirmação testemunhal<textarea value={candidate.synthesis} onChange={(event) => updateInterviewCandidate(candidate.id, { synthesis: event.target.value })} /></label><small>{candidate.location} · {candidate.nature}</small>{candidate.reservations.length > 0 && <div className="interview-detail warning"><strong>Reserva ou necessidade de triangulação</strong><ul>{candidate.reservations.map((item) => <li key={item}>{item}</li>)}</ul></div>}</div>
+              <div className="interview-candidate-main"><div className="interview-source-lock"><strong>{candidate.agendaId ? `Agenda ${candidate.agendaId}` : "Agenda não registada (proposta anterior à v74)"}</strong><span>{candidate.panel}</span></div><label>Afirmação testemunhal<textarea value={candidate.synthesis} onChange={(event) => updateInterviewCandidate(candidate.id, { synthesis: event.target.value })} /></label><small>{candidate.location} · {candidate.nature}</small>{candidate.reservations.length > 0 && <div className="interview-detail warning"><strong>Reserva ou necessidade de triangulação</strong><ul>{candidate.reservations.map((item) => <li key={item}>{item}</li>)}</ul></div>}</div>
               <div className="candidate-classification"><label>Campo proposto<select value={candidate.fieldId} onChange={(event) => updateInterviewCandidate(candidate.id, { fieldId: event.target.value })}>{fields.map((option) => <option value={option.id} key={option.id}>{option.section} · {option.name}</option>)}</select></label><small>{field.domain}</small><button className="text-button danger-text" onClick={() => { setInterviewCandidates((current) => current.filter((item) => item.id !== candidate.id)); setSelectedInterviewCandidates((current) => current.filter((id) => id !== candidate.id)); }}>Descartar</button></div>
             </article>; })}</div>
           </section>}
-          {interviews.length > 0 && <section className="validated-interviews"><div className="section-heading"><div><p className="eyebrow">Histórico validado</p><h3>Sínteses já integradas</h3></div></div><div className="interview-list">{interviews.map((item) => { const field = getField(item.fieldId); return <article key={item.id}><div><span className="badge">{item.panel}</span><small>{field.section} · {field.name}</small></div><p>{item.summary}</p></article>; })}</div></section>}
-        </section>}
+          {interviews.length > 0 && <section className="validated-interviews"><div className="section-heading"><div><p className="eyebrow">Histórico validado</p><h3>Sínteses já integradas</h3></div></div><div className="interview-list">{interviews.map((item) => { const field = getField(item.fieldId); return <article key={item.id}><div><span className="badge">{item.agendaId ? `Agenda ${item.agendaId} · ` : ""}{item.panel}</span><small>{field.section} · {field.name}</small></div><p>{item.summary}</p></article>; })}</div></section>}
+          <style jsx>{`
+            .agenda-browser { margin: 1.2rem 0; padding: 1.25rem; border: 1px solid #dce5e1; border-radius: 18px; background: linear-gradient(145deg, #ffffff 0%, #f5faf8 100%); }
+            .agenda-filters { display: grid; grid-template-columns: 1.15fr 1.15fr .7fr; gap: .85rem; margin: 1rem 0; }
+            .agenda-summary { padding: 1rem; border-radius: 14px; background: #123c33; color: white; }
+            .agenda-summary > div { display: flex; gap: .9rem; align-items: center; }
+            .agenda-summary p, .agenda-summary small { margin: .2rem 0 0; color: #dcebe6; }
+            .agenda-code { display: grid; place-items: center; min-width: 3rem; height: 3rem; border-radius: 12px; background: #dff2e8; color: #123c33; font-weight: 800; }
+            .agenda-note { display: flex; gap: .75rem; margin-top: .75rem; padding: .8rem 1rem; border-left: 4px solid #d29a2e; border-radius: 8px; background: #fff8e9; color: #694d15; }
+            .panel-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .65rem; margin-top: 1rem; }
+            .panel-option { display: grid; grid-template-columns: 2.2rem 1fr auto; gap: .7rem; align-items: center; width: 100%; padding: .8rem; border: 1px solid #dbe3e0; border-radius: 12px; background: white; color: inherit; text-align: left; cursor: pointer; transition: border-color .15s, box-shadow .15s, transform .15s; }
+            .panel-option:hover { border-color: #588b79; box-shadow: 0 5px 18px rgba(24, 68, 55, .09); transform: translateY(-1px); }
+            .panel-option > span { display: grid; place-items: center; width: 2rem; height: 2rem; border-radius: 50%; background: #edf4f1; color: #315f50; font-weight: 700; }
+            .panel-option > small { color: #66736f; white-space: nowrap; }
+            .panel-option.selected { border-color: #1e6b56; box-shadow: inset 0 0 0 1px #1e6b56; background: #eff8f4; }
+            .panel-option.selected > span { background: #1e6b56; color: white; }
+            .empty-panel-search { grid-column: 1 / -1; padding: 1.2rem; border: 1px dashed #bdc9c5; border-radius: 12px; text-align: center; color: #66736f; }
+            .selected-panel-banner { display: flex; gap: .8rem; align-items: center; padding: .8rem 1rem; border-radius: 12px; background: #edf6f2; }
+            .selected-panel-banner > span { padding: .35rem .55rem; border-radius: 8px; background: #1e6b56; color: white; font-size: .8rem; font-weight: 800; }
+            .selected-panel-banner div { display: grid; gap: .15rem; }
+            .interview-source-lock { display: grid; gap: .15rem; margin-bottom: .7rem; padding: .65rem .75rem; border-left: 3px solid #1e6b56; border-radius: 7px; background: #edf6f2; }
+            .interview-source-lock span { color: #42554f; font-size: .88rem; }
+            @media (max-width: 900px) { .agenda-filters, .panel-list { grid-template-columns: 1fr; } .panel-option { grid-template-columns: 2.2rem 1fr; } .panel-option > small { display: none; } }
+          `}</style>
+        </section>; })()}
 
         {view === "triangulacao" && <section className="view">
           <div className="page-heading"><div><p className="eyebrow">Agente 6 · Cruzamento de fontes</p><h2>Triangulação e narrativa avaliativa</h2><p>A opção recomendada cruza todos os campos e divide automaticamente volumes elevados em lotes. A operação por campo fica disponível para correções pontuais.</p></div><div className="action-row"><span className="badge auto-badge">Só evidência validada</span><button className="button secondary" onClick={refreshNarratives}>Atualizar localmente · sem API</button><button className="button primary" disabled={aiTriangulatingAll || Boolean(aiTriangulatingField) || !validatedCount} onClick={triangulateAllWithAi}>{aiTriangulatingAll ? "A triangular todos…" : validatedEvidenceCount > 180 ? `Triangular com IA · ${triangulationBatchCount}+ lotes` : "Triangular todos os campos com IA · 1 chamada"}</button></div></div>

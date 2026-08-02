@@ -43,6 +43,8 @@ type Evidence = {
   validated: boolean;
   indicatorIds?: string[];
   statisticalTreatmentId?: string;
+  statisticalEvidenceUse?: "academic-comparison" | "context-only";
+  statisticalScopeCode?: string;
 };
 
 type CandidateEvidence = Evidence & {
@@ -1221,6 +1223,7 @@ function preserveReviewedNarratives(evidence: Evidence[], narratives: Record<str
 }
 
 function buildReport(evidence: Evidence[], narratives: Record<string, string> = {}, applicability: Record<string, IndicatorApplicability> = {}) {
+  const academicComparisons = requiredAcademicComparisons(evidence);
   const lines: string[] = [
     "MINUTA DE TRABALHO — SUJEITA A VALIDAÇÃO HUMANA",
     "",
@@ -1232,7 +1235,10 @@ function buildReport(evidence: Evidence[], narratives: Record<string, string> = 
     lines.push(reportHeading(domain), "");
     fields.filter((field) => field.domain === domain).forEach((field) => {
       const records = evidence.filter((record) => record.fieldId === field.id && record.validated);
-      const narrative = narratives[field.id]?.trim() || composeFieldNarrative(field, records, applicability);
+      const baseNarrative = narratives[field.id]?.trim() || composeFieldNarrative(field, records, applicability);
+      const narrative = field.id === "res-acad"
+        ? ensureAcademicComparisonsInNarrative(baseNarrative, academicComparisons)
+        : baseNarrative;
       lines.push(`${field.section}. ${field.name}`, "", completeSentence(narrative), "");
     });
   });
@@ -1249,8 +1255,27 @@ function isDirectCompletionComparison(value: string) {
 
 function requiredAcademicComparisons(records: Evidence[]) {
   return records
-    .filter((item) => item.fieldId === "res-acad" && item.validated && item.sourceType === "Quantitativa" && (item.indicatorIds?.length ?? 0) > 0 && /nacional|país|pais|portugal/i.test(item.claim) && item.claim.trim() && isDirectCompletionComparison(item.claim))
+    .filter((item) => item.fieldId === "res-acad" && item.validated && item.sourceType === "Quantitativa" && /nacional|país|pais|portugal/i.test(item.claim) && item.claim.trim() && (
+      item.statisticalEvidenceUse === "academic-comparison"
+      || (Boolean(item.statisticalTreatmentId?.startsWith("infoescolas|")) && isDirectCompletionComparison(item.claim))
+      || isDirectCompletionComparison(item.claim)
+    ))
+    .sort((a, b) => {
+      const scopeA = Number(a.statisticalScopeCode || infoEscolasScopeFromText(a.claim) || 99);
+      const scopeB = Number(b.statisticalScopeCode || infoEscolasScopeFromText(b.claim) || 99);
+      return scopeA - scopeB || a.claim.localeCompare(b.claim, "pt-PT", { numeric: true });
+    })
     .map((item) => item.claim.trim());
+}
+
+function infoEscolasScopeFromText(value: string) {
+  const normalized = normalizeText(value);
+  if (/1 ciclo|primeiro ciclo/.test(normalized)) return "1";
+  if (/2 ciclo|segundo ciclo/.test(normalized)) return "2";
+  if (/3 ciclo|terceiro ciclo/.test(normalized)) return "3";
+  if (/cientifico.?humanistico|ensino secundario/.test(normalized)) return "4";
+  if (/profissional/.test(normalized)) return "5";
+  return "";
 }
 
 function evidenceRevision(records: Evidence[], fieldId: string) {
@@ -2088,6 +2113,8 @@ export default function Home() {
       validated: true,
       indicatorIds: treatment.id.startsWith("infoescolas|") ? indicatorIdsForInfoEscolasTreatment(treatment) : [],
       statisticalTreatmentId: treatment.id,
+      statisticalEvidenceUse: treatment.evidenceUse,
+      statisticalScopeCode: treatment.sourceKeys?.find((key) => key.startsWith("infoescolas|"))?.split("|").at(-1),
     }));
     const promotedIds = new Set(promoted.map((record) => record.statisticalTreatmentId));
     const promotedFields = new Set(promoted.map((record) => record.fieldId));

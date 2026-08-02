@@ -1286,26 +1286,48 @@ function evidenceRevision(records: Evidence[], fieldId: string) {
     .join("\n");
 }
 
-function comparisonFacts(value: string) {
-  return [...new Set(value.match(/\b(?:19|20)\d{2}\/\d{2}\b|[-−]?\d+(?:[,.]\d+)?\s*(?:%|p\.p\.)/gi) ?? [])]
-    .map((item) => normalizeText(item).replace(/−/g, "-"));
+function academicComparisonCoreFacts(value: string) {
+  const normalized = normalizeText(value).replace(/−/g, "-");
+  return {
+    years: [...new Set(normalized.match(/\b(?:19|20)\d{2}\/\d{2}\b/g) ?? [])],
+    percentages: [...new Set((normalized.match(/-?\d+(?:[,.]\d+)?\s*%/g) ?? [])
+      .map((item) => item.replace(/\s+/g, "").replace(",", ".")))],
+  };
 }
 
 function containsAcademicComparison(text: string, comparison: string) {
   const normalized = normalizeText(text).replace(/−/g, "-");
-  const facts = comparisonFacts(comparison);
-  return facts.length > 0 && facts.every((fact) => normalized.includes(fact));
+  const comparable = normalized.replace(/\s+/g, "").replace(/,/g, ".");
+  const core = academicComparisonCoreFacts(comparison);
+  // A série já está presente quando conserva todos os anos e os valores
+  // percentuais da escola e do nacional. Diferenças em p.p. podem ser
+  // legitimamente reformuladas por extenso e não devem provocar a reinserção
+  // integral do mesmo bloco no fim da secção.
+  return core.years.length > 0
+    && core.percentages.length > 0
+    && core.years.every((year) => normalized.includes(year))
+    && core.percentages.every((value) => comparable.includes(value));
+}
+
+function polishAcademicComparison(value: string) {
+  return value
+    .replace(/\babaixo\s+de\s+o\s+valor\s+nacional\b/gi, "abaixo do valor nacional")
+    .replace(/\bacima\s+de\s+o\s+valor\s+nacional\b/gi, "acima do valor nacional")
+    .replace(/\babaixo\s+de\s+a\s+média\s+nacional\b/gi, "abaixo da média nacional")
+    .replace(/\bacima\s+de\s+a\s+média\s+nacional\b/gi, "acima da média nacional")
+    .replace(/\s+([,.;:])/g, "$1")
+    .trim();
 }
 
 function ensureAcademicComparisonsInNarrative(narrative: string, comparisons: string[]) {
   const missing = comparisons.filter((comparison) => !containsAcademicComparison(narrative, comparison));
-  return [narrative.trim(), ...missing].filter(Boolean).join("\n\n");
+  return [narrative.trim(), ...missing.map(polishAcademicComparison)].filter(Boolean).join("\n\n");
 }
 
 function ensureAcademicComparisonsInReport(report: string, comparisons: string[]) {
   const missing = comparisons.filter((comparison) => !containsAcademicComparison(report, comparison));
   if (!missing.length) return report;
-  const block = missing.join("\n\n");
+  const block = missing.map(polishAcademicComparison).join("\n\n");
   const nextSection = /\n5\.4\.2\.?\s+/i;
   const match = nextSection.exec(report);
   if (!match || match.index === undefined) return `${report.trim()}\n\n${block}`;

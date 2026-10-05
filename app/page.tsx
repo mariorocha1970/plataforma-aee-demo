@@ -2374,18 +2374,28 @@ export default function Home() {
   function generateReport() {
     const completedNarratives = preserveReviewedNarratives(evidence, narratives, indicatorApplicability);
     const comparisons = requiredAcademicComparisons(evidence);
-    if (evidence.some((record) => record.fieldId === "res-acad" && record.validated) && triangulationRevisions["res-acad"] !== evidenceRevision(evidence, "res-acad")) {
-      setAiTriangulationStatus("A triangulação de 5.4.1 está desatualizada porque a Matriz recebeu novas evidências. Repita a triangulação antes de gerar o Relatório.");
-      setView("triangulacao");
-      return;
-    }
-    if (comparisons.some((comparison) => !containsAcademicComparison(narratives["res-acad"] || "", comparison))) {
-      setAiTriangulationStatus("As análises comparadas de 5.4.1 já estão na Matriz, mas ainda não constam da narrativa triangulada. Execute a triangulação antes de gerar o Relatório.");
-      setView("triangulacao");
-      return;
+    const academicRecords = evidence.filter((record) => record.fieldId === "res-acad" && record.validated);
+    const academicRevision = evidenceRevision(evidence, "res-acad");
+    const academicOutdated = academicRecords.length > 0 && triangulationRevisions["res-acad"] !== academicRevision;
+    const academicComparisonsMissing = comparisons.some((comparison) => !containsAcademicComparison(completedNarratives["res-acad"] || "", comparison));
+
+    // A minuta local tem de poder ser gerada sem obrigar a uma chamada à API.
+    // Quando o InfoEscolas acrescenta ou atualiza evidências em 5.4.1,
+    // recompomos apenas este campo localmente e preservamos as restantes
+    // narrativas já revistas pela equipa.
+    if (academicOutdated || academicComparisonsMissing) {
+      completedNarratives["res-acad"] = ensureAcademicComparisonsInNarrative(
+        composeFieldNarrative(getField("res-acad"), academicRecords, indicatorApplicability),
+        comparisons,
+      );
+      setTriangulationRevisions((current) => ({ ...current, "res-acad": academicRevision }));
     }
     setNarratives(completedNarratives);
     setReport(buildReport(evidence, completedNarratives, indicatorApplicability));
+    setExportStatus(academicOutdated || academicComparisonsMissing
+      ? "Minuta local gerada. A narrativa de 5.4.1 foi sincronizada automaticamente com as evidências validadas do InfoEscolas, sem utilizar a API."
+      : "Minuta local gerada sem utilizar a API.");
+    setChangesPending(true);
     setView("relatorio");
   }
 

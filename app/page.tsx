@@ -2169,11 +2169,37 @@ export default function Home() {
 
   function matrixStateForTreatment(treatment: StatisticalTreatment) {
     const matrixRecord = evidence.find((record) => record.statisticalTreatmentId === treatment.id);
-    if (!matrixRecord) return "Por enviar";
+    if (!matrixRecord) return treatment.evidenceUse === "context-only" ? "Contexto · não enviado" : "Por enviar";
     const expectedLocation = `${treatment.recordIds.length} registos · ${treatment.sources.join("; ")}`;
     return matrixRecord.claim === treatment.summary && matrixRecord.fieldId === treatment.fieldId && matrixRecord.location === expectedLocation
-      ? "Na Matriz"
+      ? treatment.evidenceUse === "context-only" ? "Na Matriz · contexto" : "Na Matriz"
       : "Alterado após envio";
+  }
+
+  function promoteContextTreatment(treatment: StatisticalTreatment) {
+    const promoted: Evidence = {
+      id: Date.now(),
+      fieldId: treatment.fieldId,
+      claim: treatment.summary,
+      source: `Enquadramento estatístico — ${getField(treatment.fieldId).name}`,
+      sourceType: "Quantitativa",
+      location: `${treatment.recordIds.length} registos · ${treatment.sources.join("; ")}`,
+      status: "Por triangular",
+      strength: "Insuficiente",
+      validated: true,
+      indicatorIds: [],
+      statisticalTreatmentId: treatment.id,
+      statisticalEvidenceUse: "context-only",
+      statisticalScopeCode: treatment.sourceKeys?.find((key) => key.startsWith("infoescolas|"))?.split("|").at(-1),
+    };
+    setEvidence((current) => [...current.filter((item) => item.statisticalTreatmentId !== treatment.id), promoted]);
+    setTriangulationRevisions((current) => {
+      const next = { ...current };
+      delete next[treatment.fieldId];
+      return next;
+    });
+    setChangesPending(true);
+    setStatisticalStatus("O dado foi enviado para a Matriz como enquadramento contextual, com robustez insuficiente. Deve ser cruzado com outras fontes e não sustenta, isoladamente, um juízo avaliativo.");
   }
 
   function promoteStatisticalTreatments() {
@@ -3005,15 +3031,17 @@ export default function Home() {
           </div>}
           {workspaceStatisticalTreatments.length > 0 && <section className="treatment-panel">
             <div className="section-heading"><div><p className="eyebrow">Resultado intermédio</p><h3>Apresentação do tratamento por indicador</h3><p>Nos questionários, os dados são agregados por grupo e questões repetidas são deduplicadas. Critérios de sinalização: concordância ≥75% para ponto forte; não concordância ≥15%, “Não sei” ≥10% ou concordância &lt;60% para área de melhoria.</p></div><div className="action-row"><button className="button secondary" onClick={toggleAllTreatments}>{allTreatmentsSelected ? "Desmarcar tratamentos" : "Selecionar tratamentos"}</button><button className="button secondary" onClick={exportStatisticalServer}>Guardar Word (.docx)</button><button className="button primary" disabled={!workspaceSelectedTreatmentCount} onClick={promoteStatisticalTreatments}>Enviar para a Matriz ({workspaceSelectedTreatmentCount || ""})</button></div></div>
+            {workspaceStatisticalTreatments.some((treatment) => treatment.evidenceUse === "context-only") && <div className="statistics-status" role="note"><strong>Dados de contexto:</strong> caracterizam a população ou o contexto da escola, mas não constituem, isoladamente, evidência avaliativa. Não são incluídos no envio em lote. Se forem relevantes para a interpretação, envie-os individualmente como enquadramento contextual.</div>}
             {workspaceStatisticalTreatments.some((treatment) => treatment.respondentGroup) && <QuestionnaireOverviewChart treatments={workspaceStatisticalTreatments.filter((treatment) => treatment.respondentGroup)} />}
             <div className="treatment-grid">{workspaceStatisticalTreatments.map((treatment) => { const field = getField(treatment.fieldId); const matrixState = matrixStateForTreatment(treatment); return <article className={selectedTreatmentIds.includes(treatment.id) ? "treatment-card selected" : "treatment-card"} key={treatment.id}>
-              <div className="treatment-top"><label className="check"><input type="checkbox" disabled={treatment.evidenceUse === "context-only"} checked={selectedTreatmentIds.includes(treatment.id)} onChange={() => toggleTreatment(treatment.id)} />{treatment.evidenceUse === "context-only" ? "Consulta/contexto" : "Usar tratamento"}</label><span className="badge">{matrixState}</span><span className="badge">{field.section} · {treatment.recordIds.length} registos</span></div>
+              <div className="treatment-top">{treatment.evidenceUse === "context-only" ? <span className="badge">Dado de contexto</span> : <label className="check"><input type="checkbox" checked={selectedTreatmentIds.includes(treatment.id)} onChange={() => toggleTreatment(treatment.id)} />Usar tratamento</label>}<span className="badge">{matrixState}</span><span className="badge">{field.section} · {treatment.recordIds.length} registos</span></div>
               <h4>{treatment.indicator}</h4><small className="treatment-field">{field.name}</small>
               <TreatmentChart treatment={treatment} />
               {treatment.respondentGroup ? <div className="treatment-metrics questionnaire-metrics">{treatment.points.map((point) => <span key={point.label}><strong>{point.value.toLocaleString("pt-PT", { maximumFractionDigits: 1 })}%</strong>{point.label}</span>)}</div> : <div className="treatment-metrics"><span><strong>{treatment.points.length}</strong> observações</span><span><strong>{treatment.minimum?.toLocaleString("pt-PT", { maximumFractionDigits: 1 }) ?? "—"}{treatment.unit === "%" ? "%" : ""}</strong> mínimo</span><span><strong>{treatment.maximum?.toLocaleString("pt-PT", { maximumFractionDigits: 1 }) ?? "—"}{treatment.unit === "%" ? "%" : ""}</strong> máximo</span><span><strong>{treatment.average?.toLocaleString("pt-PT", { maximumFractionDigits: 1 }) ?? "—"}{treatment.unit === "%" ? "%" : ""}</strong> média</span></div>}
               {treatment.respondentGroup && <div className="findings-grid"><div><strong>Pontos fortes</strong>{treatment.strengths.length ? <ul>{treatment.strengths.map((item) => <li key={item}>{item}</li>)}</ul> : <p>Sem ponto forte global sinalizado pelo limiar de 75%.</p>}</div><div><strong>Áreas de melhoria</strong>{treatment.improvements.length ? <ul>{treatment.improvements.map((item) => <li key={item}>{item}</li>)}</ul> : <p>Sem área global sinalizada pelos limiares definidos.</p>}</div></div>}
               <label>Análise descritiva para eventual utilização como evidência<textarea value={treatment.summary} onChange={(event) => updateStatisticalTreatment(treatment.id, event.target.value)} /></label>
               <small>Fontes de base: {treatment.sources.join("; ")}</small>
+              {treatment.evidenceUse === "context-only" && <div className="action-row"><button className="button secondary" disabled={matrixState === "Na Matriz · contexto"} onClick={() => promoteContextTreatment(treatment)}>{matrixState === "Na Matriz · contexto" ? "Enquadramento já na Matriz" : "Enviar como enquadramento contextual"}</button></div>}
             </article>; })}</div>
             {workspaceStatisticalTreatments.some((treatment) => treatment.respondentGroup) && <section className="questionnaire-report-panel">
               <div className="section-heading"><div><p className="eyebrow">Relatos escritos e interpretação</p><h3>Relatório analítico dos questionários</h3><p>Introduza comentários abertos por público. A classificação temática é automática e editável; só são redigidos temas sustentados pelos relatos inseridos.</p></div></div>

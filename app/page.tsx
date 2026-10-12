@@ -1399,12 +1399,18 @@ function conclusionSentence(value: string) {
   return completeSentence(value.replace(/^No campo [^,]+,\s*/i, "").replace(/^A informação (?:validada|disponível) (?:permite identificar|evidencia|aponta para)\s*/i, "").trim());
 }
 
+function conclusionClauses(value: string) {
+  return value
+    .split(/(?<=[.!?])\s+|\s+(?:mas|contudo|porém|todavia|não obstante)\s+/i)
+    .map((item) => item.trim())
+    .filter((item) => item.length >= 35 && !boilerplateConclusionPattern.test(item));
+}
+
 function localDomainConclusions(narratives: Record<string, string>, evidence: Evidence[]): DomainConclusion[] {
   return domainOrder.map((domain) => {
     const domainFields = fields.filter((field) => field.domain === domain);
     const domainRecords = evidence.filter((record) => record.validated && domainFields.some((field) => field.id === record.fieldId));
-    const sentences = domainFields.flatMap((field) => (narratives[field.id] || composeFieldNarrative(field, domainRecords.filter((record) => record.fieldId === field.id)))
-      .split(/(?<=[.!?])\s+/).map((item) => item.trim()).filter((item) => item.length >= 45 && !boilerplateConclusionPattern.test(item)));
+    const sentences = domainFields.flatMap((field) => conclusionClauses(narratives[field.id] || composeFieldNarrative(field, domainRecords.filter((record) => record.fieldId === field.id))));
     const improvements = sentences.filter((item) => negativeConclusionPattern.test(item)).slice(0, 4).map(conclusionSentence);
     const strengths = sentences.filter((item) => !negativeConclusionPattern.test(item)).slice(0, 4).map(conclusionSentence);
     const covered = domainFields.filter((field) => domainRecords.some((record) => record.fieldId === field.id)).length;
@@ -1416,7 +1422,7 @@ function localDomainConclusions(narratives: Record<string, string>, evidence: Ev
     else if (covered > 0 && improvements.length > strengths.length) rating = "Insuficiente";
     const rationale = rating === "Por definir"
       ? "A cobertura ou a robustez da evidência ainda não permite propor uma menção com segurança."
-      : `Proposta local baseada na cobertura de ${covered}/${domainFields.length} campos e no equilíbrio entre pontos fortes e áreas de melhoria; requer validação da equipa.`;
+      : `A proposta considera a cobertura de ${covered}/${domainFields.length} campos, ${strongFields} campo(s) com evidência forte e o predomínio relativo de ${strengths.length} leitura(s) positiva(s) face a ${improvements.length} limitação(ões). A menção requer validação pela equipa e não decorre de uma média automática.`;
     return { domain, strengths, improvements, rating, rationale };
   });
 }
@@ -2746,9 +2752,24 @@ export default function Home() {
       fields: fields.filter((field) => field.domain === domain).map((field) => ({ section: field.section, name: field.name, narrative: completedNarratives[field.id] || "" })),
       evidenceProfile: fields.filter((field) => field.domain === domain).map((field) => {
         const records = evidence.filter((record) => record.validated && record.fieldId === field.id);
-        return { section: field.section, count: records.length, strength: strengthFor(records), sourceTypes: [...new Set(records.map((record) => record.sourceType))] };
+        return {
+          section: field.section,
+          count: records.length,
+          strength: strengthFor(records),
+          triangulation: triangulationFor(records),
+          sourceTypes: [...new Set(records.map((record) => record.sourceType))],
+          sourceFamilies: new Set(records.map(independentSourceKey).filter(Boolean)).size,
+          diagnostic: fieldDiagnostic(field, records, indicatorApplicability),
+          evidence: records.slice(0, 24).map((record) => ({
+            claim: record.claim.slice(0, 800),
+            source: record.source.slice(0, 180),
+            sourceType: record.sourceType,
+            status: record.status,
+            strength: record.strength,
+            indicators: record.indicatorIds ?? [],
+          })),
+        };
       }),
-      currentProposal: base.find((item) => item.domain === domain),
     }));
     if (!payloadDomains.some((item) => item.fields.some((field) => field.narrative.trim()))) {
       setConclusionsStatus("Ainda não existem narrativas trianguladas suficientes para formular conclusões.");

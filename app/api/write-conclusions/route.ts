@@ -41,7 +41,7 @@ export async function POST(request: NextRequest) {
     const schoolName = String(body?.schoolName || "a organização escolar").slice(0, 180);
     const prompt = `Formule a síntese conclusiva de uma Avaliação Externa das Escolas, em português europeu, relativa a ${schoolName}.
 
-DADOS POR DOMÍNIO (narrativas já trianguladas, perfil probatório e proposta local):
+DADOS POR DOMÍNIO (narrativas trianguladas e perfil probatório detalhado por campo):
 ${JSON.stringify(domains).slice(0, 48_000)}
 
 ESCALA:
@@ -55,6 +55,12 @@ REGRAS:
 - Devolva exatamente os quatro domínios e preserve a respetiva designação oficial.
 - Pontos fortes e áreas de melhoria são juízos avaliativos concisos, autónomos e coerentes com o texto do relatório; não são listas de atividades nem transcrições de evidências.
 - Formule apenas o que esteja sustentado pelas narrativas fornecidas. Não invente práticas, inovação, resultados, impacto ou generalização.
+- Reanalise cada domínio de raiz. Não use uma proposta anterior como âncora e não presuma que a menção deve descer ou subir.
+- Pondere a totalidade das evidências concretas incluídas no perfil probatório: convergência, independência das fontes, robustez, abrangência dos campos, generalização das práticas e demonstração de resultados ou impacto.
+- Distinga ausência de evidência de evidência negativa. A falta de uma meta quantificada, de um dado de impacto ou de uma fonte adicional é uma limitação com alcance próprio; não deve, isoladamente, anular práticas consolidadas, resultados comprovados ou o predomínio de evidências positivas noutros referentes.
+- Uma frase que apresente simultaneamente uma prática positiva e uma reserva deve ser ponderada nas duas componentes. Não classifique toda a frase como negativa apenas por conter «mas», «ausência», «limita», «carece» ou expressão equivalente.
+- Uma área de melhoria localizada não determina automaticamente «Suficiente». Verifique se é estrutural, transversal e materialmente capaz de equilibrar ou superar os pontos fortes do domínio.
+- Antes de propor a menção, faça um teste de coerência: a fundamentação deve explicar por que razão a evidência positiva e as limitações conduzem precisamente àquela menção, sem contradizer os pontos fortes e áreas de melhoria listados.
 - Um ponto forte deve evidenciar relevância, abrangência e efeito positivo; uma área de melhoria deve identificar com clareza o processo ou resultado a aperfeiçoar, sem prescrever soluções.
 - Não repita o mesmo conteúdo como ponto forte e área de melhoria.
 - Não cite ficheiros, páginas, quantidades de fontes ou mecanismos internos da plataforma.
@@ -69,7 +75,7 @@ REGRAS:
         model: process.env.OPENAI_CONCLUSIONS_MODEL?.trim() || "gpt-5-mini",
         store: false,
         input: prompt,
-        reasoning: { effort: "minimal" },
+        reasoning: { effort: "medium" },
         max_output_tokens: 4_500,
         text: { format: { type: "json_schema", name: "conclusoes_aee", strict: true, schema: RESULT_SCHEMA } },
       }),

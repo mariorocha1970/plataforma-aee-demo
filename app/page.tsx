@@ -1338,6 +1338,12 @@ function evidenceRevision(records: Evidence[], fieldId: string) {
     .join("\n");
 }
 
+function markEvidenceAsTriangulated(records: Evidence[], fieldIds: Set<string>) {
+  return records.map((record) => record.validated && fieldIds.has(record.fieldId) && record.status === "Por triangular"
+    ? { ...record, status: "Confirmada" as EvidenceStatus }
+    : record);
+}
+
 function academicComparisonCoreFacts(value: string) {
   const normalized = normalizeText(value).replace(/−/g, "-");
   return {
@@ -2432,10 +2438,13 @@ export default function Home() {
     if (refreshed["res-acad"] && comparisons.length) {
       refreshed["res-acad"] = ensureAcademicComparisonsInNarrative(refreshed["res-acad"], comparisons);
     }
+    const completedFieldIds = new Set(fields.filter((field) => validated.some((record) => record.fieldId === field.id)).map((field) => field.id));
+    const synchronizedEvidence = markEvidenceAsTriangulated(evidence, completedFieldIds);
+    setEvidence(synchronizedEvidence);
     setNarratives(refreshed);
     setTriangulationRevisions(Object.fromEntries(fields
       .filter((field) => validated.some((record) => record.fieldId === field.id))
-      .map((field) => [field.id, evidenceRevision(evidence, field.id)])));
+      .map((field) => [field.id, evidenceRevision(synchronizedEvidence, field.id)])));
     setAiTriangulationStatus(`${validated.length} evidência(s) validada(s) atualizada(s) localmente. A triangulação está sincronizada com a Matriz; pode rever as narrativas e gerar o Relatório sem utilizar a API.`);
     setChangesPending(true);
   }
@@ -2538,8 +2547,10 @@ export default function Home() {
       }
       const narrative = ensureAcademicComparisonsInNarrative(narrativesForBatches.join("\n\n"), field.id === "res-acad" ? requiredAcademicComparisons(records) : []);
       if (!narrative) throw new Error("A IA não devolveu uma narrativa utilizável.");
+      const synchronizedEvidence = markEvidenceAsTriangulated(evidence, new Set([field.id]));
+      setEvidence(synchronizedEvidence);
       setNarratives((current) => ({ ...current, [field.id]: narrative }));
-      setTriangulationRevisions((current) => ({ ...current, [field.id]: evidenceRevision(evidence, field.id) }));
+      setTriangulationRevisions((current) => ({ ...current, [field.id]: evidenceRevision(synchronizedEvidence, field.id) }));
       setChangesPending(true);
       setAiTriangulationStatus(`${field.section}: todas as ${records.length} evidências foram trianguladas em ${batches.length} lote(s). Reveja e valide o texto.`);
     } catch (error) {
@@ -2607,6 +2618,9 @@ export default function Home() {
       }, {}));
       const usable = mergedReceived.filter((item: any) => activeFields.some((field) => field.id === String(item?.fieldId)) && String(item?.narrative || "").trim());
       if (!usable.length) throw new Error("A IA não devolveu narrativas utilizáveis.");
+      const completedFieldIds = new Set(usable.map((item: any) => String(item.fieldId)));
+      const synchronizedEvidence = markEvidenceAsTriangulated(evidence, completedFieldIds);
+      setEvidence(synchronizedEvidence);
       setNarratives((current) => ({
         ...current,
         ...Object.fromEntries(usable.map((item: any) => {
@@ -2617,7 +2631,7 @@ export default function Home() {
       }));
       setTriangulationRevisions((current) => ({
         ...current,
-        ...Object.fromEntries(usable.map((item: any) => [String(item.fieldId), evidenceRevision(evidence, String(item.fieldId))])),
+        ...Object.fromEntries(usable.map((item: any) => [String(item.fieldId), evidenceRevision(synchronizedEvidence, String(item.fieldId))])),
       }));
       setChangesPending(true);
       const missing = activeFields.length - usable.length;
@@ -2634,15 +2648,17 @@ export default function Home() {
   async function improveReportWithAi() {
     const completedNarratives = preserveReviewedNarratives(evidence, narratives, indicatorApplicability);
     const comparisons = requiredAcademicComparisons(evidence);
-    if (evidence.some((record) => record.fieldId === "res-acad" && record.validated) && triangulationRevisions["res-acad"] !== evidenceRevision(evidence, "res-acad")) {
-      setExportStatus("O relatório não foi aprimorado: a triangulação de 5.4.1 está desatualizada após a entrada de novas evidências.");
-      setView("triangulacao");
-      return;
-    }
-    if (comparisons.some((comparison) => !containsAcademicComparison(narratives["res-acad"] || "", comparison))) {
-      setExportStatus("O relatório não foi aprimorado: as análises estatísticas de 5.4.1 têm de passar primeiro pela triangulação.");
-      setView("triangulacao");
-      return;
+    const academicRecords = evidence.filter((record) => record.fieldId === "res-acad" && record.validated);
+    const academicRevision = evidenceRevision(evidence, "res-acad");
+    const academicOutdated = academicRecords.length > 0 && triangulationRevisions["res-acad"] !== academicRevision;
+    const academicComparisonsMissing = comparisons.some((comparison) => !containsAcademicComparison(completedNarratives["res-acad"] || "", comparison));
+    if (academicOutdated || academicComparisonsMissing) {
+      completedNarratives["res-acad"] = ensureAcademicComparisonsInNarrative(
+        completedNarratives["res-acad"] || composeFieldNarrative(getField("res-acad"), academicRecords, indicatorApplicability),
+        comparisons,
+      );
+      setNarratives((current) => ({ ...current, "res-acad": completedNarratives["res-acad"] }));
+      setTriangulationRevisions((current) => ({ ...current, "res-acad": academicRevision }));
     }
     const localDraft = ensureAcademicComparisonsInReport(report.trim() || buildReport(evidence, completedNarratives, indicatorApplicability), comparisons);
     const usable = fields.filter((field) => completedNarratives[field.id]?.trim()).map((field) => ({
@@ -2655,7 +2671,9 @@ export default function Home() {
     }
     if (!window.confirm("Esta operação utiliza IA e faz 1 chamada à API para aprimorar a redação integral do relatório. Pretende continuar?")) return;
     setAiReportWriting(true);
-    setExportStatus("Aprimoramento do relatório por IA em curso · 1 chamada…");
+    setExportStatus(academicOutdated || academicComparisonsMissing
+      ? "5.4.1 foi sincronizado com as evidências validadas. Aprimoramento do relatório por IA em curso · 1 chamada…"
+      : "Aprimoramento do relatório por IA em curso · 1 chamada…");
     try {
       const response = await fetch("/api/write-report", {
         method: "POST",

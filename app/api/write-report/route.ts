@@ -18,6 +18,34 @@ function outputText(data: any): string {
     .filter((item: any) => item?.type === "output_text").map((item: any) => item?.text ?? "").join("");
 }
 
+const acronymExpansions: Array<[string, string]> = [
+  ["TEIP", "programa territórios educativos de intervenção prioritária"],
+  ["PASEO", "perfil dos alunos à saída da escolaridade obrigatória"],
+  ["EMAEI", "equipa multidisciplinar de apoio à educação inclusiva"],
+  ["PADDE", "plano de ação para o desenvolvimento digital da escola"],
+  ["EQAVET", "quadro de referência europeu de garantia da qualidade para a educação e formação profissionais"],
+  ["CFAE", "centro de formação de associação de escolas"],
+  ["PAA", "plano anual de atividades"],
+  ["RAA", "relatório de autoavaliação"],
+  ["PE", "projeto educativo"],
+  ["ASE", "ação social escolar"],
+  ["CAA", "centro de apoio à aprendizagem"],
+];
+
+function expandAcronymsOnFirstUse(value: string) {
+  let result = value;
+  acronymExpansions.forEach(([acronym, designation]) => {
+    const expression = new RegExp(`\\b${acronym}\\b`);
+    const match = expression.exec(result);
+    if (!match || match.index === undefined) return;
+    const prefix = result.slice(Math.max(0, match.index - designation.length - 12), match.index).toLocaleLowerCase("pt-PT");
+    if (!prefix.includes(designation.toLocaleLowerCase("pt-PT"))) {
+      result = `${result.slice(0, match.index)}${designation} (${acronym})${result.slice(match.index + acronym.length)}`;
+    }
+  });
+  return result;
+}
+
 export async function POST(request: NextRequest) {
   try {
     const apiKey = process.env.OPENAI_API_KEY?.trim();
@@ -44,7 +72,9 @@ ${localDraft}
 
 REGRAS:
 - Preserve rigorosamente a organização pelos domínios e campos 5.1.1 a 5.4.3 presentes na minuta.
-- Redija texto contínuo, claro, conciso e avaliativo, sem listas de evidências.
+- Redija ao estilo dos relatórios da IGEC: texto contínuo, denso, sistemático, conciso e avaliativo, sem listas de evidências, sem descrição do funcionamento da plataforma e sem fórmulas metadiscursivas.
+- Em cada campo, organize a redação pela sequência prática ou resultado predominante → evidência convergente → alcance/efeito → limitação materialmente relevante. Não enumere documentos nem repita a mesma ideia sob formulações diferentes.
+- Use, em regra, um a três parágrafos curtos por campo. Evite transformar o relatório numa reprodução da matriz ou da triangulação.
 - Preserve o sentido e as reservas das triangulações; não acrescente factos, causalidade ou classificações.
 - Use o diagnóstico probatório incluído em cada campo para rever as reservas metodológicas.
 - Elimine fórmulas genéricas sobre “representatividade restrita” ou “evidência independente adicional” quando não sejam justificadas pelo diagnóstico.
@@ -56,6 +86,7 @@ REGRAS:
 - Distinga intenção, prática, monitorização, resultado e impacto.
 - No campo 5.4.1 — Resultados académicos, trate os dados do InfoEscolas apenas em leitura comparada entre a escola/agrupamento e a referência nacional, considerando os três últimos anos letivos disponíveis.
 - Em 5.4.1, reporte séries quantitativas anuais apenas para os percursos diretos de sucesso: percentagem de alunos que concluem cada ciclo no tempo esperado (1.º ciclo em quatro anos, 2.º ciclo em dois anos, 3.º ciclo em três anos e, no secundário e profissional, no prazo definido pelo indicador oficial). Para cada ciclo/oferta existente, explicite a comparação com o nacional nos três últimos anos letivos disponíveis e sintetize as oscilações ou a tendência.
+- Em 5.4.1, seja particularmente sintético: apresente cada ciclo ou oferta uma única vez, reúna os três anos numa construção comparativa compacta e conclua com uma leitura global das tendências. Não repita em prosa os mesmos valores, diferenças ou cautelas.
 - Não transcreva para o Relatório séries anuais autónomas relativas a ASE, provas nacionais, retenção/desistência ou outros gráficos. Essas evidências podem sustentar a interpretação triangulada e referências qualitativas sintéticas, mas não devem avolumar o texto com novos inventários de valores.
 - Preserve na narrativa de 5.4.1 todos os factos estatísticos já integrados na respetiva triangulação. Pode melhorar a sintaxe e a fluidez, mas não pode omitir nem alterar o indicador, os anos letivos, os valores da escola e do nacional, as diferenças em pontos percentuais, a evolução temporal ou a cautela interpretativa. Não faça uma interpretação paralela nem contorne a triangulação recebida.
 - Para cada ciclo ou oferta, privilegie exclusivamente, na apresentação quantitativa do Relatório, o indicador de conclusão no tempo esperado (ou a designação oficial equivalente). Não transforme os restantes gráficos do InfoEscolas em séries estatísticas autónomas na narrativa.
@@ -63,6 +94,7 @@ REGRAS:
 - Não apresente perceções isoladas como factos comprovados.
 - Não cite nomes de ficheiros, páginas ou identificadores no corpo do relatório.
 - Evite repetições, generalizações e linguagem promocional.
+- Na primeira utilização de qualquer sigla, escreva primeiro a designação por extenso, em minúsculas, e só depois a sigla em maiúsculas entre parênteses. Nas utilizações seguintes use apenas a sigla.
 - Mantenha a indicação de minuta sujeita a validação humana.
 - Devolva apenas o relatório integral.`;
 
@@ -73,7 +105,7 @@ REGRAS:
         model: process.env.OPENAI_REPORT_MODEL?.trim() || "gpt-5-mini",
         store: false,
         input: prompt,
-        reasoning: { effort: "minimal" },
+        reasoning: { effort: "medium" },
         max_output_tokens: 5_000,
         text: { format: { type: "json_schema", name: "relatorio_aee", strict: true, schema: RESULT_SCHEMA } },
       }),
@@ -84,7 +116,7 @@ REGRAS:
     if (!raw) return NextResponse.json({ ok: false, error: "A IA não devolveu um relatório utilizável. Não houve repetição automática." }, { status: 502 });
     let result: any;
     try { result = JSON.parse(raw); } catch { return NextResponse.json({ ok: false, error: "A resposta ficou incompleta. A minuta local foi preservada e não houve repetição automática paga." }, { status: 502 }); }
-    return NextResponse.json({ ok: true, report: String(result?.relatorio || "").trim() });
+    return NextResponse.json({ ok: true, report: expandAcronymsOnFirstUse(String(result?.relatorio || "").trim()) });
   } catch (error) {
     return NextResponse.json({ ok: false, error: error instanceof Error ? error.message : "Erro interno na redação do relatório." }, { status: 500 });
   }

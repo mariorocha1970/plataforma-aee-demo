@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { normalizeAcronyms } from "../../text-normalization";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -129,7 +130,7 @@ REGRAS:
     const fieldIds = new Set(compactFields.map((field: any) => field.id));
     const narratives = (Array.isArray(result?.narrativas) ? result.narrativas : [])
       .filter((item: any) => fieldIds.has(String(item?.campoId)) && String(item?.narrativa || "").trim())
-      .map((item: any) => ({ fieldId: String(item.campoId), narrative: String(item.narrativa).trim() }));
+      .map((item: any) => ({ fieldId: String(item.campoId), narrative: normalizeAcronyms(String(item.narrativa).trim()) }));
     if (!narratives.length) return NextResponse.json({ ok: false, error: "A IA não devolveu narrativas válidas." }, { status: 502 });
     return NextResponse.json({ ok: true, narratives });
   } catch (error) {

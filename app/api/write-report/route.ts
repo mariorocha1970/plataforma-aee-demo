@@ -30,6 +30,13 @@ export async function POST(request: NextRequest) {
     const localDraft = String(body?.localDraft || "").slice(0, 40_000);
     const mandatoryAcademicComparisons = (Array.isArray(body?.mandatoryAcademicComparisons) ? body.mandatoryAcademicComparisons : [])
       .map((item: any) => String(item || "").slice(0, 2_500)).filter(Boolean).slice(0, 12);
+    const academicEvidence = (Array.isArray(body?.academicEvidence) ? body.academicEvidence : []).slice(0, 120).map((item: any) => ({
+      claim: String(item?.claim || "").slice(0, 900),
+      sourceType: String(item?.sourceType || ""),
+      status: String(item?.status || ""),
+      strength: String(item?.strength || ""),
+      indicators: Array.isArray(item?.indicators) ? item.indicators.map(String).slice(0, 12) : [],
+    }));
     const prompt = `Aprimore a minuta de um relatório de Avaliação Externa das Escolas, em português europeu, relativa a ${schoolName}.
 
 TRIANGULAÇÕES REVISTAS POR CAMPO:
@@ -40,6 +47,9 @@ MINUTA LOCAL A PRESERVAR COMO ESTRUTURA:
 
 FACTOS ESTATÍSTICOS JÁ INTEGRADOS NA TRIANGULAÇÃO DE 5.4.1 E A PRESERVAR:
 ${JSON.stringify(mandatoryAcademicComparisons)}
+
+EVIDÊNCIAS ACADÉMICAS CONCRETAS DA MATRIZ (usar para recuperar ciclos, ofertas, provas, equidade e dados internos que a síntese da triangulação possa ter abreviado):
+${JSON.stringify(academicEvidence)}
 ${localDraft}
 ---
 
@@ -59,6 +69,8 @@ REGRAS:
 - Distinga intenção, prática, monitorização, resultado e impacto.
 - No campo 5.4.1 — Resultados académicos, trate os dados do InfoEscolas apenas em leitura comparada entre a escola/agrupamento e a referência nacional, considerando os três últimos anos letivos disponíveis.
 - Em 5.4.1, redija dois a quatro parágrafos curtos, ao estilo IGEC, com uma apreciação global do triénio e uma leitura articulada do 1.º, 2.º e 3.º ciclos, dos cursos científico-humanísticos e do ensino profissional, quando existam dados. Não produza um inventário de indicadores.
+- Leia todas as EVIDÊNCIAS ACADÉMICAS CONCRETAS antes de redigir 5.4.1. Não omita um nível de ensino que tenha evidência pertinente apenas porque não foi desenvolvido na síntese da triangulação.
+- Estruture 5.4.1 em três movimentos: ensino básico (1.º, 2.º e 3.º ciclos); ensino secundário e profissional; provas, equidade, retenção e apreciação global. Suprima apenas o movimento que não tenha qualquer evidência concreta.
 - Para os percursos diretos de sucesso, privilegie a tendência trienal e use, em regra, apenas o valor mais recente da escola e da referência nacional para concretizar a apreciação. Só acrescente outro valor quando seja indispensável para demonstrar uma oscilação material.
 - Os dados dos alunos beneficiários da ação social escolar podem sustentar a apreciação da equidade e completar a leitura do 1.º e 2.º ciclos, mas devem ser integrados em prosa, sem séries anuais autónomas.
 - Não transcreva para o Relatório séries anuais autónomas relativas a ASE, provas nacionais, retenção/desistência ou outros gráficos. Essas evidências podem sustentar a interpretação triangulada e referências qualitativas sintéticas, mas não devem avolumar o texto com novos inventários de valores.
@@ -66,6 +78,7 @@ REGRAS:
 - Para cada ciclo ou oferta, privilegie exclusivamente, na apresentação quantitativa do Relatório, o indicador de conclusão no tempo esperado (ou a designação oficial equivalente). Não transforme os restantes gráficos do InfoEscolas em séries estatísticas autónomas na narrativa.
 - Nunca apresente um valor isolado da escola como comparação. Sempre que indicar um valor quantitativo, associe-lhe a referência adequada ou enquadre-o expressamente como dado interno. Se faltar uma série, não invente a comparação nem transforme a lacuna num parágrafo autónomo.
 - É proibido terminar 5.4.1 com parágrafos adicionais iniciados por «No indicador» ou repetir, depois da síntese avaliativa, as séries estatísticas que a sustentam.
+- Não escreva no relatório expressões sobre «qualidade forte», «triangulação confirmada», «cobertura de x indicadores», «base probatória» ou funcionamento metodológico da plataforma. Converta essas informações em apreciação substantiva dos resultados.
 - Não apresente perceções isoladas como factos comprovados.
 - Não cite nomes de ficheiros, páginas ou identificadores no corpo do relatório.
 - Evite repetições, generalizações e linguagem promocional.

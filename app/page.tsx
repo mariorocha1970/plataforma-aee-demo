@@ -3,8 +3,8 @@
 import { ChangeEvent, useEffect, useMemo, useState } from "react";
 import { normalizeAcronyms } from "./text-normalization";
 
-const APP_BUILD = "2026.11.10-v8";
-const ANALYSIS_ENGINE_VERSION = 8;
+const APP_BUILD = "2026.11.10-v10";
+const ANALYSIS_ENGINE_VERSION = 10;
 
 type View = "visao" | "documentos" | "privacidade" | "analise" | "estatistica" | "evidencias" | "entrevistas" | "triangulacao" | "relatorio" | "conclusoes";
 type EvidenceStatus = "Confirmada" | "Por triangular" | "Contraditória" | "Ausente";
@@ -25,6 +25,9 @@ type DomainConclusion = {
   improvements: string[];
   rating: Rating;
   rationale: string;
+  ratingLocked?: boolean;
+  evidenceSupport?: "Sustentada" | "Parcialmente sustentada" | "Não sustentada" | "Por validar";
+  supportWarning?: string;
 };
 
 type Field = {
@@ -1734,7 +1737,7 @@ export default function Home() {
           setTriangulationRevisions({});
           setConclusions([]);
           setChangesPending(true);
-          setBackupStatus("Motor de análise atualizado para v8. As evidências foram preservadas; refaça a triangulação, o relatório e as menções.");
+          setBackupStatus("Motor de análise atualizado para v10. As evidências foram preservadas; refaça a triangulação, o relatório e as menções.");
           window.localStorage.setItem("aee-piloto-v2", JSON.stringify({ ...data, analysisEngineVersion: ANALYSIS_ENGINE_VERSION, report: "", narratives: {}, triangulationRevisions: {}, conclusions: [] }));
         }
         if (data.indicatorApplicability && typeof data.indicatorApplicability === "object") setIndicatorApplicability(data.indicatorApplicability);
@@ -1862,7 +1865,7 @@ export default function Home() {
       setPreparedDocuments([]);
       setChangesPending(false);
       window.localStorage.setItem("aee-piloto-v2", JSON.stringify({ ...data, analysisEngineVersion: ANALYSIS_ENGINE_VERSION, narratives: generatedContentIsCurrent ? data.narratives : {}, triangulationRevisions: generatedContentIsCurrent ? data.triangulationRevisions : {}, report: generatedContentIsCurrent ? data.report : "", conclusions: generatedContentIsCurrent ? data.conclusions : [] }));
-      setBackupStatus(generatedContentIsCurrent ? "Cópia importada e guardada neste navegador." : "Cópia anterior importada. As evidências foram preservadas; triangulação, relatório e menções devem ser recalculados na v8.");
+      setBackupStatus(generatedContentIsCurrent ? "Cópia importada e guardada neste navegador." : "Cópia anterior importada. As evidências foram preservadas; triangulação, relatório e menções devem ser recalculados na v10.");
       window.setTimeout(() => setBackupStatus(""), 4000);
     } catch {
       setBackupStatus("Não foi possível importar: ficheiro inválido ou danificado.");
@@ -2907,7 +2910,19 @@ export default function Home() {
       const response = await fetch("/api/write-report", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ schoolName, narratives: usable, localDraft, mandatoryAcademicComparisons: comparisons }),
+        body: JSON.stringify({
+          schoolName,
+          narratives: usable,
+          localDraft,
+          mandatoryAcademicComparisons: comparisons,
+          academicEvidence: academicRecords.map((record) => ({
+            claim: record.claim.slice(0, 900),
+            sourceType: record.sourceType,
+            status: record.status,
+            strength: record.strength,
+            indicators: (record.indicatorIds ?? []).slice(0, 12),
+          })).slice(0, 120),
+        }),
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok || payload?.ok === false) throw new Error(payload?.error || `O servidor devolveu o estado ${response.status}.`);
@@ -2972,6 +2987,7 @@ export default function Home() {
     const base = conclusions.length ? conclusions : localDomainConclusions(completedNarratives, evidence);
     const payloadDomains = domainOrder.map((domain) => ({
       domain,
+      assessorRating: base.find((item) => item.domain === domain)?.ratingLocked ? base.find((item) => item.domain === domain)?.rating : null,
       fields: fields.filter((field) => field.domain === domain).map((field) => {
         const records = evidence.filter((record) => record.validated && record.fieldId === field.id);
         const narrative = completedNarratives[field.id]?.trim() || composeFieldNarrative(field, records, indicatorApplicability);
@@ -3009,7 +3025,10 @@ export default function Home() {
       const payload = await response.json().catch(() => ({}));
       if (!response.ok || payload?.ok === false) throw new Error(payload?.error || `O servidor devolveu o estado ${response.status}.`);
       if (!Array.isArray(payload?.conclusions) || payload.conclusions.length !== domainOrder.length) throw new Error("A IA não devolveu os quatro domínios esperados.");
-      setConclusions(payload.conclusions);
+      setConclusions(payload.conclusions.map((item: DomainConclusion) => {
+        const previous = base.find((candidate) => candidate.domain === item.domain);
+        return previous?.ratingLocked ? { ...item, rating: previous.rating, ratingLocked: true } : item;
+      }));
       setChangesPending(true);
       setConclusionsStatus("Proposta revista numa única chamada. Confirme a consistência com o relatório antes de validar.");
     } catch (error) {
@@ -3460,7 +3479,9 @@ export default function Home() {
             {conclusions.map((item) => <article key={item.domain}>
               <div className="tri-top"><span>{reportHeading(item.domain).split(" — ")[0]}</span><span className="strength moderada">{item.rating}</span></div>
               <h3>{item.domain}</h3>
-              <label>Menção proposta<select value={item.rating} onChange={(event) => updateConclusion(item.domain, { rating: event.target.value as Rating })}><option>Por definir</option><option>Excelente</option><option>Muito bom</option><option>Bom</option><option>Suficiente</option><option>Insuficiente</option></select></label>
+              <label>Menção proposta<select value={item.rating} onChange={(event) => updateConclusion(item.domain, { rating: event.target.value as Rating, ratingLocked: true, evidenceSupport: "Por validar", supportWarning: "Repita a revisão por IA para verificar a sustentação probatória da menção fixada pela equipa." })}><option>Por definir</option><option>Excelente</option><option>Muito bom</option><option>Bom</option><option>Suficiente</option><option>Insuficiente</option></select></label>
+              <label className="checkbox-line"><input type="checkbox" checked={Boolean(item.ratingLocked)} onChange={(event) => updateConclusion(item.domain, { ratingLocked: event.target.checked })} /> Fixar como decisão da equipa</label>
+              {item.evidenceSupport && <div className="statistics-status"><strong>Validação probatória:</strong> {item.evidenceSupport}.{item.supportWarning ? ` ${item.supportWarning}` : ""}</div>}
               <label className="narrative-editor">Fundamentação da menção<textarea value={item.rationale} onChange={(event) => updateConclusion(item.domain, { rationale: event.target.value })} /></label>
               <label className="narrative-editor">Pontos fortes — um por linha<textarea value={item.strengths.join("\n")} onChange={(event) => updateConclusion(item.domain, { strengths: event.target.value.split("\n").map((value) => value.trim()).filter(Boolean) })} /></label>
               <label className="narrative-editor">Áreas de melhoria — uma por linha<textarea value={item.improvements.join("\n")} onChange={(event) => updateConclusion(item.domain, { improvements: event.target.value.split("\n").map((value) => value.trim()).filter(Boolean) })} /></label>

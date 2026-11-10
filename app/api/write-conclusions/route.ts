@@ -39,10 +39,12 @@ export async function POST(request: NextRequest) {
     const domains = Array.isArray(body?.domains) ? body.domains.slice(0, 4) : [];
     if (domains.length !== 4) return NextResponse.json({ ok: false, error: "São necessários os quatro domínios e respetivas triangulações." }, { status: 400 });
     const schoolName = String(body?.schoolName || "a organização escolar").slice(0, 180);
+    const domainsJson = JSON.stringify(domains);
+    if (domainsJson.length > 70_000) return NextResponse.json({ ok: false, error: "O perfil probatório excede o limite seguro. Reduza ou consolide as evidências antes de repetir a síntese." }, { status: 413 });
     const prompt = `Formule a síntese conclusiva de uma Avaliação Externa das Escolas, em português europeu, relativa a ${schoolName}.
 
 DADOS POR DOMÍNIO (narrativas trianguladas e perfil probatório detalhado por campo):
-${JSON.stringify(domains).slice(0, 48_000)}
+${domainsJson}
 
 ESCALA:
 - Excelente: predomínio de pontos fortes em todos os campos, com práticas inovadoras e resultados notáveis generalizados e sustentados, sem áreas que careçam de melhorias significativas.
@@ -56,6 +58,8 @@ REGRAS:
 - Pontos fortes e áreas de melhoria são juízos avaliativos concisos, autónomos e coerentes com o texto do relatório; não são listas de atividades nem transcrições de evidências.
 - Formule apenas o que esteja sustentado pelas narrativas fornecidas. Não invente práticas, inovação, resultados, impacto ou generalização.
 - Reanalise cada domínio de raiz. Não use uma proposta anterior como âncora e não presuma que a menção deve descer ou subir.
+- Todos os quatro domínios foram incluídos integralmente. Nunca afirme que as narrativas ou o perfil probatório não contêm informação quando o campo apresenta count superior a zero ou uma narrativa não vazia. Nessa situação, analise expressamente a informação fornecida e identifique apenas a limitação concreta que subsista.
+- Percorra todos os campos de cada domínio antes de formular a menção. A fundamentação deve refletir o padrão global do domínio e não uma única reserva ou um único campo.
 - Pondere a totalidade das evidências concretas incluídas no perfil probatório: convergência, independência das fontes, robustez, abrangência dos campos, generalização das práticas e demonstração de resultados ou impacto.
 - Distinga ausência de evidência de evidência negativa. A falta de uma meta quantificada, de um dado de impacto ou de uma fonte adicional é uma limitação com alcance próprio; não deve, isoladamente, anular práticas consolidadas, resultados comprovados ou o predomínio de evidências positivas noutros referentes.
 - Uma frase que apresente simultaneamente uma prática positiva e uma reserva deve ser ponderada nas duas componentes. Não classifique toda a frase como negativa apenas por conter «mas», «ausência», «limita», «carece» ou expressão equivalente.
@@ -66,7 +70,8 @@ REGRAS:
 - Não cite ficheiros, páginas, quantidades de fontes ou mecanismos internos da plataforma.
 - Se a cobertura ou robustez forem insuficientes, use «Por definir» e explique objetivamente o que impede a classificação.
 - «Excelente» exige evidência expressa de inovação, resultados notáveis generalizados e sustentados e ausência de melhorias significativas. «Muito bom» exige predomínio em todos os campos e resultados notáveis generalizados.
-- A fundamentação deve explicar em duas ou três frases a relação entre o padrão dos juízos e a menção proposta.`;
+- A fundamentação deve explicar em duas ou três frases a relação entre o padrão dos juízos e a menção proposta, mencionando substantivamente os campos abrangidos.
+- Na primeira utilização de qualquer sigla, escreva primeiro a designação por extenso, em minúsculas, e depois a sigla em maiúsculas entre parênteses.`;
 
     const response = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",

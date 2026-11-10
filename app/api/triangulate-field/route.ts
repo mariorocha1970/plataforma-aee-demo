@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { normalizeAcronyms } from "../../text-normalization";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -26,9 +27,11 @@ export async function POST(request: NextRequest) {
     const field = body?.field;
     const diagnostic = body?.diagnostic || {};
     const evidence = Array.isArray(body?.evidence) ? body.evidence.slice(0, 40) : [];
+    const partialNarratives = (Array.isArray(body?.partialNarratives) ? body.partialNarratives : [])
+      .map((item: any) => String(item || "").slice(0, 6_000)).filter(Boolean).slice(0, 20);
     const mandatoryAcademicComparisons = (Array.isArray(body?.mandatoryAcademicComparisons) ? body.mandatoryAcademicComparisons : [])
       .map((item: any) => String(item || "").slice(0, 2_500)).filter(Boolean).slice(0, 12);
-    if (!field?.name || !evidence.length) return NextResponse.json({ ok: false, error: "O campo não contém evidências validadas." }, { status: 400 });
+    if (!field?.name || (!evidence.length && !partialNarratives.length)) return NextResponse.json({ ok: false, error: "O campo não contém evidências validadas nem sínteses parciais para consolidar." }, { status: 400 });
 
     const profiles = new Map((Array.isArray(diagnostic?.evidenceProfiles) ? diagnostic.evidenceProfiles : []).map((item: any) => [Number(item?.evidenceId), item]));
     const compactEvidence = evidence.map((item: any, index: number) => ({
@@ -50,6 +53,9 @@ REFERENTES: ${(Array.isArray(field.referents) ? field.referents : []).join("; ")
 EVIDÊNCIAS VALIDADAS:
 ${JSON.stringify(compactEvidence)}
 
+SÍNTESES PARCIAIS A CONSOLIDAR (quando existam, resultam de lotes que, em conjunto, abrangem todas as evidências do campo):
+${JSON.stringify(partialNarratives)}
+
 DIAGNÓSTICO PROBATÓRIO DO CAMPO:
 ${JSON.stringify(diagnostic)}
 
@@ -58,6 +64,7 @@ ${JSON.stringify(mandatoryAcademicComparisons)}
 
 REGRAS:
 - Cruze semanticamente as fontes; não se limite a enumerá-las.
+- Quando existirem sínteses parciais, produza uma única síntese integrada: confronte os lotes entre si, elimine repetições e preserve todas as convergências, divergências, resultados e limitações materialmente relevantes. Não as concatene nem privilegie apenas o primeiro ou o último lote.
 - Avalie cada evidência na relação com o indicador associado; não atribua força uniforme a uma fonte nem use o número bruto de fontes como medida de robustez.
 - A autoridade institucional da fonte reforça a credibilidade do que ela efetivamente demonstra, mas não cria cobertura automática nem prova a atualidade de evidência histórica.
 - Use evidenceQuality para a qualidade probatória e triangulation como dimensão autónoma. Uma evidência forte pode ter triangulação não realizada sem deixar de ser forte.
@@ -85,7 +92,7 @@ REGRAS:
         model: process.env.OPENAI_TRIANGULATION_MODEL?.trim() || "gpt-5-mini",
         store: false,
         input: prompt,
-        reasoning: { effort: "minimal" },
+        reasoning: { effort: "medium" },
         max_output_tokens: 1_800,
         text: { format: { type: "json_schema", name: "triangulacao_campo_aee", strict: true, schema: RESULT_SCHEMA } },
       }),
@@ -96,7 +103,7 @@ REGRAS:
     if (!raw) return NextResponse.json({ ok: false, error: "A IA não devolveu uma triangulação utilizável. Não houve repetição automática." }, { status: 502 });
     let result: any;
     try { result = JSON.parse(raw); } catch { return NextResponse.json({ ok: false, error: "A resposta ficou incompleta. Não houve repetição automática paga." }, { status: 502 }); }
-    return NextResponse.json({ ok: true, narrative: String(result?.narrativa || "").trim() });
+    return NextResponse.json({ ok: true, narrative: normalizeAcronyms(String(result?.narrativa || "").trim()) });
   } catch (error) {
     return NextResponse.json({ ok: false, error: error instanceof Error ? error.message : "Erro interno na triangulação." }, { status: 500 });
   }

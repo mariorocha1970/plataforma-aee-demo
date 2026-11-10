@@ -3,6 +3,9 @@
 import { ChangeEvent, useEffect, useMemo, useState } from "react";
 import { normalizeAcronyms } from "./text-normalization";
 
+const APP_BUILD = "2026.11.10-v7";
+const ANALYSIS_ENGINE_VERSION = 7;
+
 type View = "visao" | "documentos" | "privacidade" | "analise" | "estatistica" | "evidencias" | "entrevistas" | "triangulacao" | "relatorio" | "conclusoes";
 type EvidenceStatus = "Confirmada" | "Por triangular" | "Contraditória" | "Ausente";
 type Strength = "Forte" | "Moderada" | "Insuficiente";
@@ -1665,6 +1668,7 @@ export default function Home() {
     const timer = window.setTimeout(() => {
       try {
         const data = JSON.parse(stored);
+        const generatedContentIsCurrent = data.analysisEngineVersion === ANALYSIS_ENGINE_VERSION;
         if (Array.isArray(data.evidence)) {
           const analysedSources = Object.keys(data.fileAnalysis ?? {});
           const legacyCandidates = data.documentCandidates ? [] : data.evidence.filter((item: Evidence) => analysedSources.includes(item.source) && item.sourceType === "Documental" && !item.validated && item.status === "Por triangular");
@@ -1681,10 +1685,20 @@ export default function Home() {
         if (typeof data.questionnaireReport === "string") setQuestionnaireReport(data.questionnaireReport);
         if (Array.isArray(data.files)) setFiles(data.files);
         if (data.fileAnalysis && typeof data.fileAnalysis === "object") setFileAnalysis(data.fileAnalysis);
-        if (typeof data.report === "string") setReport(data.report);
-        if (data.narratives && typeof data.narratives === "object") setNarratives(data.narratives);
-        if (data.triangulationRevisions && typeof data.triangulationRevisions === "object") setTriangulationRevisions(data.triangulationRevisions);
-        if (Array.isArray(data.conclusions)) setConclusions(data.conclusions);
+        if (generatedContentIsCurrent) {
+          if (typeof data.report === "string") setReport(data.report);
+          if (data.narratives && typeof data.narratives === "object") setNarratives(data.narratives);
+          if (data.triangulationRevisions && typeof data.triangulationRevisions === "object") setTriangulationRevisions(data.triangulationRevisions);
+          if (Array.isArray(data.conclusions)) setConclusions(data.conclusions);
+        } else {
+          setReport("");
+          setNarratives({});
+          setTriangulationRevisions({});
+          setConclusions([]);
+          setChangesPending(true);
+          setBackupStatus("Motor de análise atualizado para v7. As evidências foram preservadas; refaça a triangulação, o relatório e as menções.");
+          window.localStorage.setItem("aee-piloto-v2", JSON.stringify({ ...data, analysisEngineVersion: ANALYSIS_ENGINE_VERSION, report: "", narratives: {}, triangulationRevisions: {}, conclusions: [] }));
+        }
         if (data.indicatorApplicability && typeof data.indicatorApplicability === "object") setIndicatorApplicability(data.indicatorApplicability);
         if (typeof data.lastUpdated === "string") setLastUpdated(data.lastUpdated);
         if (typeof data.schoolName === "string") setSchoolName(data.schoolName);
@@ -1740,13 +1754,13 @@ export default function Home() {
   const triangulationBatchCount = Math.max(1, Math.ceil(validatedEvidenceCount / 180));
 
   function saveLocal() {
-    window.localStorage.setItem("aee-piloto-v2", JSON.stringify({ schoolName, evidence, documentCandidates, statisticalRecords, statisticalTreatments, questionnaireComments, questionnaireReport, interviews, interviewCandidates, files, fileAnalysis, narratives, triangulationRevisions, report, conclusions, indicatorApplicability, lastUpdated }));
+    window.localStorage.setItem("aee-piloto-v2", JSON.stringify({ analysisEngineVersion: ANALYSIS_ENGINE_VERSION, schoolName, evidence, documentCandidates, statisticalRecords, statisticalTreatments, questionnaireComments, questionnaireReport, interviews, interviewCandidates, files, fileAnalysis, narratives, triangulationRevisions, report, conclusions, indicatorApplicability, lastUpdated }));
     setSaved(true);
     window.setTimeout(() => setSaved(false), 1800);
   }
 
   function exportBackup() {
-    const payload = { schoolName, evidence, documentCandidates, statisticalRecords, statisticalTreatments, questionnaireComments, questionnaireReport, interviews, interviewCandidates, files, fileAnalysis, narratives, triangulationRevisions, report, conclusions, indicatorApplicability, lastUpdated };
+    const payload = { analysisEngineVersion: ANALYSIS_ENGINE_VERSION, schoolName, evidence, documentCandidates, statisticalRecords, statisticalTreatments, questionnaireComments, questionnaireReport, interviews, interviewCandidates, files, fileAnalysis, narratives, triangulationRevisions, report, conclusions, indicatorApplicability, lastUpdated };
     const backup = {
       format: "plataforma-aee-backup",
       version: 1,
@@ -1780,6 +1794,7 @@ export default function Home() {
       const parsed = JSON.parse(await file.text());
       if (parsed?.format !== "plataforma-aee-backup" || parsed?.version !== 1 || !parsed?.payload) throw new Error("Formato inválido");
       const data = parsed.payload;
+      const generatedContentIsCurrent = data.analysisEngineVersion === ANALYSIS_ENGINE_VERSION;
       if (!Array.isArray(data.evidence) || !Array.isArray(data.documentCandidates) || !Array.isArray(data.interviews) || !Array.isArray(data.files) || typeof data.fileAnalysis !== "object" || data.fileAnalysis === null) throw new Error("Conteúdo incompleto");
       if (!window.confirm(`Importar a cópia de segurança de “${data.schoolName || "processo AEE"}”? O trabalho atualmente aberto será substituído.`)) return;
       setSchoolName(typeof data.schoolName === "string" ? data.schoolName : "Nova escola");
@@ -1798,18 +1813,18 @@ export default function Home() {
       setSelectedInterviewCandidates([]);
       setFiles(data.files);
       setFileAnalysis(data.fileAnalysis);
-      setNarratives(data.narratives && typeof data.narratives === "object" ? data.narratives : {});
-      setTriangulationRevisions(data.triangulationRevisions && typeof data.triangulationRevisions === "object" ? data.triangulationRevisions : {});
-      setReport(typeof data.report === "string" ? data.report : "");
-      setConclusions(Array.isArray(data.conclusions) ? data.conclusions : []);
+      setNarratives(generatedContentIsCurrent && data.narratives && typeof data.narratives === "object" ? data.narratives : {});
+      setTriangulationRevisions(generatedContentIsCurrent && data.triangulationRevisions && typeof data.triangulationRevisions === "object" ? data.triangulationRevisions : {});
+      setReport(generatedContentIsCurrent && typeof data.report === "string" ? data.report : "");
+      setConclusions(generatedContentIsCurrent && Array.isArray(data.conclusions) ? data.conclusions : []);
       setIndicatorApplicability(data.indicatorApplicability && typeof data.indicatorApplicability === "object" ? data.indicatorApplicability : {});
       setLastUpdated(typeof data.lastUpdated === "string" ? data.lastUpdated : "");
       setPrivacyReviews([]);
       setPrivacyConfirmed([]);
       setPreparedDocuments([]);
       setChangesPending(false);
-      window.localStorage.setItem("aee-piloto-v2", JSON.stringify(data));
-      setBackupStatus("Cópia importada e guardada neste navegador.");
+      window.localStorage.setItem("aee-piloto-v2", JSON.stringify({ ...data, analysisEngineVersion: ANALYSIS_ENGINE_VERSION, narratives: generatedContentIsCurrent ? data.narratives : {}, triangulationRevisions: generatedContentIsCurrent ? data.triangulationRevisions : {}, report: generatedContentIsCurrent ? data.report : "", conclusions: generatedContentIsCurrent ? data.conclusions : [] }));
+      setBackupStatus(generatedContentIsCurrent ? "Cópia importada e guardada neste navegador." : "Cópia anterior importada. As evidências foram preservadas; triangulação, relatório e menções devem ser recalculados na v7.");
       window.setTimeout(() => setBackupStatus(""), 4000);
     } catch {
       setBackupStatus("Não foi possível importar: ficheiro inválido ou danificado.");
@@ -1835,7 +1850,7 @@ export default function Home() {
     setNarratives(refreshedNarratives);
     setLastUpdated(timestamp);
     setChangesPending(false);
-    window.localStorage.setItem("aee-piloto-v2", JSON.stringify({ schoolName, evidence, documentCandidates, statisticalRecords, statisticalTreatments, questionnaireComments, questionnaireReport, interviews, interviewCandidates, files, fileAnalysis, narratives: refreshedNarratives, triangulationRevisions, report: refreshedReport, conclusions, indicatorApplicability, lastUpdated: timestamp }));
+    window.localStorage.setItem("aee-piloto-v2", JSON.stringify({ analysisEngineVersion: ANALYSIS_ENGINE_VERSION, schoolName, evidence, documentCandidates, statisticalRecords, statisticalTreatments, questionnaireComments, questionnaireReport, interviews, interviewCandidates, files, fileAnalysis, narratives: refreshedNarratives, triangulationRevisions, report: refreshedReport, conclusions, indicatorApplicability, lastUpdated: timestamp }));
     window.setTimeout(() => setUpdating(false), 650);
   }
 
@@ -1857,6 +1872,7 @@ export default function Home() {
       conclusions: [] as DomainConclusion[],
       indicatorApplicability: {} as Record<string, IndicatorApplicability>,
       lastUpdated: "",
+      analysisEngineVersion: ANALYSIS_ENGINE_VERSION,
     };
     setSchoolName(emptyProcess.schoolName);
     setEvidence(emptyProcess.evidence);
@@ -3015,6 +3031,7 @@ export default function Home() {
             </div>
           </div>
           <div className="top-actions">
+            <span className="badge">Versão {APP_BUILD}</span>
             <span className="badge safe">Privado</span>
             <div className={changesPending ? "update-state pending" : "update-state"}>
               <small>{changesPending ? "Triangulação automática" : "Última atualização"}</small>

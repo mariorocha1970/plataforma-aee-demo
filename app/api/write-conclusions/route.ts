@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { normalizeAcronyms } from "../../text-normalization";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -40,7 +41,7 @@ export async function POST(request: NextRequest) {
     if (domains.length !== 4) return NextResponse.json({ ok: false, error: "São necessários os quatro domínios e respetivas triangulações." }, { status: 400 });
     const schoolName = String(body?.schoolName || "a organização escolar").slice(0, 180);
     const domainsJson = JSON.stringify(domains);
-    if (domainsJson.length > 70_000) return NextResponse.json({ ok: false, error: "O perfil probatório excede o limite seguro. Reduza ou consolide as evidências antes de repetir a síntese." }, { status: 413 });
+    if (domainsJson.length > 120_000) return NextResponse.json({ ok: false, error: "O perfil probatório excede o limite seguro. Consolide as evidências excessivamente repetidas antes de repetir a síntese." }, { status: 413 });
     const prompt = `Formule a síntese conclusiva de uma Avaliação Externa das Escolas, em português europeu, relativa a ${schoolName}.
 
 DADOS POR DOMÍNIO (narrativas trianguladas e perfil probatório detalhado por campo):
@@ -60,10 +61,13 @@ REGRAS:
 - Reanalise cada domínio de raiz. Não use uma proposta anterior como âncora e não presuma que a menção deve descer ou subir.
 - Todos os quatro domínios foram incluídos integralmente. Nunca afirme que as narrativas ou o perfil probatório não contêm informação quando o campo apresenta count superior a zero ou uma narrativa não vazia. Nessa situação, analise expressamente a informação fornecida e identifique apenas a limitação concreta que subsista.
 - Percorra todos os campos de cada domínio antes de formular a menção. A fundamentação deve refletir o padrão global do domínio e não uma única reserva ou um único campo.
+- Percorra também todos os indicatorProfiles de cada campo, incluindo os que apresentem evidência positiva robusta. A seleção da menção deve resultar do conjunto dos indicadores aplicáveis; é proibido ignorar um indicador coberto apenas porque não foi referido na narrativa sintética.
+- A ausência de associação de algumas evidências a um indicador é uma questão de organização da matriz, não um sinal negativo sobre o domínio. Considere unlinkedEvidence pelo seu conteúdo, sem a transformar automaticamente em área de melhoria.
 - Pondere a totalidade das evidências concretas incluídas no perfil probatório: convergência, independência das fontes, robustez, abrangência dos campos, generalização das práticas e demonstração de resultados ou impacto.
 - Distinga ausência de evidência de evidência negativa. A falta de uma meta quantificada, de um dado de impacto ou de uma fonte adicional é uma limitação com alcance próprio; não deve, isoladamente, anular práticas consolidadas, resultados comprovados ou o predomínio de evidências positivas noutros referentes.
 - Uma frase que apresente simultaneamente uma prática positiva e uma reserva deve ser ponderada nas duas componentes. Não classifique toda a frase como negativa apenas por conter «mas», «ausência», «limita», «carece» ou expressão equivalente.
 - Uma área de melhoria localizada não determina automaticamente «Suficiente». Verifique se é estrutural, transversal e materialmente capaz de equilibrar ou superar os pontos fortes do domínio.
+- «Suficiente» só é coerente quando os pontos fortes e as fragilidades apresentam peso global comparável, ou quando a evidência de efeitos positivos permanece verdadeiramente indefinida na maioria dos campos. Se os perfis mostrarem predomínio claro de evidência positiva, forte, triangulada e abrangente, escolha «Bom» ou «Muito bom» conforme a generalização e os resultados demonstrados; não use uma reserva localizada para baixar artificialmente a menção.
 - Antes de propor a menção, faça um teste de coerência: a fundamentação deve explicar por que razão a evidência positiva e as limitações conduzem precisamente àquela menção, sem contradizer os pontos fortes e áreas de melhoria listados.
 - Um ponto forte deve evidenciar relevância, abrangência e efeito positivo; uma área de melhoria deve identificar com clareza o processo ou resultado a aperfeiçoar, sem prescrever soluções.
 - Não repita o mesmo conteúdo como ponto forte e área de melhoria.
@@ -91,7 +95,13 @@ REGRAS:
     if (!raw) return NextResponse.json({ ok: false, error: "A IA não devolveu conclusões utilizáveis. Não houve repetição automática." }, { status: 502 });
     let result: any;
     try { result = JSON.parse(raw); } catch { return NextResponse.json({ ok: false, error: "A resposta ficou incompleta. A proposta local foi preservada e não houve repetição automática paga." }, { status: 502 }); }
-    return NextResponse.json({ ok: true, conclusions: result?.conclusions });
+    const conclusions = (Array.isArray(result?.conclusions) ? result.conclusions : []).map((item: any) => ({
+      ...item,
+      strengths: (Array.isArray(item?.strengths) ? item.strengths : []).map((value: any) => normalizeAcronyms(String(value))),
+      improvements: (Array.isArray(item?.improvements) ? item.improvements : []).map((value: any) => normalizeAcronyms(String(value))),
+      rationale: normalizeAcronyms(String(item?.rationale || "")),
+    }));
+    return NextResponse.json({ ok: true, conclusions });
   } catch (error) {
     return NextResponse.json({ ok: false, error: error instanceof Error ? error.message : "Erro interno na síntese conclusiva." }, { status: 500 });
   }

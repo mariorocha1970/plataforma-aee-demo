@@ -41,7 +41,7 @@ export async function POST(request: NextRequest) {
     if (domains.length !== 4) return NextResponse.json({ ok: false, error: "São necessários os quatro domínios e respetivas triangulações." }, { status: 400 });
     const schoolName = String(body?.schoolName || "a organização escolar").slice(0, 180);
     const domainsJson = JSON.stringify(domains);
-    if (domainsJson.length > 120_000) return NextResponse.json({ ok: false, error: "O perfil probatório excede o limite seguro. Consolide as evidências excessivamente repetidas antes de repetir a síntese." }, { status: 413 });
+    if (domainsJson.length > 180_000) return NextResponse.json({ ok: false, error: "O perfil probatório excede o limite seguro. Consolide as evidências excessivamente repetidas antes de repetir a síntese." }, { status: 413 });
     const prompt = `Formule a síntese conclusiva de uma Avaliação Externa das Escolas, em português europeu, relativa a ${schoolName}.
 
 DADOS POR DOMÍNIO (narrativas trianguladas e perfil probatório detalhado por campo):
@@ -62,6 +62,7 @@ REGRAS:
 - Todos os quatro domínios foram incluídos integralmente. Nunca afirme que as narrativas ou o perfil probatório não contêm informação quando o campo apresenta count superior a zero ou uma narrativa não vazia. Nessa situação, analise expressamente a informação fornecida e identifique apenas a limitação concreta que subsista.
 - Percorra todos os campos de cada domínio antes de formular a menção. A fundamentação deve refletir o padrão global do domínio e não uma única reserva ou um único campo.
 - Percorra também todos os indicatorProfiles de cada campo, incluindo os que apresentem evidência positiva robusta. A seleção da menção deve resultar do conjunto dos indicadores aplicáveis; é proibido ignorar um indicador coberto apenas porque não foi referido na narrativa sintética.
+- Cruze os indicatorProfiles com os sourceProfiles. Estes últimos asseguram que evidências documentais, quantitativas e testemunhais, incluindo entrevistas, são consideradas mesmo quando ainda não foram associadas manualmente a um indicador.
 - A ausência de associação de algumas evidências a um indicador é uma questão de organização da matriz, não um sinal negativo sobre o domínio. Considere unlinkedEvidence pelo seu conteúdo, sem a transformar automaticamente em área de melhoria.
 - Pondere a totalidade das evidências concretas incluídas no perfil probatório: convergência, independência das fontes, robustez, abrangência dos campos, generalização das práticas e demonstração de resultados ou impacto.
 - Distinga ausência de evidência de evidência negativa. A falta de uma meta quantificada, de um dado de impacto ou de uma fonte adicional é uma limitação com alcance próprio; não deve, isoladamente, anular práticas consolidadas, resultados comprovados ou o predomínio de evidências positivas noutros referentes.
@@ -69,6 +70,8 @@ REGRAS:
 - Uma área de melhoria localizada não determina automaticamente «Suficiente». Verifique se é estrutural, transversal e materialmente capaz de equilibrar ou superar os pontos fortes do domínio.
 - «Suficiente» só é coerente quando os pontos fortes e as fragilidades apresentam peso global comparável, ou quando a evidência de efeitos positivos permanece verdadeiramente indefinida na maioria dos campos. Se os perfis mostrarem predomínio claro de evidência positiva, forte, triangulada e abrangente, escolha «Bom» ou «Muito bom» conforme a generalização e os resultados demonstrados; não use uma reserva localizada para baixar artificialmente a menção.
 - Antes de propor a menção, faça um teste de coerência: a fundamentação deve explicar por que razão a evidência positiva e as limitações conduzem precisamente àquela menção, sem contradizer os pontos fortes e áreas de melhoria listados.
+- Faça internamente uma apreciação campo a campo antes da classificação global: predomínio positivo/negativo, força, triangulação, generalização e resultados. Só depois agregue o domínio. Não exponha cálculos, mas assegure que nenhum campo ou tipo de fonte fica por ler.
+- Se propuser «Suficiente», identifique na fundamentação quais são as fragilidades de peso comparável aos pontos fortes e em que campos ocorrem. Uma fundamentação que apenas invoque falta de metas, dados de impacto ou uma reserva metodológica localizada é incompatível com «Suficiente» quando as práticas e resultados positivos são generalizados.
 - Um ponto forte deve evidenciar relevância, abrangência e efeito positivo; uma área de melhoria deve identificar com clareza o processo ou resultado a aperfeiçoar, sem prescrever soluções.
 - Não repita o mesmo conteúdo como ponto forte e área de melhoria.
 - Não cite ficheiros, páginas, quantidades de fontes ou mecanismos internos da plataforma.
@@ -84,7 +87,7 @@ REGRAS:
         model: process.env.OPENAI_CONCLUSIONS_MODEL?.trim() || "gpt-5-mini",
         store: false,
         input: prompt,
-        reasoning: { effort: "medium" },
+        reasoning: { effort: "high" },
         max_output_tokens: 4_500,
         text: { format: { type: "json_schema", name: "conclusoes_aee", strict: true, schema: RESULT_SCHEMA } },
       }),

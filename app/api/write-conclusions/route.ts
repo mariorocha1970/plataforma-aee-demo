@@ -14,8 +14,10 @@ const conclusion = {
     improvements: { type: "array", items: { type: "string" }, maxItems: 6 },
     rating: { type: "string", enum: ["Excelente", "Muito bom", "Bom", "Suficiente", "Insuficiente", "Por definir"] },
     rationale: { type: "string" },
+    evidenceSupport: { type: "string", enum: ["Sustentada", "Parcialmente sustentada", "Não sustentada"] },
+    supportWarning: { type: "string" },
   },
-  required: ["domain", "strengths", "improvements", "rating", "rationale"],
+  required: ["domain", "strengths", "improvements", "rating", "rationale", "evidenceSupport", "supportWarning"],
 };
 
 const RESULT_SCHEMA = {
@@ -34,6 +36,7 @@ function outputText(data: any): string {
 
 function enforceRatingConsistency(conclusions: any[], domains: any[]) {
   return conclusions.map((item: any) => {
+    if (item?.ratingLocked) return item;
     if (item?.rating !== "Suficiente") return item;
     const domain = domains.find((candidate: any) => String(candidate?.domain) === String(item?.domain));
     const profiles = Array.isArray(domain?.evidenceProfile) ? domain.evidenceProfile : [];
@@ -83,6 +86,10 @@ ESCALA:
 
 REGRAS:
 - Devolva exatamente os quatro domínios e preserve a respetiva designação oficial.
+- Quando um domínio inclua assessorRating, essa menção foi fixada pela equipa de avaliação: preserve-a rigorosamente, mas faça uma validação probatória independente. Nunca invente ou selecione apenas evidência favorável para a justificar.
+- Para todas as menções, preencha evidenceSupport: «Sustentada» quando os critérios da escala estiverem claramente demonstrados; «Parcialmente sustentada» quando houver base relevante, mas subsistirem lacunas materiais; «Não sustentada» quando a menção contrariar o padrão probatório ou exceder o que as evidências permitem concluir.
+- Em supportWarning, explique de modo conciso a lacuna ou contradição quando a sustentação não for plena. Se for «Sustentada», devolva uma cadeia vazia.
+- Se uma menção fixada não estiver sustentada, mantenha-a como decisão da equipa, mas não produza uma fundamentação fictícia. A rationale deve distinguir a decisão assumida da limitação probatória e indicar objetivamente o que impede a sua validação plena.
 - Pontos fortes e áreas de melhoria são juízos avaliativos concisos, autónomos e coerentes com o texto do relatório; não são listas de atividades nem transcrições de evidências.
 - Formule apenas o que esteja sustentado pelas narrativas fornecidas. Não invente práticas, inovação, resultados, impacto ou generalização.
 - Reanalise cada domínio de raiz. Não use uma proposta anterior como âncora e não presuma que a menção deve descer ou subir.
@@ -126,12 +133,18 @@ REGRAS:
     if (!raw) return NextResponse.json({ ok: false, error: "A IA não devolveu conclusões utilizáveis. Não houve repetição automática." }, { status: 502 });
     let result: any;
     try { result = JSON.parse(raw); } catch { return NextResponse.json({ ok: false, error: "A resposta ficou incompleta. A proposta local foi preservada e não houve repetição automática paga." }, { status: 502 }); }
-    const conclusions = enforceRatingConsistency((Array.isArray(result?.conclusions) ? result.conclusions : []).map((item: any) => ({
+    const conclusions = enforceRatingConsistency((Array.isArray(result?.conclusions) ? result.conclusions : []).map((item: any) => {
+      const sourceDomain = domains.find((domain: any) => String(domain?.domain) === String(item?.domain));
+      return {
       ...item,
+      rating: sourceDomain?.assessorRating || item?.rating,
+      ratingLocked: Boolean(sourceDomain?.assessorRating),
+      evidenceSupport: item?.evidenceSupport,
+      supportWarning: String(item?.supportWarning || ""),
       strengths: (Array.isArray(item?.strengths) ? item.strengths : []).map((value: any) => normalizeAcronyms(String(value))),
       improvements: (Array.isArray(item?.improvements) ? item.improvements : []).map((value: any) => normalizeAcronyms(String(value))),
       rationale: normalizeAcronyms(String(item?.rationale || "")),
-    })), domains);
+    }; }), domains);
     return NextResponse.json({ ok: true, conclusions });
   } catch (error) {
     return NextResponse.json({ ok: false, error: error instanceof Error ? error.message : "Erro interno na síntese conclusiva." }, { status: 500 });

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { normalizeAcronyms } from "../../text-normalization";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -16,34 +17,6 @@ function outputText(data: any): string {
   if (!Array.isArray(data?.output)) return "";
   return data.output.flatMap((item: any) => Array.isArray(item?.content) ? item.content : [])
     .filter((item: any) => item?.type === "output_text").map((item: any) => item?.text ?? "").join("");
-}
-
-const acronymExpansions: Array<[string, string]> = [
-  ["TEIP", "programa territórios educativos de intervenção prioritária"],
-  ["PASEO", "perfil dos alunos à saída da escolaridade obrigatória"],
-  ["EMAEI", "equipa multidisciplinar de apoio à educação inclusiva"],
-  ["PADDE", "plano de ação para o desenvolvimento digital da escola"],
-  ["EQAVET", "quadro de referência europeu de garantia da qualidade para a educação e formação profissionais"],
-  ["CFAE", "centro de formação de associação de escolas"],
-  ["PAA", "plano anual de atividades"],
-  ["RAA", "relatório de autoavaliação"],
-  ["PE", "projeto educativo"],
-  ["ASE", "ação social escolar"],
-  ["CAA", "centro de apoio à aprendizagem"],
-];
-
-function expandAcronymsOnFirstUse(value: string) {
-  let result = value;
-  acronymExpansions.forEach(([acronym, designation]) => {
-    const expression = new RegExp(`\\b${acronym}\\b`);
-    const match = expression.exec(result);
-    if (!match || match.index === undefined) return;
-    const prefix = result.slice(Math.max(0, match.index - designation.length - 12), match.index).toLocaleLowerCase("pt-PT");
-    if (!prefix.includes(designation.toLocaleLowerCase("pt-PT"))) {
-      result = `${result.slice(0, match.index)}${designation} (${acronym})${result.slice(match.index + acronym.length)}`;
-    }
-  });
-  return result;
 }
 
 export async function POST(request: NextRequest) {
@@ -116,7 +89,7 @@ REGRAS:
     if (!raw) return NextResponse.json({ ok: false, error: "A IA não devolveu um relatório utilizável. Não houve repetição automática." }, { status: 502 });
     let result: any;
     try { result = JSON.parse(raw); } catch { return NextResponse.json({ ok: false, error: "A resposta ficou incompleta. A minuta local foi preservada e não houve repetição automática paga." }, { status: 502 }); }
-    return NextResponse.json({ ok: true, report: expandAcronymsOnFirstUse(String(result?.relatorio || "").trim()) });
+    return NextResponse.json({ ok: true, report: normalizeAcronyms(String(result?.relatorio || "").trim()) });
   } catch (error) {
     return NextResponse.json({ ok: false, error: error instanceof Error ? error.message : "Erro interno na redação do relatório." }, { status: 500 });
   }

@@ -1,6 +1,7 @@
 "use client";
 
 import { ChangeEvent, useEffect, useMemo, useState } from "react";
+import { normalizeAcronyms } from "./text-normalization";
 
 type View = "visao" | "documentos" | "privacidade" | "analise" | "estatistica" | "evidencias" | "entrevistas" | "triangulacao" | "relatorio" | "conclusoes";
 type EvidenceStatus = "Confirmada" | "Por triangular" | "Contraditória" | "Ausente";
@@ -1289,35 +1290,42 @@ function buildReport(evidence: Evidence[], narratives: Record<string, string> = 
       const records = evidence.filter((record) => record.fieldId === field.id && record.validated);
       const baseNarrative = narratives[field.id]?.trim() || composeFieldNarrative(field, records, applicability);
       const narrative = field.id === "res-acad"
-        ? ensureAcademicComparisonsInNarrative(baseNarrative, academicComparisons)
+        ? academicNarrativeForReport(baseNarrative, academicComparisons)
         : baseNarrative;
       lines.push(`${field.section}. ${field.name}`, "", completeSentence(narrative), "");
     });
   });
   lines.push("NOTA DE CONTROLO", "A redação distingue evidência, inferência e juízo. A validação final, a seleção dos pontos fortes e das áreas de melhoria pertencem à equipa de avaliação.");
-  return lines.join("\n");
+  return normalizeAcronyms(lines.join("\n"));
 }
 
 function isDirectCompletionComparison(value: string) {
   const normalized = normalizeText(value);
-  if (/\b(?:ase|acao social escolar|provas? nacionais?|sem retencoes|retencao|desistencia)\b/.test(normalized)) return false;
+  if (/\b(?:ase|acao social escolar|provas? nacionais?|sem retencoes|retencao|desistencia|por curso)\b/.test(normalized)) return false;
   return /percentagem de alunos.*(?:concluem|concluiram|conclusao).*(?:ciclo|ensino secundario|curso profissional|curso).*(?:em|no prazo de)\s+(?:dois|tres|quatro|[234])\s+anos/.test(normalized)
     || /percursos? diretos? de sucesso.*(?:ciclo|secundario|profissional)/.test(normalized);
 }
 
+function hasThreeCompleteAcademicYears(value: string) {
+  const rows = [...value.matchAll(/\b((?:19|20)\d{2}[\/\-–](?:\d{2}|(?:19|20)\d{2})):\s*escola\s*-?\d+(?:[,.]\d+)?%\s*e\s*nacional\s*-?\d+(?:[,.]\d+)?%/gi)];
+  return new Set(rows.map((row) => row[1])).size >= 3;
+}
+
 function requiredAcademicComparisons(records: Evidence[]) {
   return records
-    .filter((item) => item.fieldId === "res-acad" && item.validated && item.sourceType === "Quantitativa" && /nacional|país|pais|portugal/i.test(item.claim) && item.claim.trim() && (
-      item.statisticalEvidenceUse === "academic-comparison"
-      || (Boolean(item.statisticalTreatmentId?.startsWith("infoescolas|")) && isDirectCompletionComparison(item.claim))
-      || isDirectCompletionComparison(item.claim)
-    ))
+    .filter((item) => item.fieldId === "res-acad"
+      && item.validated
+      && item.sourceType === "Quantitativa"
+      && /nacional|país|pais|portugal/i.test(item.claim)
+      && isDirectCompletionComparison(item.claim)
+      && hasThreeCompleteAcademicYears(item.claim))
     .sort((a, b) => {
       const scopeA = Number(a.statisticalScopeCode || infoEscolasScopeFromText(a.claim) || 99);
       const scopeB = Number(b.statisticalScopeCode || infoEscolasScopeFromText(b.claim) || 99);
       return scopeA - scopeB || a.claim.localeCompare(b.claim, "pt-PT", { numeric: true });
     })
-    .map((item) => item.claim.trim());
+    .map((item) => item.claim.trim())
+    .filter((claim, index, claims) => claims.findIndex((candidate) => normalizeText(candidate.match(/indicador\s+«([^»]+)»/i)?.[1] || candidate) === normalizeText(claim.match(/indicador\s+«([^»]+)»/i)?.[1] || claim)) === index);
 }
 
 function infoEscolasScopeFromText(value: string) {
@@ -1382,10 +1390,72 @@ function ensureAcademicComparisonsInNarrative(narrative: string, comparisons: st
   return [narrative.trim(), ...missing.map(polishAcademicComparison)].filter(Boolean).join("\n\n");
 }
 
+function compactAcademicComparisonForReport(value: string) {
+  const indicator = value.match(/indicador\s+«([^»]+)»/i)?.[1]?.trim() || "conclusão no tempo esperado";
+  const rows = [...value.matchAll(/\b((?:19|20)\d{2}[\/\-–](?:\d{2}|(?:19|20)\d{2})):\s*escola\s*(-?\d+(?:[,.]\d+)?)%\s*e\s*nacional\s*(-?\d+(?:[,.]\d+)?)%/gi)]
+    .map((match) => ({
+      period: match[1],
+      school: Number.parseFloat(match[2].replace(",", ".")),
+      national: Number.parseFloat(match[3].replace(",", ".")),
+    }))
+    .filter((row) => Number.isFinite(row.school) && Number.isFinite(row.national));
+  if (!rows.length) return polishAcademicComparison(value);
+  const format = (number: number) => number.toLocaleString("pt-PT", { maximumFractionDigits: 1 });
+  const join = (items: string[]) => items.join(", ").replace(/, ([^,]+)$/, " e $1");
+  const years = join(rows.map((row) => row.period));
+  const schoolValues = join(rows.map((row) => `${format(row.school)}%`));
+  const nationalValues = join(rows.map((row) => `${format(row.national)}%`));
+  const differences = join(rows.map((row) => {
+    const difference = row.school - row.national;
+    return `${difference > 0 ? "+" : ""}${format(difference)} p.p.`;
+  }));
+  return `No indicador «${indicator}», nos anos letivos ${years}, o agrupamento registou, respetivamente, ${schoolValues}, face a ${nationalValues} no país, correspondendo a diferenças de ${differences}.`;
+}
+
+function compactAcademicComparisonsSummary(comparisons: string[]) {
+  const items = comparisons.map((value) => {
+    const indicator = value.match(/indicador\s+«([^»]+)»/i)?.[1]?.trim() || "conclusão no tempo esperado";
+    const rows = [...value.matchAll(/\b((?:19|20)\d{2}[\/\-–](?:\d{2}|(?:19|20)\d{2})):\s*escola\s*(-?\d+(?:[,.]\d+)?)%\s*e\s*nacional\s*(-?\d+(?:[,.]\d+)?)%/gi)]
+      .map((match) => ({ school: Number.parseFloat(match[2].replace(",", ".")), national: Number.parseFloat(match[3].replace(",", ".")) }));
+    if (rows.length < 3) return "";
+    const differences = rows.map((row) => row.school - row.national);
+    const format = (number: number) => `${number > 0 ? "+" : ""}${number.toLocaleString("pt-PT", { maximumFractionDigits: 1 })}`;
+    const shortLabel = indicator
+      .replace(/^Percentagem de alunos (?:do agrupamento )?que /i, "")
+      .replace(/^Percentagem de alunos /i, "")
+      .replace(/concluem os cursos científico-humanísticos/i, "conclusão dos cursos científico-humanísticos")
+      .replace(/concluem o /i, "conclusão do ");
+    return `${lowerInitial(shortLabel)} (${differences.map(format).join("; ")} p.p.)`;
+  }).filter(Boolean);
+  if (!items.length) return "";
+  return `Nos três últimos anos letivos disponíveis, os percursos diretos de sucesso situaram-se face à referência nacional do seguinte modo: ${items.join("; ")}.`;
+}
+
+function academicNarrativeForReport(narrative: string, comparisons: string[]) {
+  let qualitative = narrative.trim();
+  comparisons.forEach((comparison) => { qualitative = qualitative.replace(comparison, "").trim(); });
+  qualitative = qualitative.split(/\n{2,}/).filter((paragraph) => {
+    const percentages = paragraph.match(/-?\d+(?:[,.]\d+)?\s*%/g)?.length ?? 0;
+    return !(percentages >= 4 && /nacional|país|pais|portugal/i.test(paragraph));
+  }).join(" ").replace(/\s+/g, " ").trim();
+  const qualitativeSentences = qualitative
+    .split(/(?<=[.!?])\s+(?=[A-ZÁÀÂÃÉÊÍÓÔÕÚÇ])/)
+    .filter((sentence) => sentence.length >= 30 && !/\b(?:evidência validada|base probatória|indicadores aplicáveis|triangulação)\b/i.test(sentence))
+    .slice(0, 3)
+    .join(" ");
+  return [compactAcademicComparisonsSummary(comparisons), qualitativeSentences].filter(Boolean).join(" ");
+}
+
+function replaceAcademicSectionInReport(report: string, narrative: string) {
+  const expression = /(\n5\.4\.1\.?\s+[^\n]*\n)[\s\S]*?(?=\n5\.4\.2\.?\s+)/i;
+  if (!expression.test(report)) return ensureAcademicComparisonsInReport(report, []);
+  return report.replace(expression, (_whole, heading: string) => `${heading}\n${completeSentence(narrative)}\n`);
+}
+
 function ensureAcademicComparisonsInReport(report: string, comparisons: string[]) {
   const missing = comparisons.filter((comparison) => !containsAcademicComparison(report, comparison));
   if (!missing.length) return report;
-  const block = missing.map(polishAcademicComparison).join("\n\n");
+  const block = missing.map(compactAcademicComparisonForReport).join("\n\n");
   const nextSection = /\n5\.4\.2\.?\s+/i;
   const match = nextSection.exec(report);
   if (!match || match.index === undefined) return `${report.trim()}\n\n${block}`;
@@ -1404,6 +1474,63 @@ function conclusionClauses(value: string) {
     .split(/(?<=[.!?])\s+|\s+(?:mas|contudo|porém|todavia|não obstante)\s+/i)
     .map((item) => item.trim())
     .filter((item) => item.length >= 35 && !boilerplateConclusionPattern.test(item));
+}
+
+function representativeConclusionEvidence(records: Evidence[], limit = 5) {
+  const statusWeight: Record<EvidenceStatus, number> = { Contraditória: 5, Confirmada: 4, "Por triangular": 2, Ausente: 1 };
+  const strengthWeight: Record<Strength, number> = { Forte: 3, Moderada: 2, Insuficiente: 1 };
+  const ordered = [...records].sort((a, b) =>
+    (statusWeight[b.status] + strengthWeight[b.strength]) - (statusWeight[a.status] + strengthWeight[a.strength]));
+  const selected: Evidence[] = [];
+  const sourceTypes = new Set<string>();
+  ordered.forEach((record) => {
+    if (selected.length >= limit) return;
+    if (!sourceTypes.has(record.sourceType) || selected.length < Math.min(3, limit)) {
+      selected.push(record);
+      sourceTypes.add(record.sourceType);
+    }
+  });
+  ordered.forEach((record) => {
+    if (selected.length < limit && !selected.some((item) => item.id === record.id)) selected.push(record);
+  });
+  return selected.slice(0, limit);
+}
+
+function conclusionIndicatorProfiles(field: Field, records: Evidence[], applicability: Record<string, IndicatorApplicability>) {
+  const profiles = (indicatorLabels[field.id] ?? []).map((label, index) => {
+    const id = indicatorId(field.id, index);
+    const linked = records.filter((record) => record.indicatorIds?.includes(id));
+    return {
+      id,
+      label,
+      applicability: applicability[id] ?? "Por confirmar",
+      count: linked.length,
+      strength: strengthFor(linked),
+      triangulation: triangulationFor(linked),
+      status: [...new Set(linked.map((record) => record.status))],
+      sourceTypes: [...new Set(linked.map((record) => record.sourceType))],
+      evidence: representativeConclusionEvidence(linked, 3).map((record) => record.claim.slice(0, 320)),
+    };
+  });
+  const unlinked = records.filter((record) => !(record.indicatorIds?.length));
+  return {
+    profiles,
+    unlinkedCount: unlinked.length,
+    unlinkedEvidence: representativeConclusionEvidence(unlinked, 4).map((record) => record.claim.slice(0, 320)),
+  };
+}
+
+function conclusionSourceProfiles(records: Evidence[]) {
+  return (["Documental", "Quantitativa", "Testemunhal", "Normativa"] as Evidence["sourceType"][]).map((sourceType) => {
+    const sourceRecords = records.filter((record) => record.sourceType === sourceType);
+    return {
+      sourceType,
+      count: sourceRecords.length,
+      confirmed: sourceRecords.filter((record) => record.status === "Confirmada").length,
+      contradictory: sourceRecords.filter((record) => record.status === "Contraditória").length,
+      evidence: representativeConclusionEvidence(sourceRecords, 5).map((record) => record.claim.slice(0, 360)),
+    };
+  }).filter((profile) => profile.count > 0);
 }
 
 function localDomainConclusions(narratives: Record<string, string>, evidence: Evidence[]): DomainConclusion[] {
@@ -2429,7 +2556,7 @@ export default function Home() {
       setTriangulationRevisions((current) => ({ ...current, "res-acad": academicRevision }));
     }
     setNarratives(completedNarratives);
-    setReport(buildReport(evidence, completedNarratives, indicatorApplicability));
+    setReport(normalizeAcronyms(buildReport(evidence, completedNarratives, indicatorApplicability)));
     setExportStatus(academicOutdated || academicComparisonsMissing
       ? "Minuta local gerada. A narrativa de 5.4.1 foi sincronizada automaticamente com as evidências validadas do InfoEscolas, sem utilizar a API."
       : "Minuta local gerada sem utilizar a API.");
@@ -2533,7 +2660,8 @@ export default function Home() {
       return;
     }
     const batches = Array.from({ length: Math.ceil(records.length / 40) }, (_, index) => records.slice(index * 40, (index + 1) * 40));
-    if (!window.confirm(`Esta operação utiliza IA e processará as ${records.length} evidência(s) do campo ${field.section} em ${batches.length} chamada(s), com um máximo de 40 por lote. Pretende continuar?`)) return;
+    const totalCalls = batches.length + (batches.length > 1 ? 1 : 0);
+    if (!window.confirm(`Esta operação utiliza IA e processará as ${records.length} evidência(s) do campo ${field.section} em ${batches.length} lote(s)${batches.length > 1 ? ", seguidos de uma síntese final entre lotes" : ""} (${totalCalls} chamada(s)). Pretende continuar?`)) return;
     setAiTriangulatingField(field.id);
     setAiTriangulationStatus(`${field.section}: triangulação por IA em curso · lote 1 de ${batches.length}…`);
     try {
@@ -2551,14 +2679,31 @@ export default function Home() {
         const part = String(payload?.narrative || "").trim();
         if (part) narrativesForBatches.push(part);
       }
-      const narrative = ensureAcademicComparisonsInNarrative(narrativesForBatches.join("\n\n"), field.id === "res-acad" ? requiredAcademicComparisons(records) : []);
+      let integratedNarrative = narrativesForBatches.join("\n\n");
+      if (narrativesForBatches.length > 1) {
+        setAiTriangulationStatus(`${field.section}: cruzamento final dos ${narrativesForBatches.length} lotes…`);
+        const mergeResponse = await fetch("/api/triangulate-field", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            field,
+            partialNarratives: narrativesForBatches,
+            diagnostic: fieldDiagnostic(field, records, indicatorApplicability),
+            mandatoryAcademicComparisons: field.id === "res-acad" ? requiredAcademicComparisons(records) : [],
+          }),
+        });
+        const mergePayload = await mergeResponse.json().catch(() => ({}));
+        if (!mergeResponse.ok || mergePayload?.ok === false) throw new Error(`Síntese final: ${mergePayload?.error || `o servidor devolveu o estado ${mergeResponse.status}`}.`);
+        integratedNarrative = String(mergePayload?.narrative || "").trim();
+      }
+      const narrative = ensureAcademicComparisonsInNarrative(integratedNarrative, field.id === "res-acad" ? requiredAcademicComparisons(records) : []);
       if (!narrative) throw new Error("A IA não devolveu uma narrativa utilizável.");
       const synchronizedEvidence = markEvidenceAsTriangulated(evidence, new Set([field.id]));
       setEvidence(synchronizedEvidence);
       setNarratives((current) => ({ ...current, [field.id]: narrative }));
       setTriangulationRevisions((current) => ({ ...current, [field.id]: evidenceRevision(synchronizedEvidence, field.id) }));
       setChangesPending(true);
-      setAiTriangulationStatus(`${field.section}: todas as ${records.length} evidências foram trianguladas em ${batches.length} lote(s). Reveja e valide o texto.`);
+      setAiTriangulationStatus(`${field.section}: todas as ${records.length} evidências foram trianguladas e cruzadas numa síntese final. Reveja e valide o texto.`);
     } catch (error) {
       setAiTriangulationStatus(`${field.section}: ${error instanceof Error ? error.message : "Não foi possível triangular."} Não foi feita repetição automática paga.`);
     } finally {
@@ -2595,7 +2740,10 @@ export default function Home() {
       });
     });
     if (batchEvidence.length) batches.push({ fields: batchFields, evidence: batchEvidence });
-    const batchNote = batches.length > 1 ? `, distribuídas por ${batches.length} chamadas/lotes, sem exclusão silenciosa` : " numa única chamada";
+    const fieldsRequiringMerge = activeFields.filter((field) => records.filter((record) => record.fieldId === field.id).length > 180).length;
+    const batchNote = batches.length > 1
+      ? `, distribuídas por ${batches.length} chamadas/lotes, sem exclusão silenciosa${fieldsRequiringMerge ? `, mais ${fieldsRequiringMerge} chamada(s) de síntese final entre lotes` : ""}`
+      : " numa única chamada";
     if (!window.confirm(`Esta operação utiliza IA para triangular ${records.length} evidência(s) em ${activeFields.length} campo(s)${batchNote}. As narrativas atuais desses campos serão substituídas, mas continuarão editáveis. Pretende continuar?`)) return;
     setAiTriangulatingAll(true);
     setAiTriangulationStatus(`Triangulação global em curso · lote 1 de ${batches.length}…`);
@@ -2613,16 +2761,37 @@ export default function Home() {
         if (!response.ok || payload?.ok === false) throw new Error(`Lote ${index + 1}: ${payload?.error || `o servidor devolveu o estado ${response.status}`}.`);
         if (Array.isArray(payload?.narratives)) received.push(...payload.narratives);
       }
-      const mergedReceived = Object.values(received.reduce((acc: Record<string, any>, item: any) => {
+      const groupedReceived = received.reduce((acc: Record<string, string[]>, item: any) => {
         const fieldId = String(item?.fieldId || "");
         const value = String(item?.narrative || "").trim();
         if (!fieldId || !value) return acc;
-        acc[fieldId] = acc[fieldId]
-          ? { fieldId, narrative: `${acc[fieldId].narrative}\n\n${value}` }
-          : { fieldId, narrative: value };
+        acc[fieldId] = [...(acc[fieldId] ?? []), value];
         return acc;
-      }, {}));
-      const usable = mergedReceived.filter((item: any) => activeFields.some((field) => field.id === String(item?.fieldId)) && String(item?.narrative || "").trim());
+      }, {});
+      const usable: Array<{ fieldId: string; narrative: string }> = [];
+      for (const [fieldId, parts] of Object.entries(groupedReceived)) {
+        const field = activeFields.find((item) => item.id === fieldId);
+        if (!field || !parts.length) continue;
+        let narrative = parts.join("\n\n");
+        if (parts.length > 1) {
+          const fieldRecords = records.filter((record) => record.fieldId === fieldId);
+          setAiTriangulationStatus(`${field.section}: cruzamento final de ${parts.length} lotes…`);
+          const mergeResponse = await fetch("/api/triangulate-field", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              field,
+              partialNarratives: parts,
+              diagnostic: fieldDiagnostic(field, fieldRecords, indicatorApplicability),
+              mandatoryAcademicComparisons: field.id === "res-acad" ? requiredAcademicComparisons(fieldRecords) : [],
+            }),
+          });
+          const mergePayload = await mergeResponse.json().catch(() => ({}));
+          if (!mergeResponse.ok || mergePayload?.ok === false) throw new Error(`${field.section}, síntese final: ${mergePayload?.error || `o servidor devolveu o estado ${mergeResponse.status}`}.`);
+          narrative = String(mergePayload?.narrative || "").trim();
+        }
+        if (narrative) usable.push({ fieldId, narrative });
+      }
       if (!usable.length) throw new Error("A IA não devolveu narrativas utilizáveis.");
       const completedFieldIds = new Set(usable.map((item: any) => String(item.fieldId)));
       const synchronizedEvidence = markEvidenceAsTriangulated(evidence, completedFieldIds);
@@ -2688,13 +2857,14 @@ export default function Home() {
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok || payload?.ok === false) throw new Error(payload?.error || `O servidor devolveu o estado ${response.status}.`);
-      const improved = ensureAcademicComparisonsInReport(String(payload?.report || "").trim(), comparisons);
+      const conciseAcademicNarrative = academicNarrativeForReport(completedNarratives["res-acad"] || "", comparisons);
+      const improved = normalizeAcronyms(replaceAcademicSectionInReport(String(payload?.report || "").trim(), conciseAcademicNarrative));
       if (!improved) throw new Error("A IA não devolveu um relatório utilizável.");
       setReport(improved);
       setChangesPending(true);
       setExportStatus("Relatório aprimorado numa chamada. A validação humana continua obrigatória.");
     } catch (error) {
-      setReport(localDraft);
+      setReport(normalizeAcronyms(localDraft));
       setExportStatus(`${error instanceof Error ? error.message : "Não foi possível aprimorar o relatório."} A minuta local foi preservada e não houve repetição automática paga.`);
     } finally {
       setAiReportWriting(false);
@@ -2749,7 +2919,11 @@ export default function Home() {
     const base = conclusions.length ? conclusions : localDomainConclusions(completedNarratives, evidence);
     const payloadDomains = domainOrder.map((domain) => ({
       domain,
-      fields: fields.filter((field) => field.domain === domain).map((field) => ({ section: field.section, name: field.name, narrative: completedNarratives[field.id] || "" })),
+      fields: fields.filter((field) => field.domain === domain).map((field) => {
+        const records = evidence.filter((record) => record.validated && record.fieldId === field.id);
+        const narrative = completedNarratives[field.id]?.trim() || composeFieldNarrative(field, records, indicatorApplicability);
+        return { section: field.section, name: field.name, narrative: narrative.slice(0, 3_500) };
+      }),
       evidenceProfile: fields.filter((field) => field.domain === domain).map((field) => {
         const records = evidence.filter((record) => record.validated && record.fieldId === field.id);
         return {
@@ -2760,14 +2934,8 @@ export default function Home() {
           sourceTypes: [...new Set(records.map((record) => record.sourceType))],
           sourceFamilies: new Set(records.map(independentSourceKey).filter(Boolean)).size,
           diagnostic: fieldDiagnostic(field, records, indicatorApplicability),
-          evidence: records.slice(0, 24).map((record) => ({
-            claim: record.claim.slice(0, 800),
-            source: record.source.slice(0, 180),
-            sourceType: record.sourceType,
-            status: record.status,
-            strength: record.strength,
-            indicators: record.indicatorIds ?? [],
-          })),
+          indicatorProfiles: conclusionIndicatorProfiles(field, records, indicatorApplicability),
+          sourceProfiles: conclusionSourceProfiles(records),
         };
       }),
     }));

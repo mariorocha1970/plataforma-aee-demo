@@ -32,6 +32,33 @@ function outputText(data: any): string {
     .filter((item: any) => item?.type === "output_text").map((item: any) => item?.text ?? "").join("");
 }
 
+function enforceRatingConsistency(conclusions: any[], domains: any[]) {
+  return conclusions.map((item: any) => {
+    if (item?.rating !== "Suficiente") return item;
+    const domain = domains.find((candidate: any) => String(candidate?.domain) === String(item?.domain));
+    const profiles = Array.isArray(domain?.evidenceProfile) ? domain.evidenceProfile : [];
+    if (!profiles.length || profiles.some((profile: any) => Number(profile?.count || 0) === 0)) return item;
+    const contradictions = profiles.filter((profile: any) => profile?.diagnostic?.hasContradictions).length;
+    const strongFields = profiles.filter((profile: any) => String(profile?.strength) === "Forte" || String(profile?.diagnostic?.evidenceQuality) === "Forte").length;
+    const balance = profiles.reduce((total: { positive: number; limitation: number }, profile: any) => ({
+      positive: total.positive + Number(profile?.evaluativeBalance?.positive || 0) + Number(profile?.evaluativeBalance?.mixed || 0) * 0.5,
+      limitation: total.limitation + Number(profile?.evaluativeBalance?.limitation || 0) + Number(profile?.evaluativeBalance?.mixed || 0) * 0.5,
+    }), { positive: 0, limitation: 0 });
+    const strengths = Array.isArray(item?.strengths) ? item.strengths : [];
+    const improvements = Array.isArray(item?.improvements) ? item.improvements : [];
+    const clearPositivePredominance = balance.positive >= 6 && balance.positive >= Math.max(1, balance.limitation * 1.75);
+    const conclusionIsPositive = strengths.length >= 3 && strengths.length > improvements.length;
+    if (contradictions > 0 || !clearPositivePredominance || !conclusionIsPositive) return item;
+    const rating = strongFields >= Math.ceil(profiles.length / 2) && improvements.length <= 2 ? "Muito bom" : "Bom";
+    const fieldNames = (Array.isArray(domain?.fields) ? domain.fields : []).map((field: any) => String(field?.name || "").trim()).filter(Boolean);
+    return {
+      ...item,
+      rating,
+      rationale: `O predomínio de evidências positivas, convergentes e abrangentes nos campos ${fieldNames.join(", ")} sustenta a menção de ${rating}. As limitações identificadas são localizadas e não apresentam peso equivalente ao conjunto dos pontos fortes e dos resultados demonstrados.`,
+    };
+  });
+}
+
 export async function POST(request: NextRequest) {
   try {
     const apiKey = process.env.OPENAI_API_KEY?.trim();
@@ -71,6 +98,7 @@ REGRAS:
 - «Suficiente» só é coerente quando os pontos fortes e as fragilidades apresentam peso global comparável, ou quando a evidência de efeitos positivos permanece verdadeiramente indefinida na maioria dos campos. Se os perfis mostrarem predomínio claro de evidência positiva, forte, triangulada e abrangente, escolha «Bom» ou «Muito bom» conforme a generalização e os resultados demonstrados; não use uma reserva localizada para baixar artificialmente a menção.
 - Antes de propor a menção, faça um teste de coerência: a fundamentação deve explicar por que razão a evidência positiva e as limitações conduzem precisamente àquela menção, sem contradizer os pontos fortes e áreas de melhoria listados.
 - Faça internamente uma apreciação campo a campo antes da classificação global: predomínio positivo/negativo, força, triangulação, generalização e resultados. Só depois agregue o domínio. Não exponha cálculos, mas assegure que nenhum campo ou tipo de fonte fica por ler.
+- Use evaluativeBalance apenas como controlo auxiliar do sentido global das evidências, confirmando sempre o conteúdo das afirmações. Quando o balanço positivo for claramente predominante, não trate registos neutros ou meramente descritivos como fragilidades.
 - Se propuser «Suficiente», identifique na fundamentação quais são as fragilidades de peso comparável aos pontos fortes e em que campos ocorrem. Uma fundamentação que apenas invoque falta de metas, dados de impacto ou uma reserva metodológica localizada é incompatível com «Suficiente» quando as práticas e resultados positivos são generalizados.
 - Um ponto forte deve evidenciar relevância, abrangência e efeito positivo; uma área de melhoria deve identificar com clareza o processo ou resultado a aperfeiçoar, sem prescrever soluções.
 - Não repita o mesmo conteúdo como ponto forte e área de melhoria.
@@ -98,12 +126,12 @@ REGRAS:
     if (!raw) return NextResponse.json({ ok: false, error: "A IA não devolveu conclusões utilizáveis. Não houve repetição automática." }, { status: 502 });
     let result: any;
     try { result = JSON.parse(raw); } catch { return NextResponse.json({ ok: false, error: "A resposta ficou incompleta. A proposta local foi preservada e não houve repetição automática paga." }, { status: 502 }); }
-    const conclusions = (Array.isArray(result?.conclusions) ? result.conclusions : []).map((item: any) => ({
+    const conclusions = enforceRatingConsistency((Array.isArray(result?.conclusions) ? result.conclusions : []).map((item: any) => ({
       ...item,
       strengths: (Array.isArray(item?.strengths) ? item.strengths : []).map((value: any) => normalizeAcronyms(String(value))),
       improvements: (Array.isArray(item?.improvements) ? item.improvements : []).map((value: any) => normalizeAcronyms(String(value))),
       rationale: normalizeAcronyms(String(item?.rationale || "")),
-    }));
+    })), domains);
     return NextResponse.json({ ok: true, conclusions });
   } catch (error) {
     return NextResponse.json({ ok: false, error: error instanceof Error ? error.message : "Erro interno na síntese conclusiva." }, { status: 500 });

@@ -3,8 +3,8 @@
 import { ChangeEvent, useEffect, useMemo, useState } from "react";
 import { normalizeAcronyms } from "./text-normalization";
 
-const APP_BUILD = "2026.11.10-v7";
-const ANALYSIS_ENGINE_VERSION = 7;
+const APP_BUILD = "2026.11.10-v8";
+const ANALYSIS_ENGINE_VERSION = 8;
 
 type View = "visao" | "documentos" | "privacidade" | "analise" | "estatistica" | "evidencias" | "entrevistas" | "triangulacao" | "relatorio" | "conclusoes";
 type EvidenceStatus = "Confirmada" | "Por triangular" | "Contraditória" | "Ausente";
@@ -1455,6 +1455,28 @@ function replaceAcademicSectionInReport(report: string, narrative: string) {
   return report.replace(expression, (_whole, heading: string) => `${heading}\n${completeSentence(narrative)}\n`);
 }
 
+function sanitizeAcademicSectionInReport(report: string) {
+  const expression = /(\n5\.4\.1\.?\s+[^\n]*\n)([\s\S]*?)(?=\n5\.4\.2\.?\s+)/i;
+  const match = expression.exec(report);
+  if (!match) return report;
+  const paragraphs = match[2]
+    .split(/\n{2,}/)
+    .map((paragraph) => paragraph.replace(/\s+/g, " ").trim())
+    .filter(Boolean)
+    .filter((paragraph) => !/^(?:No indicador «|A leitura comparada dos três últimos anos|Entre 20\d{2}\/\d{2} e 20\d{2}\/\d{2}|A interpretação deve atender)/i.test(paragraph));
+  const unique = paragraphs.filter((paragraph, index) => paragraphs.findIndex((candidate) => normalizeText(candidate) === normalizeText(paragraph)) === index);
+  let body = unique.slice(0, 4).join("\n\n");
+  if (body.length > 4_200) {
+    const sentences = body.split(/(?<=[.!?])\s+(?=[A-ZÁÀÂÃÉÊÍÓÔÕÚÇ])/);
+    body = "";
+    for (const sentence of sentences) {
+      if (body.length + sentence.length > 4_200) break;
+      body = `${body}${body ? " " : ""}${sentence}`;
+    }
+  }
+  return report.replace(expression, `${match[1]}\n${body.trim()}\n`);
+}
+
 function ensureAcademicComparisonsInReport(report: string, comparisons: string[]) {
   const missing = comparisons.filter((comparison) => !containsAcademicComparison(report, comparison));
   if (!missing.length) return report;
@@ -1534,6 +1556,22 @@ function conclusionSourceProfiles(records: Evidence[]) {
       evidence: representativeConclusionEvidence(sourceRecords, 5).map((record) => record.claim.slice(0, 360)),
     };
   }).filter((profile) => profile.count > 0);
+}
+
+function conclusionEvaluativeBalance(records: Evidence[]) {
+  const positivePattern = /\b(?:acima|sucesso|melhoria|evolução favorável|elevad[ao]s?|robust[ao]s?|consolid|generaliz|articula|participa|envolv|inova|eficaz|impacto positivo|satisfa|reconhec|inclus|equidade|sem retenções|ausência de retenções)\b/i;
+  const limitationPattern = /\b(?:abaixo|insucesso|fragilidad|insuficiente|dificuldade|desigual|irregular|lacuna|contradit|reduzid[ao]s?|carece|por consolidar|não demonstra|não permite|ausência de monitorização|ausência de metas)\b/i;
+  let positive = 0;
+  let limitation = 0;
+  let mixed = 0;
+  records.forEach((record) => {
+    const hasPositive = positivePattern.test(record.claim);
+    const hasLimitation = limitationPattern.test(record.claim);
+    if (hasPositive && hasLimitation) mixed += 1;
+    else if (hasPositive) positive += 1;
+    else if (hasLimitation) limitation += 1;
+  });
+  return { positive, limitation, mixed, neutral: Math.max(0, records.length - positive - limitation - mixed) };
 }
 
 function localDomainConclusions(narratives: Record<string, string>, evidence: Evidence[]): DomainConclusion[] {
@@ -1696,7 +1734,7 @@ export default function Home() {
           setTriangulationRevisions({});
           setConclusions([]);
           setChangesPending(true);
-          setBackupStatus("Motor de análise atualizado para v7. As evidências foram preservadas; refaça a triangulação, o relatório e as menções.");
+          setBackupStatus("Motor de análise atualizado para v8. As evidências foram preservadas; refaça a triangulação, o relatório e as menções.");
           window.localStorage.setItem("aee-piloto-v2", JSON.stringify({ ...data, analysisEngineVersion: ANALYSIS_ENGINE_VERSION, report: "", narratives: {}, triangulationRevisions: {}, conclusions: [] }));
         }
         if (data.indicatorApplicability && typeof data.indicatorApplicability === "object") setIndicatorApplicability(data.indicatorApplicability);
@@ -1824,7 +1862,7 @@ export default function Home() {
       setPreparedDocuments([]);
       setChangesPending(false);
       window.localStorage.setItem("aee-piloto-v2", JSON.stringify({ ...data, analysisEngineVersion: ANALYSIS_ENGINE_VERSION, narratives: generatedContentIsCurrent ? data.narratives : {}, triangulationRevisions: generatedContentIsCurrent ? data.triangulationRevisions : {}, report: generatedContentIsCurrent ? data.report : "", conclusions: generatedContentIsCurrent ? data.conclusions : [] }));
-      setBackupStatus(generatedContentIsCurrent ? "Cópia importada e guardada neste navegador." : "Cópia anterior importada. As evidências foram preservadas; triangulação, relatório e menções devem ser recalculados na v7.");
+      setBackupStatus(generatedContentIsCurrent ? "Cópia importada e guardada neste navegador." : "Cópia anterior importada. As evidências foram preservadas; triangulação, relatório e menções devem ser recalculados na v8.");
       window.setTimeout(() => setBackupStatus(""), 4000);
     } catch {
       setBackupStatus("Não foi possível importar: ficheiro inválido ou danificado.");
@@ -2851,7 +2889,7 @@ export default function Home() {
       setNarratives((current) => ({ ...current, "res-acad": completedNarratives["res-acad"] }));
       setTriangulationRevisions((current) => ({ ...current, "res-acad": academicRevision }));
     }
-    const localDraft = ensureAcademicComparisonsInReport(report.trim() || buildReport(evidence, completedNarratives, indicatorApplicability), comparisons);
+    const localDraft = report.trim() || buildReport(evidence, completedNarratives, indicatorApplicability);
     const usable = fields.filter((field) => completedNarratives[field.id]?.trim()).map((field) => ({
       section: field.section, domain: field.domain, name: field.name, narrative: completedNarratives[field.id].trim(),
       diagnostic: fieldDiagnostic(field, evidence.filter((record) => record.fieldId === field.id && record.validated), indicatorApplicability),
@@ -2873,8 +2911,7 @@ export default function Home() {
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok || payload?.ok === false) throw new Error(payload?.error || `O servidor devolveu o estado ${response.status}.`);
-      const conciseAcademicNarrative = academicNarrativeForReport(completedNarratives["res-acad"] || "", comparisons);
-      const improved = normalizeAcronyms(replaceAcademicSectionInReport(String(payload?.report || "").trim(), conciseAcademicNarrative));
+      const improved = normalizeAcronyms(sanitizeAcademicSectionInReport(String(payload?.report || "").trim()));
       if (!improved) throw new Error("A IA não devolveu um relatório utilizável.");
       setReport(improved);
       setChangesPending(true);
@@ -2952,6 +2989,7 @@ export default function Home() {
           diagnostic: fieldDiagnostic(field, records, indicatorApplicability),
           indicatorProfiles: conclusionIndicatorProfiles(field, records, indicatorApplicability),
           sourceProfiles: conclusionSourceProfiles(records),
+          evaluativeBalance: conclusionEvaluativeBalance(records),
         };
       }),
     }));

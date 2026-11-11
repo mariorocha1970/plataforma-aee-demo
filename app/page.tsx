@@ -3,8 +3,8 @@
 import { ChangeEvent, useEffect, useMemo, useState } from "react";
 import { normalizeAcronyms } from "./text-normalization";
 
-const APP_BUILD = "2026.11.11-v15";
-const ANALYSIS_ENGINE_VERSION = 15;
+const APP_BUILD = "2026.11.11-v16";
+const ANALYSIS_ENGINE_VERSION = 16;
 
 type View = "visao" | "documentos" | "privacidade" | "analise" | "estatistica" | "evidencias" | "entrevistas" | "triangulacao" | "relatorio" | "conclusoes";
 type EvidenceStatus = "Confirmada" | "Por triangular" | "Contraditória" | "Ausente";
@@ -1505,7 +1505,6 @@ function latestAcademicComparison(value: string) {
 }
 
 function structuredAcademicNarrative(comparisons: string[], _qualitative = "") {
-  const format = (value: number) => `${value.toLocaleString("pt-PT", { maximumFractionDigits: 1 })}%`;
   const entries = ["1", "2", "3", "4", "5"].flatMap((scope) => {
     const candidates = comparisons.filter((comparison) => infoEscolasScopeFromText(comparison) === scope);
     return candidates.flatMap((comparison) => {
@@ -1521,24 +1520,24 @@ function structuredAcademicNarrative(comparisons: string[], _qualitative = "") {
   const paragraphs: string[] = [];
   if (generalBasic.length === 3) {
     const years = generalBasic[0].rows.map((row) => row.period);
-    const period = generalBasic[2].latest.period;
-    paragraphs.push(`No triénio de ${years[0] || "2021/22"} a ${years.at(-1) || "2023/24"}, as taxas de conclusão no tempo esperado situam-se acima das referências nacionais contextualizadas nos três ciclos do ensino básico. No último ano letivo (${period}), atingem ${format(generalBasic[0].latest.school)} no 1.º ciclo, ${format(generalBasic[1].latest.school)} no 2.º ciclo e ${format(generalBasic[2].latest.school)} no 3.º ciclo, face a ${format(generalBasic[0].latest.national)}, ${format(generalBasic[1].latest.national)} e ${format(generalBasic[2].latest.national)}, respetivamente. Estes resultados evidenciam percursos escolares globalmente bem-sucedidos.`);
+    paragraphs.push(`No triénio de ${years[0] || "2021/22"} a ${years.at(-1) || "2023/24"}, as taxas de conclusão no tempo esperado mantêm-se acima das referências nacionais contextualizadas nos três ciclos do ensino básico. O 1.º e o 2.º ciclos apresentam resultados consistentemente favoráveis e estáveis, enquanto o 3.º ciclo reforça a vantagem comparativa nos dois anos mais recentes. Estes resultados evidenciam percursos escolares globalmente bem-sucedidos.`);
   } else if (generalBasic.length) {
-    const period = generalBasic.at(-1)?.latest.period;
-    paragraphs.push(`No ensino básico, as taxas de conclusão no tempo esperado situam-se globalmente acima das referências nacionais contextualizadas nos ciclos com informação comparável. Em ${period || "no último ano disponível"}, registam-se ${generalBasic.map((item) => `${format(item.latest.school)} no ${item.label}, face a ${format(item.latest.national)}`).join("; ")}.`);
+    const favourable = generalBasic.filter((item) => item.rows.every((row) => row.school > row.national)).map((item) => item.label);
+    paragraphs.push(`No ensino básico, as taxas de conclusão no tempo esperado apresentam uma evolução globalmente favorável nos ciclos com informação comparável.${favourable.length ? ` Em ${favourable.join(", ")}, mantêm-se acima das respetivas referências nacionais ao longo do triénio.` : ""}`);
   }
   if (secondary) {
-    const relation = secondary.latest.school >= secondary.latest.national ? "acima" : "abaixo";
-    paragraphs.push(`Nos cursos científico-humanísticos, a conclusão em três anos ${relation === "acima" ? "mantém-se acima da referência nacional no último ano disponível" : "situa-se abaixo da referência nacional no último ano disponível"}, atingindo ${format(secondary.latest.school)} em ${secondary.latest.period}, face a ${format(secondary.latest.national)} no país.`);
+    const allAbove = secondary.rows.every((row) => row.school > row.national);
+    const oscillates = Math.max(...secondary.rows.map((row) => row.school)) - Math.min(...secondary.rows.map((row) => row.school)) >= 5;
+    paragraphs.push(`Nos cursos científico-humanísticos, a conclusão no tempo esperado ${allAbove ? "mantém-se acima da referência nacional ao longo do triénio" : "apresenta um posicionamento variável face à referência nacional"}${oscillates ? ", apesar de oscilações anuais" : ""}, registando no último ano a situação comparativa mais favorável do período.`);
   }
   if (professional) {
-    const relation = professional.latest.school >= professional.latest.national ? "acima" : "abaixo";
+    const latestBelow = professional.latest.school < professional.latest.national;
     const earlierAbove = professional.rows.slice(0, -1).filter((row) => row.school > row.national).length;
-    paragraphs.push(`No ensino profissional, a taxa de conclusão no tempo esperado situa-se ${relation} da referência nacional no último ano disponível: ${format(professional.latest.school)} no agrupamento, face a ${format(professional.latest.national)} no país, em ${professional.latest.period}${earlierAbove ? `, após ${earlierAbove === 2 ? "dois anos" : "um ano"} acima da respetiva referência` : ""}. A evolução dos percursos e das situações de atraso na conclusão constitui uma dimensão relevante para consolidar o sucesso nesta oferta formativa.`);
+    paragraphs.push(`No ensino profissional, a conclusão no tempo esperado apresenta uma evolução menos favorável no último ano do triénio${latestBelow ? ", situando-se abaixo da referência nacional" : ""}${earlierAbove ? `, depois de ${earlierAbove === 2 ? "dois anos consecutivos" : "um ano"} acima desse valor` : ""}. A análise dos percursos e das situações de atraso na conclusão constitui uma dimensão relevante para consolidar o sucesso nesta oferta formativa.`);
   }
   if (equityBasic.length) {
-    const period = equityBasic.at(-1)?.latest.period;
-    paragraphs.push(`Os resultados dos alunos beneficiários da ação social escolar (ASE) evidenciam indicadores favoráveis de equidade no ensino básico. Em ${period || "no último ano disponível"}, as taxas de conclusão no tempo esperado situam-se em ${equityBasic.map((item) => `${format(item.latest.school)} no ${item.label}`).join(", ")}, superando as respetivas referências nacionais contextualizadas.`);
+    const allFavourable = equityBasic.every((item) => item.rows.every((row) => row.school > row.national));
+    paragraphs.push(`Os resultados dos alunos beneficiários da ação social escolar (ASE) evidenciam indicadores favoráveis de equidade no ensino básico.${allFavourable ? " Nos três ciclos, as taxas de conclusão no tempo esperado superam as respetivas referências nacionais ao longo do triénio." : " A evolução comparada, embora diferenciada entre ciclos, sustenta uma apreciação globalmente positiva."} Importa aprofundar a análise das assimetrias internas e dos percursos dos alunos abrangidos por medidas de suporte à aprendizagem e à inclusão.`);
   }
   return paragraphs.join("\n\n");
 }

@@ -3,8 +3,8 @@
 import { ChangeEvent, useEffect, useMemo, useState } from "react";
 import { normalizeAcronyms } from "./text-normalization";
 
-const APP_BUILD = "2026.11.11-v16";
-const ANALYSIS_ENGINE_VERSION = 16;
+const APP_BUILD = "2026.11.11-v18";
+const ANALYSIS_ENGINE_VERSION = 18;
 
 type View = "visao" | "documentos" | "privacidade" | "analise" | "estatistica" | "evidencias" | "entrevistas" | "triangulacao" | "relatorio" | "conclusoes";
 type EvidenceStatus = "Confirmada" | "Por triangular" | "Contraditória" | "Ausente";
@@ -3127,7 +3127,7 @@ export default function Home() {
       fields: fields.filter((field) => field.domain === domain).map((field) => {
         const records = evidence.filter((record) => record.validated && record.fieldId === field.id);
         const narrative = completedNarratives[field.id]?.trim() || composeFieldNarrative(field, records, indicatorApplicability);
-        return { section: field.section, name: field.name, narrative: narrative.slice(0, 8_000) };
+        return { section: field.section, name: field.name, narrative: narrative.slice(0, 4_500) };
       }),
       evidenceProfile: fields.filter((field) => field.domain === domain).map((field) => {
         const records = evidence.filter((record) => record.validated && record.fieldId === field.id);
@@ -3151,9 +3151,9 @@ export default function Home() {
         section: field.section,
         name: field.name,
         totalCount: records.length,
-        records: representativeConclusionEvidence(distinct, 12)
+        records: representativeConclusionEvidence(distinct, 8)
           .map((record) => ({
-            claim: record.claim.slice(0, 520),
+            claim: record.claim.slice(0, 360),
             sourceType: record.sourceType,
             status: record.status,
             strength: record.strength,

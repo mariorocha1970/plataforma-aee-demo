@@ -1,4 +1,4 @@
-import { AlignmentType, BorderStyle, Document, Footer, ImageRun, PageBreak, PageNumber, Packer, Paragraph, ShadingType, Table, TableCell, TableRow, TextRun, VerticalAlign, WidthType } from "docx";
+import { AlignmentType, BorderStyle, Document, Footer, ImageRun, PageBreak, PageNumber, Packer, Paragraph, SectionType, ShadingType, Table, TableCell, TableRow, TextRun, VerticalAlign, WidthType } from "docx";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -12,41 +12,45 @@ function safeFilename(value: string) {
   return `${value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9_-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 90) || "relatorio-simplificado"}.docx`;
 }
 
-function heading(text: string, color = TEAL, size = 26) {
-  return new Paragraph({ alignment: AlignmentType.CENTER, spacing: { before: 220, after: 160 }, children: [new TextRun({ text: text.toUpperCase(), bold: true, color, size, font: "Arial" })] });
+function pageBreak() { return new Paragraph({ children: [new PageBreak()] }); }
+
+function barHeading(text: string) {
+  return new Table({ width: { size: 100, type: WidthType.PERCENTAGE }, borders: { top: { style: BorderStyle.NONE }, bottom: { style: BorderStyle.NONE }, left: { style: BorderStyle.NONE }, right: { style: BorderStyle.NONE }, insideHorizontal: { style: BorderStyle.NONE }, insideVertical: { style: BorderStyle.NONE } }, rows: [new TableRow({ children: [new TableCell({ shading: { fill: TEAL, type: ShadingType.CLEAR }, margins: { top: 70, bottom: 70, left: 100, right: 100 }, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: text.toUpperCase(), bold: true, color: "FFFFFF", size: 16, font: "Arial" })] })] })] })] });
+}
+
+function lead(text: string) {
+  return new Paragraph({ alignment: AlignmentType.JUSTIFIED, spacing: { after: 120, line: 250 }, children: [new TextRun({ text, size: 17, font: "Arial", color: "222222" })] });
 }
 
 function domainHeading(text: string) {
-  return new Paragraph({ spacing: { before: 180, after: 60 }, children: [new TextRun({ text, bold: true, size: 20, font: "Arial", color: "222222" })] });
+  return new Paragraph({ spacing: { before: 130, after: 45 }, children: [new TextRun({ text, bold: true, size: 18, font: "Arial", color: "222222" })] });
 }
 
 function bullet(text: string) {
-  return new Paragraph({ bullet: { level: 0 }, spacing: { after: 80, line: 260 }, children: [new TextRun({ text, size: 18, font: "Arial", color: "222222" })] });
+  return new Paragraph({ bullet: { level: 0 }, spacing: { after: 55, line: 235 }, children: [new TextRun({ text, size: 16, font: "Arial", color: "222222" })] });
 }
 
-function sectionFromDomains(title: string, values: Record<string, string[]>, color: string) {
-  return [heading(title, color), ...DOMAINS.flatMap((domain) => [domainHeading(domain), ...(Array.isArray(values?.[domain]) && values[domain].length ? values[domain].map(bullet) : [bullet("Não foram identificados aspetos específicos neste domínio.")])])];
+function domainSection(title: string, values: Record<string, string[]>) {
+  return [barHeading(title), ...DOMAINS.flatMap((domain) => [domainHeading(domain), ...((Array.isArray(values?.[domain]) && values[domain].length ? values[domain] : ["Não foram identificados aspetos específicos neste domínio."]).map(bullet))])];
+}
+
+function listSection(title: string, values: string[]) {
+  return [barHeading(title), ...((Array.isArray(values) && values.length ? values : ["Não foram identificados elementos específicos no relatório."]).map(bullet))];
 }
 
 function ratingsTable(ratings: Array<{ dominio: string; classificacao: string }>) {
-  const borders = { top: { style: BorderStyle.SINGLE, size: 1, color: "D6D6D6" }, bottom: { style: BorderStyle.SINGLE, size: 1, color: "D6D6D6" }, left: { style: BorderStyle.SINGLE, size: 1, color: "D6D6D6" }, right: { style: BorderStyle.SINGLE, size: 1, color: "D6D6D6" }, insideHorizontal: { style: BorderStyle.SINGLE, size: 1, color: "D6D6D6" }, insideVertical: { style: BorderStyle.SINGLE, size: 1, color: "D6D6D6" } };
-  const rows = [new TableRow({ tableHeader: true, children: ["Domínio", "Classificação"].map((text) => new TableCell({ shading: { fill: TEAL, type: ShadingType.CLEAR }, verticalAlign: VerticalAlign.CENTER, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text, bold: true, color: "FFFFFF", size: 18, font: "Arial" })] })] })) }), ...DOMAINS.map((domain) => {
+  const border = { style: BorderStyle.SINGLE, size: 5, color: "B8C7C3" };
+  const rows = [new TableRow({ tableHeader: true, children: ["Domínio", "Classificação"].map((text) => new TableCell({ shading: { fill: TEAL, type: ShadingType.CLEAR }, verticalAlign: VerticalAlign.CENTER, margins: { top: 70, bottom: 70, left: 80, right: 80 }, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text, bold: true, color: "FFFFFF", size: 16, font: "Arial" })] })] })) }), ...DOMAINS.map((domain) => {
     const rating = ratings?.find((item) => item.dominio === domain)?.classificacao || "Não indicada";
-    return new TableRow({ children: [domain, rating].map((text) => new TableCell({ verticalAlign: VerticalAlign.CENTER, children: [new Paragraph({ alignment: AlignmentType.CENTER, spacing: { before: 50, after: 50 }, children: [new TextRun({ text, size: 18, font: "Arial" })] })] })) });
+    return new TableRow({ children: [domain, rating].map((text) => new TableCell({ verticalAlign: VerticalAlign.CENTER, margins: { top: 70, bottom: 70, left: 80, right: 80 }, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text, size: 16, font: "Arial" })] })] })) });
   })];
-  return new Table({ width: { size: 100, type: WidthType.PERCENTAGE }, borders, rows });
+  return new Table({ width: { size: 100, type: WidthType.PERCENTAGE }, borders: { top: border, bottom: border, left: border, right: border, insideHorizontal: border, insideVertical: border }, rows });
 }
 
-function questionnaireTables(analysis: any) {
-  if (!Array.isArray(analysis?.grupos)) return [];
-  return analysis.grupos.flatMap((group: any) => {
-    const tableFor = (title: string, items: any[], positive: boolean) => {
-      const headers = positive ? ["N.º", "Item", "CT (%)", "C (%)", "CT + C (%)"] : ["N.º", "Item", "D (%)", "DT (%)", "Total (%)"];
-      const rows = [new TableRow({ tableHeader: true, children: headers.map((value) => new TableCell({ shading: { fill: TEAL, type: ShadingType.CLEAR }, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: value, bold: true, color: "FFFFFF", size: 14, font: "Arial" })] })] })) }), ...(items || []).map((item) => new TableRow({ children: [item.numero, item.item, positive ? item.concordoTotalmente : item.discordo, positive ? item.concordo : item.discordoTotalmente, item.total].map((value, index) => new TableCell({ verticalAlign: VerticalAlign.CENTER, children: [new Paragraph({ alignment: index === 1 ? AlignmentType.LEFT : AlignmentType.CENTER, children: [new TextRun({ text: String(value ?? ""), size: 14, font: "Arial" })] })] })) }))];
-      return [domainHeading(title), new Table({ width: { size: 100, type: WidthType.PERCENTAGE }, rows })];
-    };
-    return [heading(`Questionários — ${group.grupo}`, TEAL, 22), ...tableFor("Itens de maior concordância", group.maiorConcordancia, true), ...tableFor("Itens de menor concordância", group.menorConcordancia, false)];
-  });
+function groupCode(value: string) {
+  const normalized = value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase();
+  const match = normalized.match(/\bQ\s*([1-6])\b/);
+  return match ? `Q${match[1]}` : "";
 }
 
 export async function POST(request: Request) {
@@ -55,40 +59,63 @@ export async function POST(request: Request) {
     const content = JSON.parse(String(form.get("content") || "{}"));
     const audience = form.get("audience") === "familias" ? "familias" : "alunos";
     const school = String(form.get("school") || "Unidade orgânica avaliada").slice(0, 180);
-    const analysis = JSON.parse(String(form.get("questionnaireAnalysis") || "{}"));
     const manifest = JSON.parse(String(form.get("graphManifest") || "[]"));
     const accent = audience === "alunos" ? STUDENT : FAMILY;
-    const graphParagraphs: Paragraph[] = [];
+    const allowedCodes = audience === "alunos" ? ["Q1", "Q2"] : ["Q5", "Q6"];
+    const graphsByCode: Record<string, Paragraph[]> = Object.fromEntries(allowedCodes.map((code) => [code, []]));
     for (const item of Array.isArray(manifest) ? manifest.slice(0, 12) : []) {
+      const code = groupCode(String(item.name || ""));
+      if (!allowedCodes.includes(code)) continue;
       const file = form.get(`graph-${item.id}`);
       if (!(file instanceof File) || !file.type.match(/^image\/(png|jpeg)$/)) continue;
-      const ratio = Number(item.width) > 0 && Number(item.height) > 0 ? Number(item.height) / Number(item.width) : 0.58;
-      const width = 520;
-      graphParagraphs.push(new Paragraph({ alignment: AlignmentType.CENTER, spacing: { before: 160, after: 80 }, children: [new ImageRun({ type: file.type === "image/png" ? "png" : "jpg", data: new Uint8Array(await file.arrayBuffer()), transformation: { width, height: Math.min(360, Math.max(180, Math.round(width * ratio))) }, altText: { title: item.name || "Gráfico dos questionários", description: item.name || "Gráfico dos questionários", name: item.name || "Gráfico" } })] }));
-      graphParagraphs.push(new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 160 }, children: [new TextRun({ text: item.name || "Gráfico dos questionários", italics: true, size: 16, color: "666666", font: "Arial" })] }));
+      const ratio = Number(item.width) > 0 && Number(item.height) > 0 ? Number(item.height) / Number(item.width) : 0.52;
+      const width = 485;
+      graphsByCode[code].push(new Paragraph({ alignment: AlignmentType.CENTER, spacing: { before: 110, after: 35 }, children: [new ImageRun({ type: file.type === "image/png" ? "png" : "jpg", data: new Uint8Array(await file.arrayBuffer()), transformation: { width, height: Math.min(265, Math.max(150, Math.round(width * ratio))) }, altText: { title: item.name || `Gráfico ${code}`, description: item.name || `Resultados do ${code}`, name: item.name || code } })] }));
+      graphsByCode[code].push(new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 80 }, children: [new TextRun({ text: item.name || `Resultados do ${code}`, italics: true, size: 14, color: "666666", font: "Arial" })] }));
     }
 
-    const sectionTitle = audience === "alunos" ? "Relatório para alunos" : "Relatório para famílias";
-    const children = [
-      new Paragraph({ alignment: AlignmentType.LEFT, spacing: { after: 500 }, children: [new TextRun({ text: "IGEC", bold: true, color: "159447", size: 34, font: "Arial" }), new TextRun({ text: "  Inspeção-Geral da Educação e Ciência", color: "159447", size: 16, font: "Arial" })] }),
-      new Paragraph({ alignment: AlignmentType.CENTER, spacing: { before: 900, after: 280 }, children: [new TextRun({ text: sectionTitle.toUpperCase(), bold: true, color: TEAL, size: 34, font: "Arial" })] }),
-      new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 220 }, children: [new TextRun({ text: school.toUpperCase(), bold: true, color: accent, size: 30, font: "Arial" })] }),
-      new Paragraph({ alignment: AlignmentType.CENTER, spacing: { before: 700 }, children: [new TextRun({ text: "AVALIAÇÃO EXTERNA DAS ESCOLAS", color: TEAL, size: 30, font: "Arial" })] }),
-      new Paragraph({ children: [new PageBreak()] }),
-      new Paragraph({ alignment: AlignmentType.JUSTIFIED, spacing: { after: 180, line: 280 }, children: [new TextRun({ text: content.introducao || "", size: 19, font: "Arial" })] }),
-      ...sectionFromDomains(audience === "alunos" ? "O que está a correr bem?" : "Pontos fortes", content.pontosFortes || {}, accent),
-      new Paragraph({ children: [new PageBreak()] }),
-      ...sectionFromDomains(audience === "alunos" ? "O que pode melhorar?" : "Áreas de melhoria", content.areasMelhoria || {}, accent),
-      heading("Projetos interessantes", accent),
-      ...(content.projetosInteressantes || []).map(bullet),
-      ...(audience === "familias" ? [heading("Valorização do papel dos pais na vida escolar", accent), ...(content.papelFamilias || []).map(bullet)] : []),
-      ...(graphParagraphs.length || analysis?.grupos?.length ? [new Paragraph({ children: [new PageBreak()] }), heading("Resultados dos questionários", TEAL), ...graphParagraphs, ...questionnaireTables(analysis)] : []),
-      new Paragraph({ children: [new PageBreak()] }),
-      heading("Classificações", TEAL), ratingsTable(content.classificacoes || []),
+    const questionnaireIntro = audience === "alunos"
+      ? "Através dos questionários respondidos pelos alunos, foi possível conhecer as suas opiniões sobre a escola. Os gráficos seguintes apresentam os resultados mais relevantes."
+      : "Através dos questionários aplicados aos pais e encarregados de educação, foi possível conhecer as suas opiniões sobre diferentes aspetos da escola. Nos gráficos, as respostas de concordância e de discordância são apresentadas de forma agregada.";
+
+    const body: Array<Paragraph | Table> = [
+      new Paragraph({ spacing: { after: 130 }, children: [new TextRun({ text: audience === "alunos" ? "Caros alunos" : "Caros Pais e Encarregados de Educação", bold: true, size: 20, font: "Arial" })] }),
+      lead(content.introducao || ""),
+      ...domainSection(audience === "alunos" ? "O que está a correr bem?" : "Pontos fortes", content.pontosFortes || {}),
+      pageBreak(),
+      ...domainSection(audience === "alunos" ? "O que pode melhorar?" : "Áreas de melhoria", content.areasMelhoria || {}),
+      ...(audience === "alunos" ? [...listSection("Projetos interessantes", content.projetosInteressantes || [])] : []),
+      pageBreak(),
+      ...(audience === "familias" ? [...listSection("Projetos", content.projetosInteressantes || []), ...listSection("Valorização do papel dos pais na vida escolar", content.papelFamilias || []), pageBreak()] : []),
+      lead(questionnaireIntro),
+      ...graphsByCode[allowedCodes[0]],
+      pageBreak(),
+      ...graphsByCode[allowedCodes[1]],
+      new Paragraph({ spacing: { before: 180, after: 100 }, children: [new TextRun({ text: "Considerando uma escala de avaliação de cinco níveis, que vai de Excelente a Insuficiente, os resultados da avaliação foram os seguintes:", size: 16, font: "Arial" })] }),
+      ratingsTable(content.classificacoes || []),
+      new Paragraph({ spacing: { before: 170 }, alignment: AlignmentType.CENTER, children: [new TextRun({ text: "O relatório detalhado da avaliação externa pode ser consultado na página da IGEC.", color: TEAL, bold: true, size: 14, font: "Arial" })] }),
     ];
+
+    const cover = form.get("cover");
+    const coverChildren: Paragraph[] = [];
+    if (cover instanceof File && cover.type.match(/^image\/(png|jpeg)$/)) {
+      coverChildren.push(new Paragraph({ alignment: AlignmentType.CENTER, spacing: { before: 0, after: 0 }, children: [new ImageRun({ type: cover.type === "image/png" ? "png" : "jpg", data: new Uint8Array(await cover.arrayBuffer()), transformation: { width: 446, height: 631 }, altText: { title: "Capa do relatório validado", description: "Primeira página do relatório AEE validado", name: "Capa" } })] }));
+    } else {
+      coverChildren.push(
+        new Paragraph({ spacing: { after: 700 }, children: [new TextRun({ text: "IGEC", bold: true, color: "159447", size: 38, font: "Arial" }), new TextRun({ text: "  Inspeção-Geral da Educação e Ciência", color: "159447", size: 16, font: "Arial" })] }),
+        new Paragraph({ alignment: AlignmentType.CENTER, spacing: { before: 650, after: 200 }, children: [new TextRun({ text: audience === "alunos" ? "RELATÓRIO PARA ALUNOS" : "RELATÓRIO PARA PAIS E ENCARREGADOS DE EDUCAÇÃO", bold: true, color: TEAL, size: 32, font: "Arial" })] }),
+        new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 520 }, children: [new TextRun({ text: school.toUpperCase(), bold: true, color: accent, size: 28, font: "Arial" })] }),
+        new Paragraph({ alignment: AlignmentType.CENTER, spacing: { before: 500 }, children: [new TextRun({ text: "AVALIAÇÃO EXTERNA DAS ESCOLAS", color: TEAL, size: 28, font: "Arial" })] }),
+      );
+    }
+
+    const footer = new Footer({ children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: school, color: "999999", size: 13 }), new TextRun({ text: "  |  ", color: "999999", size: 13 }), new TextRun({ children: [PageNumber.CURRENT], color: "999999", size: 13 })] })] });
     const document = new Document({
-      styles: { default: { document: { run: { font: "Arial", size: 18 }, paragraph: { spacing: { line: 260 } } } } },
-      sections: [{ properties: { page: { margin: { top: 900, right: 900, bottom: 900, left: 900 } } }, footers: { default: new Footer({ children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: school, color: "999999", size: 14 }), new TextRun({ text: "  |  ", color: "999999", size: 14 }), new TextRun({ children: [PageNumber.CURRENT], color: "999999", size: 14 })] })] }) }, children }],
+      styles: { default: { document: { run: { font: "Arial", size: 16 }, paragraph: { spacing: { line: 235 } } } } },
+      sections: [
+        { properties: { type: SectionType.NEXT_PAGE, page: { size: { width: 11906, height: 16838 }, margin: { top: 0, right: 0, bottom: 0, left: 0 } } }, children: coverChildren },
+        { properties: { page: { size: { width: 11906, height: 16838 }, margin: { top: 720, right: 850, bottom: 720, left: 850 } } }, footers: { default: footer }, children: body },
+      ],
     });
     const blob = await Packer.toBlob(document);
     return new Response(await blob.arrayBuffer(), { headers: { "Content-Type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "Content-Disposition": `attachment; filename="${safeFilename(`${school}-${audience}`)}"`, "Cache-Control": "no-store" } });

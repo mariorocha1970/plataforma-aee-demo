@@ -3,8 +3,8 @@
 import { ChangeEvent, useEffect, useMemo, useState } from "react";
 import { normalizeAcronyms } from "./text-normalization";
 
-const APP_BUILD = "2026.11.11-v11";
-const ANALYSIS_ENGINE_VERSION = 11;
+const APP_BUILD = "2026.11.11-v12";
+const ANALYSIS_ENGINE_VERSION = 12;
 
 type View = "visao" | "documentos" | "privacidade" | "analise" | "estatistica" | "evidencias" | "entrevistas" | "triangulacao" | "relatorio" | "conclusoes";
 type EvidenceStatus = "Confirmada" | "Por triangular" | "Contraditória" | "Ausente";
@@ -1326,7 +1326,7 @@ function requiredAcademicComparisons(records: Evidence[]) {
       && item.validated
       && item.sourceType === "Quantitativa"
       && /nacional|país|pais|portugal/i.test(item.claim)
-      && isDirectCompletionComparison(item.claim)
+      && (item.statisticalEvidenceUse === "academic-comparison" || isDirectCompletionComparison(item.claim))
       && hasThreeCompleteAcademicYears(item.claim))
     .sort((a, b) => {
       const scopeA = Number(a.statisticalScopeCode || infoEscolasScopeFromText(a.claim) || 99);
@@ -1801,7 +1801,7 @@ export default function Home() {
           setTriangulationRevisions({});
           setConclusions([]);
           setChangesPending(true);
-          setBackupStatus("Motor de análise atualizado para v10. As evidências foram preservadas; refaça a triangulação, o relatório e as menções.");
+          setBackupStatus(`Motor de análise atualizado para ${APP_BUILD.replace(/^.*-/, "")}. As evidências foram preservadas; refaça a triangulação, o relatório e as menções.`);
           window.localStorage.setItem("aee-piloto-v2", JSON.stringify({ ...data, analysisEngineVersion: ANALYSIS_ENGINE_VERSION, report: "", narratives: {}, triangulationRevisions: {}, conclusions: [] }));
         }
         if (data.indicatorApplicability && typeof data.indicatorApplicability === "object") setIndicatorApplicability(data.indicatorApplicability);
@@ -2930,6 +2930,7 @@ export default function Home() {
         ...Object.fromEntries(usable.map((item: any) => [String(item.fieldId), evidenceRevision(synchronizedEvidence, String(item.fieldId))])),
       }));
       setChangesPending(true);
+      setBackupStatus("");
       const missing = activeFields.length - usable.length;
       setAiTriangulationStatus(missing
         ? `Foram processadas todas as ${records.length} evidências em ${batches.length} lote(s) e concluídos ${usable.length} de ${activeFields.length} campos. Reveja os ${missing} campo(s) em falta individualmente.`
@@ -2996,6 +2997,7 @@ export default function Home() {
       if (!improved) throw new Error("A IA não devolveu um relatório utilizável.");
       setReport(improved);
       setChangesPending(true);
+      setBackupStatus("");
       setExportStatus("Relatório aprimorado numa chamada. A validação humana continua obrigatória.");
     } catch (error) {
       setReport(normalizeAcronyms(localDraft));
@@ -3079,8 +3081,9 @@ export default function Home() {
         name: field.name,
         records: evidence
           .filter((record) => record.validated && record.fieldId === field.id)
+          .filter((record, index, records) => records.findIndex((candidate) => normalizeText(candidate.claim) === normalizeText(record.claim)) === index)
           .map((record) => ({
-            claim: record.claim.slice(0, 500),
+            claim: record.claim.slice(0, 280),
             sourceType: record.sourceType,
             status: record.status,
             strength: record.strength,
@@ -3106,9 +3109,16 @@ export default function Home() {
       if (!Array.isArray(payload?.conclusions) || payload.conclusions.length !== domainOrder.length) throw new Error("A IA não devolveu os quatro domínios esperados.");
       setConclusions(payload.conclusions.map((item: DomainConclusion) => {
         const previous = base.find((candidate) => candidate.domain === item.domain);
-        return previous?.ratingLocked ? { ...item, rating: previous.rating, ratingLocked: true } : item;
+        const evidenceSupport = item.evidenceSupport && item.evidenceSupport !== "Por validar" ? item.evidenceSupport : "Parcialmente sustentada";
+        const supportWarning = item.evidenceSupport && item.evidenceSupport !== "Por validar"
+          ? String(item.supportWarning || "")
+          : "A revisão foi concluída, mas a resposta não classificou explicitamente toda a sustentação probatória; confirme a fundamentação apresentada.";
+        return previous?.ratingLocked
+          ? { ...item, rating: previous.rating, ratingLocked: true, evidenceSupport, supportWarning }
+          : { ...item, evidenceSupport, supportWarning };
       }));
       setChangesPending(true);
+      setBackupStatus("");
       setConclusionsStatus("Proposta revista numa única chamada. Confirme a consistência com o relatório antes de validar.");
     } catch (error) {
       setConclusions(base);

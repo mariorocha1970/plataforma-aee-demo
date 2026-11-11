@@ -3,8 +3,8 @@
 import { ChangeEvent, useEffect, useMemo, useState } from "react";
 import { normalizeAcronyms } from "./text-normalization";
 
-const APP_BUILD = "2026.11.10-v10";
-const ANALYSIS_ENGINE_VERSION = 10;
+const APP_BUILD = "2026.11.11-v11";
+const ANALYSIS_ENGINE_VERSION = 11;
 
 type View = "visao" | "documentos" | "privacidade" | "analise" | "estatistica" | "evidencias" | "entrevistas" | "triangulacao" | "relatorio" | "conclusoes";
 type EvidenceStatus = "Confirmada" | "Por triangular" | "Contraditória" | "Ausente";
@@ -1307,7 +1307,10 @@ function buildReport(evidence: Evidence[], narratives: Record<string, string> = 
 
 function isDirectCompletionComparison(value: string) {
   const normalized = normalizeText(value);
-  if (/\b(?:ase|acao social escolar|provas? nacionais?|sem retencoes|retencao|desistencia|por curso)\b/.test(normalized)) return false;
+  // Os indicadores de equidade relativos aos beneficiários da ação social
+  // escolar são, por vezes, a única comparação disponível para o 1.º ou o
+  // 2.º ciclo. Não podem ser eliminados antes da redação do relatório.
+  if (/\b(?:provas? nacionais?|sem retencoes|retencao|desistencia|por curso)\b/.test(normalized)) return false;
   return /percentagem de alunos.*(?:concluem|concluiram|conclusao).*(?:ciclo|ensino secundario|curso profissional|curso).*(?:em|no prazo de)\s+(?:dois|tres|quatro|[234])\s+anos/.test(normalized)
     || /percursos? diretos? de sucesso.*(?:ciclo|secundario|profissional)/.test(normalized);
 }
@@ -1437,6 +1440,46 @@ function compactAcademicComparisonsSummary(comparisons: string[]) {
   return `Nos três últimos anos letivos disponíveis, os percursos diretos de sucesso situaram-se face à referência nacional do seguinte modo: ${items.join("; ")}.`;
 }
 
+function academicScopeLabel(value: string) {
+  const scope = infoEscolasScopeFromText(value);
+  if (scope === "1") return "1.º ciclo";
+  if (scope === "2") return "2.º ciclo";
+  if (scope === "3") return "3.º ciclo";
+  if (scope === "4") return "cursos científico-humanísticos";
+  if (scope === "5") return "ensino profissional";
+  return "";
+}
+
+function latestAcademicComparison(value: string) {
+  const rows = [...value.matchAll(/\b((?:19|20)\d{2}[\/\-–](?:\d{2}|(?:19|20)\d{2})):\s*escola\s*(-?\d+(?:[,.]\d+)?)%\s*e\s*nacional\s*(-?\d+(?:[,.]\d+)?)%/gi)]
+    .map((match) => ({ period: match[1], school: Number.parseFloat(match[2].replace(",", ".")), national: Number.parseFloat(match[3].replace(",", ".")) }))
+    .filter((row) => Number.isFinite(row.school) && Number.isFinite(row.national));
+  return rows.at(-1);
+}
+
+function structuredAcademicNarrative(comparisons: string[], qualitative = "") {
+  const format = (value: number) => `${value.toLocaleString("pt-PT", { maximumFractionDigits: 1 })}%`;
+  const byScope = ["1", "2", "3", "4", "5"].flatMap((scope) => {
+    const candidates = comparisons.filter((comparison) => infoEscolasScopeFromText(comparison) === scope);
+    const selected = candidates.find((comparison) => !/\b(?:ASE|ação social escolar)\b/i.test(comparison)) || candidates[0];
+    if (!selected) return [];
+    const latest = latestAcademicComparison(selected);
+    if (!latest) return [];
+    return [{ scope, label: academicScopeLabel(selected), latest, equity: /\b(?:ASE|ação social escolar)\b/i.test(selected) }];
+  });
+  const basic = byScope.filter((item) => ["1", "2", "3"].includes(item.scope));
+  const postBasic = byScope.filter((item) => ["4", "5"].includes(item.scope));
+  const describe = (item: typeof byScope[number]) => `${item.label}${item.equity ? " entre os alunos beneficiários da ação social escolar" : ""}, com ${format(item.latest.school)} no agrupamento, face a ${format(item.latest.national)} no país, em ${item.latest.period}`;
+  const paragraphs: string[] = [];
+  if (basic.length) paragraphs.push(`No ensino básico, os percursos de conclusão no tempo esperado apresentam uma evolução globalmente favorável. No último ano disponível, registaram-se ${basic.map(describe).join("; ")}.`);
+  if (postBasic.length) paragraphs.push(`No ensino secundário e nas restantes ofertas comparáveis, a leitura mais recente evidencia ${postBasic.map(describe).join("; ")}.`);
+  const usefulQualitative = qualitative.split(/(?<=[.!?])\s+/)
+    .filter((sentence) => sentence.length >= 35 && !/\b(?:meta|evidência validada|base probatória|triangulação|indicadores aplicáveis|identificador removido|reserva:)\b/i.test(sentence))
+    .slice(0, 2).join(" ");
+  if (usefulQualitative) paragraphs.push(usefulQualitative);
+  return paragraphs.join("\n\n");
+}
+
 function academicNarrativeForReport(narrative: string, comparisons: string[]) {
   let qualitative = narrative.trim();
   comparisons.forEach((comparison) => { qualitative = qualitative.replace(comparison, "").trim(); });
@@ -1449,7 +1492,28 @@ function academicNarrativeForReport(narrative: string, comparisons: string[]) {
     .filter((sentence) => sentence.length >= 30 && !/\b(?:evidência validada|base probatória|indicadores aplicáveis|triangulação)\b/i.test(sentence))
     .slice(0, 3)
     .join(" ");
-  return [compactAcademicComparisonsSummary(comparisons), qualitativeSentences].filter(Boolean).join(" ");
+  return structuredAcademicNarrative(comparisons, qualitativeSentences);
+}
+
+function academicScopesPresent(value: string) {
+  const normalized = normalizeText(value);
+  return new Set([
+    /\b1 ciclo|primeiro ciclo/.test(normalized) ? "1" : "",
+    /\b2 ciclo|segundo ciclo/.test(normalized) ? "2" : "",
+    /\b3 ciclo|terceiro ciclo/.test(normalized) ? "3" : "",
+    /cientifico.?humanistico|ensino secundario/.test(normalized) ? "4" : "",
+    /ensino profissional|cursos? profissionais?/.test(normalized) ? "5" : "",
+  ].filter(Boolean));
+}
+
+function ensureAcademicScopeCoverage(report: string, comparisons: string[], fallback: string) {
+  const expected = new Set(comparisons.map(infoEscolasScopeFromText).filter(Boolean));
+  const expression = /(\n5\.4\.1\.?\s+[^\n]*\n)([\s\S]*?)(?=\n5\.4\.2\.?\s+)/i;
+  const match = expression.exec(report);
+  if (!match) return report;
+  const present = academicScopesPresent(match[2]);
+  if ([...expected].every((scope) => present.has(scope))) return report;
+  return report.replace(expression, `${match[1]}\n${fallback.trim()}\n`);
 }
 
 function replaceAcademicSectionInReport(report: string, narrative: string) {
@@ -2926,7 +2990,9 @@ export default function Home() {
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok || payload?.ok === false) throw new Error(payload?.error || `O servidor devolveu o estado ${response.status}.`);
-      const improved = normalizeAcronyms(sanitizeAcademicSectionInReport(String(payload?.report || "").trim()));
+      const sanitized = sanitizeAcademicSectionInReport(String(payload?.report || "").trim());
+      const academicFallback = structuredAcademicNarrative(comparisons, completedNarratives["res-acad"] || "");
+      const improved = normalizeAcronyms(ensureAcademicScopeCoverage(sanitized, comparisons, academicFallback));
       if (!improved) throw new Error("A IA não devolveu um relatório utilizável.");
       setReport(improved);
       setChangesPending(true);
@@ -2991,7 +3057,7 @@ export default function Home() {
       fields: fields.filter((field) => field.domain === domain).map((field) => {
         const records = evidence.filter((record) => record.validated && record.fieldId === field.id);
         const narrative = completedNarratives[field.id]?.trim() || composeFieldNarrative(field, records, indicatorApplicability);
-        return { section: field.section, name: field.name, narrative: narrative.slice(0, 3_500) };
+        return { section: field.section, name: field.name, narrative: narrative.slice(0, 8_000) };
       }),
       evidenceProfile: fields.filter((field) => field.domain === domain).map((field) => {
         const records = evidence.filter((record) => record.validated && record.fieldId === field.id);
@@ -3008,6 +3074,19 @@ export default function Home() {
           evaluativeBalance: conclusionEvaluativeBalance(records),
         };
       }),
+      evidenceInventory: fields.filter((field) => field.domain === domain).map((field) => ({
+        section: field.section,
+        name: field.name,
+        records: evidence
+          .filter((record) => record.validated && record.fieldId === field.id)
+          .map((record) => ({
+            claim: record.claim.slice(0, 500),
+            sourceType: record.sourceType,
+            status: record.status,
+            strength: record.strength,
+            indicators: record.indicatorIds ?? [],
+          })),
+      })),
     }));
     if (!payloadDomains.some((item) => item.fields.some((field) => field.narrative.trim()))) {
       setConclusionsStatus("Ainda não existem narrativas trianguladas suficientes para formular conclusões.");

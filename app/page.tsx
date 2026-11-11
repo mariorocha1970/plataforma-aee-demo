@@ -3,7 +3,7 @@
 import { ChangeEvent, useEffect, useMemo, useState } from "react";
 import { normalizeAcronyms } from "./text-normalization";
 
-const APP_BUILD = "2026.11.11-v19";
+const APP_BUILD = "2026.11.11-v20";
 const ANALYSIS_ENGINE_VERSION = 19;
 
 type View = "visao" | "documentos" | "privacidade" | "analise" | "estatistica" | "evidencias" | "entrevistas" | "triangulacao" | "relatorio" | "conclusoes";
@@ -80,6 +80,17 @@ type InterviewCandidate = {
   support: string[];
   reservations: string[];
   questions: string[];
+};
+
+type InterviewQuestionDraft = {
+  id: string;
+  agendaId: InterviewAgenda["id"];
+  panel: string;
+  fieldId: string;
+  question: string;
+  rationale: string;
+  references: string[];
+  answer: string;
 };
 
 type InterviewAgenda = {
@@ -1802,6 +1813,9 @@ export default function Home() {
   const [interviewField, setInterviewField] = useState(fields[0].id);
   const [interviewText, setInterviewText] = useState("");
   const [interviewCandidates, setInterviewCandidates] = useState<InterviewCandidate[]>([]);
+  const [interviewQuestionDrafts, setInterviewQuestionDrafts] = useState<InterviewQuestionDraft[]>([]);
+  const [interviewQuestionsStatus, setInterviewQuestionsStatus] = useState("");
+  const [interviewQuestionsGenerating, setInterviewQuestionsGenerating] = useState(false);
   const [selectedInterviewCandidates, setSelectedInterviewCandidates] = useState<number[]>([]);
   const [interviewAnalysisStatus, setInterviewAnalysisStatus] = useState("");
   const [interviewAnalyzing, setInterviewAnalyzing] = useState(false);
@@ -1845,6 +1859,7 @@ export default function Home() {
         }
         if (Array.isArray(data.interviews)) setInterviews(data.interviews);
         if (Array.isArray(data.interviewCandidates)) setInterviewCandidates(data.interviewCandidates);
+        if (Array.isArray(data.interviewQuestionDrafts)) setInterviewQuestionDrafts(data.interviewQuestionDrafts);
         const restoredStatisticalRecords = Array.isArray(data.statisticalRecords) ? deduplicateStatisticalRecords(data.statisticalRecords) : [];
         setStatisticalRecords(restoredStatisticalRecords);
         if (Array.isArray(data.statisticalTreatments)) setStatisticalTreatments(deduplicateStatisticalTreatments(data.statisticalTreatments.filter((item: StatisticalTreatment) => Array.isArray(item.points) && Array.isArray(item.strengths) && Array.isArray(item.improvements)), restoredStatisticalRecords));
@@ -1921,13 +1936,13 @@ export default function Home() {
   const triangulationBatchCount = Math.max(1, Math.ceil(validatedEvidenceCount / 180));
 
   function saveLocal() {
-    window.localStorage.setItem("aee-piloto-v2", JSON.stringify({ analysisEngineVersion: ANALYSIS_ENGINE_VERSION, schoolName, evidence, documentCandidates, statisticalRecords, statisticalTreatments, questionnaireComments, questionnaireReport, interviews, interviewCandidates, files, fileAnalysis, narratives, triangulationRevisions, report, conclusions, indicatorApplicability, lastUpdated }));
+    window.localStorage.setItem("aee-piloto-v2", JSON.stringify({ analysisEngineVersion: ANALYSIS_ENGINE_VERSION, schoolName, evidence, documentCandidates, statisticalRecords, statisticalTreatments, questionnaireComments, questionnaireReport, interviews, interviewCandidates, interviewQuestionDrafts, files, fileAnalysis, narratives, triangulationRevisions, report, conclusions, indicatorApplicability, lastUpdated }));
     setSaved(true);
     window.setTimeout(() => setSaved(false), 1800);
   }
 
   function exportBackup() {
-    const payload = { analysisEngineVersion: ANALYSIS_ENGINE_VERSION, schoolName, evidence, documentCandidates, statisticalRecords, statisticalTreatments, questionnaireComments, questionnaireReport, interviews, interviewCandidates, files, fileAnalysis, narratives, triangulationRevisions, report, conclusions, indicatorApplicability, lastUpdated };
+    const payload = { analysisEngineVersion: ANALYSIS_ENGINE_VERSION, schoolName, evidence, documentCandidates, statisticalRecords, statisticalTreatments, questionnaireComments, questionnaireReport, interviews, interviewCandidates, interviewQuestionDrafts, files, fileAnalysis, narratives, triangulationRevisions, report, conclusions, indicatorApplicability, lastUpdated };
     const backup = {
       format: "plataforma-aee-backup",
       version: 1,
@@ -1977,6 +1992,7 @@ export default function Home() {
       setQuestionnaireReport(typeof data.questionnaireReport === "string" ? data.questionnaireReport : "");
       setInterviews(data.interviews);
       setInterviewCandidates(Array.isArray(data.interviewCandidates) ? data.interviewCandidates : []);
+      setInterviewQuestionDrafts(Array.isArray(data.interviewQuestionDrafts) ? data.interviewQuestionDrafts : []);
       setSelectedInterviewCandidates([]);
       setFiles(data.files);
       setFileAnalysis(data.fileAnalysis);
@@ -2017,7 +2033,7 @@ export default function Home() {
     setNarratives(refreshedNarratives);
     setLastUpdated(timestamp);
     setChangesPending(false);
-    window.localStorage.setItem("aee-piloto-v2", JSON.stringify({ analysisEngineVersion: ANALYSIS_ENGINE_VERSION, schoolName, evidence, documentCandidates, statisticalRecords, statisticalTreatments, questionnaireComments, questionnaireReport, interviews, interviewCandidates, files, fileAnalysis, narratives: refreshedNarratives, triangulationRevisions, report: refreshedReport, conclusions, indicatorApplicability, lastUpdated: timestamp }));
+    window.localStorage.setItem("aee-piloto-v2", JSON.stringify({ analysisEngineVersion: ANALYSIS_ENGINE_VERSION, schoolName, evidence, documentCandidates, statisticalRecords, statisticalTreatments, questionnaireComments, questionnaireReport, interviews, interviewCandidates, interviewQuestionDrafts, files, fileAnalysis, narratives: refreshedNarratives, triangulationRevisions, report: refreshedReport, conclusions, indicatorApplicability, lastUpdated: timestamp }));
     window.setTimeout(() => setUpdating(false), 650);
   }
 
@@ -2031,6 +2047,7 @@ export default function Home() {
       questionnaireComments: [] as QuestionnaireComment[],
       questionnaireReport: "",
       interviews: [] as Interview[],
+      interviewQuestionDrafts: [] as InterviewQuestionDraft[],
       files: [] as string[],
       fileAnalysis: {} as Record<string, FileAnalysis>,
       report: "",
@@ -2053,6 +2070,7 @@ export default function Home() {
     setQuestionnaireReport("");
     setInterviews(emptyProcess.interviews);
     setInterviewCandidates([]);
+    setInterviewQuestionDrafts([]);
     setSelectedInterviewCandidates([]);
     setInterviewAnalysisStatus("");
     setFiles(emptyProcess.files);
@@ -2658,6 +2676,88 @@ export default function Home() {
     } finally {
       setInterviewAnalyzing(false);
     }
+  }
+
+  async function suggestInterviewQuestions() {
+    if (interviewQuestionsGenerating) return;
+    const relevantEvidence = evidence
+      .filter((item) => item.validated)
+      .sort((a, b) => (a.status === "Contraditória" ? -1 : 0) - (b.status === "Contraditória" ? -1 : 0))
+      .slice(0, 90)
+      .map((item) => ({
+        campo: getField(item.fieldId).name,
+        afirmacao: item.claim.slice(0, 650),
+        fonte: item.source,
+        localizacao: item.location,
+        tipo: item.sourceType,
+        estado: item.status,
+      }));
+    const comments = questionnaireComments.slice(0, 40).map((item) => ({ grupo: item.group, fonte: item.source, comentario: item.text.slice(0, 500) }));
+    if (!relevantEvidence.length && !comments.length && !questionnaireReport.trim()) {
+      setInterviewQuestionsStatus("Ainda não existem evidências validadas, resultados de questionários ou comentários para fundamentar um guião contextualizado.");
+      return;
+    }
+    if (!window.confirm(`Gerar um guião contextualizado para o painel «${interviewPanel}»? Esta operação utiliza 1 chamada à IA.`)) return;
+    setInterviewQuestionsGenerating(true);
+    setInterviewQuestionsStatus("A cruzar documentos, questionários, comentários e lacunas de evidência…");
+    try {
+      const response = await fetch("/api/suggest-interview-questions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          agenda: interviewAgendaId,
+          panel: interviewPanel,
+          evidence: relevantEvidence,
+          questionnaireComments: comments,
+          questionnaireReport: questionnaireReport.slice(0, 12_000),
+        }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || payload?.ok === false) throw new Error(payload?.error || `O servidor devolveu o estado ${response.status}.`);
+      const questions = Array.isArray(payload?.questions) ? payload.questions : [];
+      const generated: InterviewQuestionDraft[] = questions.filter((item: any) => typeof item.pergunta === "string" && item.pergunta.trim()).map((item: any, index: number) => {
+        const field = fields.find((candidate) => normalizeText(candidate.name) === normalizeText(item.campo ?? "")) ?? fields[0];
+        return {
+          id: `${interviewAgendaId}-${Date.now()}-${index}`,
+          agendaId: interviewAgendaId,
+          panel: interviewPanel,
+          fieldId: field.id,
+          question: item.pergunta.trim(),
+          rationale: typeof item.finalidade === "string" ? item.finalidade.trim() : "",
+          references: Array.isArray(item.referencias) ? item.referencias.filter((value: unknown) => typeof value === "string" && value.trim()).map((value: string) => value.trim()) : [],
+          answer: "",
+        };
+      });
+      if (!generated.length) throw new Error("A informação disponível não permitiu formular questões fundamentadas para este painel.");
+      setInterviewQuestionDrafts((current) => [...current.filter((item) => item.agendaId !== interviewAgendaId || item.panel !== interviewPanel), ...generated]);
+      setInterviewQuestionsStatus(`${generated.length} questões propostas. Reveja-as antes da entrevista; as referências reproduzem apenas localizações existentes na Matriz.`);
+      setChangesPending(true);
+    } catch (error) {
+      setInterviewQuestionsStatus(error instanceof Error ? error.message : "Não foi possível gerar o guião do painel.");
+    } finally {
+      setInterviewQuestionsGenerating(false);
+    }
+  }
+
+  function updateInterviewQuestion(id: string, changes: Partial<InterviewQuestionDraft>) {
+    setInterviewQuestionDrafts((current) => current.map((item) => item.id === id ? { ...item, ...changes } : item));
+    setChangesPending(true);
+  }
+
+  function transferInterviewAnswers() {
+    const answered = interviewQuestionDrafts.filter((item) => item.agendaId === interviewAgendaId && item.panel === interviewPanel && item.answer.trim());
+    if (!answered.length) {
+      setInterviewQuestionsStatus("Registe pelo menos uma resposta antes de a transferir para as notas completas.");
+      return;
+    }
+    const block = [`GUIÃO E REGISTO — AGENDA ${interviewAgendaId}`, `Painel: ${interviewPanel}`, "", ...answered.flatMap((item, index) => {
+      const reference = item.references.length ? [`Referências de preparação: ${item.references.join("; ")}`] : [];
+      return [`${index + 1}. [${getField(item.fieldId).section} — ${getField(item.fieldId).name}] ${item.question}`, ...reference, `Resposta: ${item.answer.trim()}`, ""];
+    })].join("\n").trim();
+    setInterviewText((current) => current.trim() ? `${current.trim()}\n\n${block}` : block);
+    setInterviewQuestionsStatus(`${answered.length} resposta(s) transferida(s) para «Notas completas ou síntese global da entrevista».`);
+    setChangesPending(true);
+    window.setTimeout(() => document.getElementById("interview-notes")?.scrollIntoView({ behavior: "smooth", block: "center" }), 0);
   }
 
   function toggleInterviewCandidate(id: number) {
@@ -3551,6 +3651,7 @@ export default function Home() {
           const selectedAgenda = interviewAgendas.find((agenda) => agenda.id === interviewAgendaId) ?? interviewAgendas[0];
           const normalizedSearch = normalizeText(interviewPanelSearch.trim());
           const filteredPanels = selectedAgenda.panels.map((panel, index) => ({ panel, index })).filter(({ panel }) => !normalizedSearch || normalizeText(panel).includes(normalizedSearch));
+          const currentQuestions = interviewQuestionDrafts.filter((item) => item.agendaId === interviewAgendaId && item.panel === interviewPanel);
           return <section className="view">
           <div className="page-heading"><div><p className="eyebrow">Agente 5 · Extração testemunhal por IA</p><h2>Evidências dos painéis</h2><p>Introduza as notas de cada painel. A IA extrai apenas evidências testemunhais para os campos pertinentes, sem formular juízos nem realizar consolidações; a equipa revê e valida antes de as enviar para a Matriz.</p></div></div>
           <div className="interview-workflow-note"><strong>Menos classificação manual</strong><span>Não é necessário dividir antecipadamente o relato pelos campos de análise. Evite apenas nomes e outros dados pessoais desnecessários.</span></div>
@@ -3570,6 +3671,20 @@ export default function Home() {
           </section>
           <div className="interview-import-card">
             <div className="selected-panel-banner"><span>Agenda {selectedAgenda.id}</span><div><small>Painel selecionado</small><strong>{interviewPanel}</strong></div></div>
+            <section className="interview-guide">
+              <div className="section-heading"><div><p className="eyebrow">Preparação contextualizada</p><h3>Guião de questões do painel</h3><p>As perguntas cruzam documentos analisados, localizações disponíveis, questionários e comentários. Constituem pistas de inquirição, não conclusões probatórias.</p></div><button className="button secondary" disabled={interviewQuestionsGenerating || interviewAnalyzing} onClick={suggestInterviewQuestions}>{interviewQuestionsGenerating ? "A preparar…" : currentQuestions.length ? "Refazer sugestões com IA · 1 chamada" : "Sugerir questões com IA · 1 chamada"}</button></div>
+              {interviewQuestionsStatus && <div className="statistics-status" role="status">{interviewQuestionsStatus}</div>}
+              {currentQuestions.length > 0 && <div className="interview-question-list">
+                {currentQuestions.map((item, index) => { const field = getField(item.fieldId); return <article className="interview-question" key={item.id}>
+                  <div className="interview-question-top"><span>{index + 1}</span><label>Campo<select value={item.fieldId} onChange={(event) => updateInterviewQuestion(item.id, { fieldId: event.target.value })}>{fields.map((option) => <option value={option.id} key={option.id}>{option.section} · {option.name}</option>)}</select></label><button className="text-button danger-text" onClick={() => setInterviewQuestionDrafts((current) => current.filter((question) => question.id !== item.id))}>Remover</button></div>
+                  <label>Questão<textarea value={item.question} onChange={(event) => updateInterviewQuestion(item.id, { question: event.target.value })} /></label>
+                  {item.references.length > 0 && <div className="question-references"><strong>Referências para preparação</strong><ul>{item.references.map((reference, referenceIndex) => <li key={`${item.id}-${referenceIndex}`}>{reference}</li>)}</ul></div>}
+                  {item.rationale && <small><strong>Finalidade:</strong> {item.rationale}</small>}
+                  <label>Resposta / notas do painel<textarea className="question-answer" value={item.answer} onChange={(event) => updateInterviewQuestion(item.id, { answer: event.target.value })} placeholder="Registe a resposta, exemplos concretos, divergências e elementos a confirmar…" /></label>
+                </article>; })}
+                <div className="interview-guide-actions"><small>{currentQuestions.filter((item) => item.answer.trim()).length} de {currentQuestions.length} respostas registadas</small><button className="button primary" onClick={transferInterviewAnswers}>Transferir respostas para as notas completas</button></div>
+              </div>}
+            </section>
             <label className="interview-full-text">Notas completas ou síntese global da entrevista<textarea id="interview-notes" value={interviewText} onChange={(event) => setInterviewText(event.target.value)} placeholder="Cole aqui as notas da entrevista, sem identificação nominal. A organização por campos será proposta automaticamente…" /></label>
             <div className="interview-import-actions"><small>{interviewText.trim().length.toLocaleString("pt-PT")} caracteres</small><button className="button primary" disabled={interviewAnalyzing || interviewText.trim().length < 40} onClick={analyzeInterviewNotes}>{interviewAnalyzing ? "A analisar…" : "Analisar relato integralmente"}</button></div>
           </div>
@@ -3604,6 +3719,16 @@ export default function Home() {
             .selected-panel-banner div { display: grid; gap: .15rem; }
             .interview-source-lock { display: grid; gap: .15rem; margin-bottom: .7rem; padding: .65rem .75rem; border-left: 3px solid #1e6b56; border-radius: 7px; background: #edf6f2; }
             .interview-source-lock span { color: #42554f; font-size: .88rem; }
+            .interview-guide { margin: 1rem 0 1.25rem; padding: 1rem; border: 1px solid #dce5e1; border-radius: 14px; background: #fbfdfc; }
+            .interview-question-list { display: grid; gap: .85rem; margin-top: 1rem; }
+            .interview-question { display: grid; gap: .7rem; padding: 1rem; border: 1px solid #dbe4e0; border-radius: 12px; background: white; }
+            .interview-question-top { display: grid; grid-template-columns: 2rem minmax(0, 1fr) auto; gap: .75rem; align-items: end; }
+            .interview-question-top > span { display: grid; place-items: center; width: 2rem; height: 2rem; border-radius: 50%; background: #1e6b56; color: white; font-weight: 800; }
+            .interview-question textarea { min-height: 5rem; }
+            .interview-question textarea.question-answer { min-height: 7rem; }
+            .question-references { padding: .65rem .8rem; border-left: 3px solid #c38b25; border-radius: 7px; background: #fff8e9; }
+            .question-references ul { margin: .35rem 0 0; padding-left: 1.2rem; }
+            .interview-guide-actions { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
             @media (max-width: 900px) { .agenda-filters, .panel-list { grid-template-columns: 1fr; } .panel-option { grid-template-columns: 2.2rem 1fr; } .panel-option > small { display: none; } }
           `}</style>
         </section>; })()}

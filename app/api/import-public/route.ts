@@ -112,7 +112,7 @@ function infoEscolasPayload(html: string, sourceUrl: string, requestedUrl = sour
     const normalizedTitle = title.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
     const academicEvidenceRelevant = (
       /alunos.*(?:apoio ase|ase).*(?:concluem|conclusao).*(?:em|nos)\s+(?:dois|tres|quatro|[234])\s+anos/.test(normalizedTitle)
-      || /percentagem de alunos que concluem.*(?:em|nos)\s+(?:dois|tres|quatro|[234])\s+anos/.test(normalizedTitle)
+      || /percentagem de alunos.*concluem.*(?:em|nos)\s+(?:dois|tres|quatro|[234])\s+anos/.test(normalizedTitle)
       || /positiva.*provas? nacionais?.*percurso sem retencoes/.test(normalizedTitle)
       || /percursos? diretos? de sucesso/.test(normalizedTitle)
     );

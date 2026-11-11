@@ -71,7 +71,7 @@ export async function POST(request: NextRequest) {
     if (domains.length !== 4) return NextResponse.json({ ok: false, error: "São necessários os quatro domínios e respetivas triangulações." }, { status: 400 });
     const schoolName = String(body?.schoolName || "a organização escolar").slice(0, 180);
     const domainsJson = JSON.stringify(domains);
-    if (domainsJson.length > 700_000) return NextResponse.json({ ok: false, error: "O perfil probatório excede o limite seguro. Consolide as evidências excessivamente repetidas antes de repetir a síntese." }, { status: 413 });
+    if (domainsJson.length > 300_000) return NextResponse.json({ ok: false, error: "O perfil probatório excede o limite seguro. Consolide as evidências excessivamente repetidas antes de repetir a síntese." }, { status: 413 });
     const prompt = `Formule a síntese conclusiva de uma Avaliação Externa das Escolas, em português europeu, relativa a ${schoolName}.
 
 DADOS POR DOMÍNIO (narrativas trianguladas e perfil probatório detalhado por campo):
@@ -91,11 +91,15 @@ REGRAS:
 - Em supportWarning, explique de modo conciso a lacuna ou contradição quando a sustentação não for plena. Se for «Sustentada», devolva uma cadeia vazia.
 - Se uma menção fixada não estiver sustentada, mantenha-a como decisão da equipa, mas não produza uma fundamentação fictícia. A rationale deve distinguir a decisão assumida da limitação probatória e indicar objetivamente o que impede a sua validação plena.
 - Pontos fortes e áreas de melhoria são juízos avaliativos concisos, autónomos e coerentes com o texto do relatório; não são listas de atividades nem transcrições de evidências.
+- Produza, em regra, três pontos fortes e duas áreas de melhoria por domínio. Cada enunciado deve ser uma frase completa, sintaticamente autónoma, com conteúdo substantivo e redação própria de relatório da IGEC.
+- Não transforme reservas sobre amostras, anexos, causalidade, desagregação, método de apuramento ou quantidade de fontes em áreas de melhoria da organização, salvo quando as evidências demonstrem que essa insuficiência corresponde efetivamente a uma fragilidade das práticas de monitorização ou avaliação do agrupamento.
+- As áreas de melhoria devem incidir em processos ou resultados concretos a aperfeiçoar. Nunca use como área de melhoria fórmulas editoriais como «a interpretação deve atender», «carece de evidência adicional», «consultar anexo» ou referências ao funcionamento da análise.
+- Não fragmente percentagens, abreviaturas ou frases em vários pontos. Reveja a sintaxe final de cada enunciado antes de responder.
 - Formule apenas o que esteja sustentado pelas narrativas fornecidas. Não invente práticas, inovação, resultados, impacto ou generalização.
 - Reanalise cada domínio de raiz. Não use uma proposta anterior como âncora e não presuma que a menção deve descer ou subir.
 - Todos os quatro domínios foram incluídos integralmente. Nunca afirme que as narrativas ou o perfil probatório não contêm informação quando o campo apresenta count superior a zero ou uma narrativa não vazia. Nessa situação, analise expressamente a informação fornecida e identifique apenas a limitação concreta que subsista.
 - Percorra todos os campos de cada domínio antes de formular a menção. A fundamentação deve refletir o padrão global do domínio e não uma única reserva ou um único campo.
-- Leia integralmente evidenceInventory. Este inventário contém todas as evidências validadas, sem a seleção representativa aplicada aos restantes perfis, e prevalece sobre qualquer síntese abreviada quando esta omita uma prática, resultado, impacto, reserva ou contradição relevante.
+- Leia integralmente evidenceInventory. O campo totalCount contabiliza todas as evidências validadas; records contém uma seleção diversificada e não repetida para controlar o volume da chamada. Cruze-a com as narrativas, indicatorProfiles, sourceProfiles e evaluativeBalance, que foram calculados sobre a totalidade das evidências.
 - Percorra também todos os indicatorProfiles de cada campo, incluindo os que apresentem evidência positiva robusta. A seleção da menção deve resultar do conjunto dos indicadores aplicáveis; é proibido ignorar um indicador coberto apenas porque não foi referido na narrativa sintética.
 - Cruze os indicatorProfiles com os sourceProfiles. Estes últimos asseguram que evidências documentais, quantitativas e testemunhais, incluindo entrevistas, são consideradas mesmo quando ainda não foram associadas manualmente a um indicador.
 - A ausência de associação de algumas evidências a um indicador é uma questão de organização da matriz, não um sinal negativo sobre o domínio. Considere unlinkedEvidence pelo seu conteúdo, sem a transformar automaticamente em área de melhoria.

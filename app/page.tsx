@@ -3,7 +3,7 @@
 import { ChangeEvent, useEffect, useMemo, useState } from "react";
 import { normalizeAcronyms } from "./text-normalization";
 
-const APP_BUILD = "2026.11.11-v20";
+const APP_BUILD = "2026.11.11-v21";
 const ANALYSIS_ENGINE_VERSION = 19;
 
 type View = "visao" | "documentos" | "privacidade" | "analise" | "estatistica" | "evidencias" | "entrevistas" | "triangulacao" | "relatorio" | "conclusoes";
@@ -2739,6 +2739,57 @@ export default function Home() {
     }
   }
 
+  async function suggestAllInterviewQuestions() {
+    if (interviewQuestionsGenerating) return;
+    const agenda = interviewAgendas.find((item) => item.id === interviewAgendaId);
+    if (!agenda) return;
+    const relevantEvidence = evidence
+      .filter((item) => item.validated)
+      .sort((a, b) => (a.status === "Contraditória" ? -1 : 0) - (b.status === "Contraditória" ? -1 : 0))
+      .slice(0, 90)
+      .map((item) => ({ campo: getField(item.fieldId).name, afirmacao: item.claim.slice(0, 650), fonte: item.source, localizacao: item.location, tipo: item.sourceType, estado: item.status }));
+    const comments = questionnaireComments.slice(0, 40).map((item) => ({ grupo: item.group, fonte: item.source, comentario: item.text.slice(0, 500) }));
+    if (!relevantEvidence.length && !comments.length && !questionnaireReport.trim()) {
+      setInterviewQuestionsStatus("Ainda não existem evidências validadas, resultados de questionários ou comentários para fundamentar os guiões.");
+      return;
+    }
+    const existing = interviewQuestionDrafts.filter((item) => item.agendaId === interviewAgendaId);
+    const answered = existing.filter((item) => item.answer.trim()).length;
+    const warning = answered ? `\n\nAtenção: serão substituídos ${existing.length} itens existentes, incluindo ${answered} resposta(s) já registada(s).` : existing.length ? `\n\nSerão substituídas as ${existing.length} questões atualmente guardadas nesta agenda.` : "";
+    if (!window.confirm(`Gerar, numa única chamada à IA, os guiões contextualizados dos ${agenda.panels.length} painéis da Agenda ${agenda.id}?${warning}`)) return;
+    setInterviewQuestionsGenerating(true);
+    setInterviewQuestionsStatus(`A preparar os guiões dos ${agenda.panels.length} painéis numa única chamada…`);
+    try {
+      const response = await fetch("/api/suggest-interview-questions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ agenda: agenda.id, panels: agenda.panels, evidence: relevantEvidence, questionnaireComments: comments, questionnaireReport: questionnaireReport.slice(0, 12_000) }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || payload?.ok === false) throw new Error(payload?.error || `O servidor devolveu o estado ${response.status}.`);
+      const guides = Array.isArray(payload?.panelGuides) ? payload.panelGuides : [];
+      const now = Date.now();
+      const generated: InterviewQuestionDraft[] = guides.flatMap((guide: any, panelIndex: number) => {
+        const matchedPanel = agenda.panels.find((candidate) => normalizeText(candidate) === normalizeText(guide?.painel ?? ""));
+        if (!matchedPanel || !Array.isArray(guide?.questoes)) return [];
+        return guide.questoes.filter((item: any) => typeof item.pergunta === "string" && item.pergunta.trim()).map((item: any, questionIndex: number) => {
+          const field = fields.find((candidate) => normalizeText(candidate.name) === normalizeText(item.campo ?? "")) ?? fields[0];
+          return { id: `${agenda.id}-${now}-${panelIndex}-${questionIndex}`, agendaId: agenda.id, panel: matchedPanel, fieldId: field.id, question: item.pergunta.trim(), rationale: typeof item.finalidade === "string" ? item.finalidade.trim() : "", references: Array.isArray(item.referencias) ? item.referencias.filter((value: unknown) => typeof value === "string" && value.trim()).map((value: string) => value.trim()) : [], answer: "" };
+        });
+      });
+      const coveredPanels = new Set(generated.map((item) => item.panel));
+      if (!generated.length) throw new Error("A informação disponível não permitiu formular guiões fundamentados.");
+      if (coveredPanels.size !== agenda.panels.length) throw new Error(`A resposta ficou incompleta: foram recebidos guiões para ${coveredPanels.size} de ${agenda.panels.length} painéis. Os guiões anteriores foram preservados e não haverá uma segunda chamada automática.`);
+      setInterviewQuestionDrafts((current) => [...current.filter((item) => item.agendaId !== agenda.id), ...generated]);
+      setInterviewQuestionsStatus(`${generated.length} questões geradas para os ${coveredPanels.size} painéis da Agenda ${agenda.id}, numa única chamada. Selecione cada painel para rever o respetivo guião.`);
+      setChangesPending(true);
+    } catch (error) {
+      setInterviewQuestionsStatus(error instanceof Error ? error.message : "Não foi possível gerar os guiões da agenda.");
+    } finally {
+      setInterviewQuestionsGenerating(false);
+    }
+  }
+
   function updateInterviewQuestion(id: string, changes: Partial<InterviewQuestionDraft>) {
     setInterviewQuestionDrafts((current) => current.map((item) => item.id === id ? { ...item, ...changes } : item));
     setChangesPending(true);
@@ -3656,7 +3707,7 @@ export default function Home() {
           <div className="page-heading"><div><p className="eyebrow">Agente 5 · Extração testemunhal por IA</p><h2>Evidências dos painéis</h2><p>Introduza as notas de cada painel. A IA extrai apenas evidências testemunhais para os campos pertinentes, sem formular juízos nem realizar consolidações; a equipa revê e valida antes de as enviar para a Matriz.</p></div></div>
           <div className="interview-workflow-note"><strong>Menos classificação manual</strong><span>Não é necessário dividir antecipadamente o relato pelos campos de análise. Evite apenas nomes e outros dados pessoais desnecessários.</span></div>
           <section className="agenda-browser">
-            <div className="section-heading"><div><p className="eyebrow">Agenda de trabalho aplicável</p><h3>Seleção do painel entrevistado</h3><p>Escolha a tipologia da unidade orgânica. Os painéis são apresentados pela ordem prevista na respetiva agenda.</p></div><span className="badge">{selectedAgenda.panels.length} painéis</span></div>
+            <div className="section-heading"><div><p className="eyebrow">Agenda de trabalho aplicável</p><h3>Seleção do painel entrevistado</h3><p>Escolha a tipologia da unidade orgânica. Os painéis são apresentados pela ordem prevista na respetiva agenda.</p></div><div className="action-row"><span className="badge">{selectedAgenda.panels.length} painéis</span><button className="button primary" disabled={interviewQuestionsGenerating || interviewAnalyzing} onClick={suggestAllInterviewQuestions}>{interviewQuestionsGenerating ? "A preparar guiões…" : "Gerar guiões de todos os painéis · 1 chamada"}</button></div></div>
             <div className="agenda-filters">
               <label>Grupo<select disabled={interviewAnalyzing} value={selectedAgenda.group} onChange={(event) => { const group = event.target.value as InterviewAgenda["group"]; const firstAgenda = interviewAgendas.find((agenda) => agenda.group === group); if (firstAgenda) changeInterviewContext(firstAgenda.id, firstAgenda.panels[0]); }}><option value="1">Grupo 1 — Escolas não agrupadas e estabelecimentos particulares</option><option value="2">Grupo 2 — Agrupamentos de escolas</option></select></label>
               <label>Agenda e tipologia<select disabled={interviewAnalyzing} value={selectedAgenda.id} onChange={(event) => { const agenda = interviewAgendas.find((item) => item.id === event.target.value); if (agenda) changeInterviewContext(agenda.id, agenda.panels[0]); }}>{interviewAgendas.filter((agenda) => agenda.group === selectedAgenda.group).map((agenda) => <option value={agenda.id} key={agenda.id}>Agenda {agenda.id} — {agenda.title}</option>)}</select></label>
@@ -3665,7 +3716,7 @@ export default function Home() {
             <div className="agenda-summary"><div><span className="agenda-code">{selectedAgenda.id}</span><div><strong>Agenda {selectedAgenda.id} — {selectedAgenda.title}</strong>{selectedAgenda.subtitle && <p>{selectedAgenda.subtitle}</p>}<small>Fonte: {selectedAgenda.source}</small></div></div></div>
             {selectedAgenda.note && <div className="agenda-note"><strong>Nota operacional</strong><span>{selectedAgenda.note}</span></div>}
             <div className="panel-list" role="list" aria-label={`Painéis da Agenda ${selectedAgenda.id}`}>
-              {filteredPanels.map(({ panel, index }) => <button type="button" role="listitem" disabled={interviewAnalyzing} className={interviewPanel === panel ? "panel-option selected" : "panel-option"} key={`${selectedAgenda.id}-${index}`} onClick={() => { changeInterviewContext(selectedAgenda.id, panel); window.setTimeout(() => document.getElementById("interview-notes")?.focus(), 0); }}><span>{index + 1}</span><strong>{panel}</strong><small>{interviewPanel === panel ? "Selecionado" : "Selecionar painel"}</small></button>)}
+              {filteredPanels.map(({ panel, index }) => { const questionCount = interviewQuestionDrafts.filter((item) => item.agendaId === selectedAgenda.id && item.panel === panel).length; return <button type="button" role="listitem" disabled={interviewAnalyzing || interviewQuestionsGenerating} className={interviewPanel === panel ? "panel-option selected" : "panel-option"} key={`${selectedAgenda.id}-${index}`} onClick={() => { changeInterviewContext(selectedAgenda.id, panel); window.setTimeout(() => document.getElementById("interview-notes")?.focus(), 0); }}><span>{index + 1}</span><strong>{panel}</strong><small>{questionCount ? `${questionCount} questões` : interviewPanel === panel ? "Selecionado" : "Sem guião"}</small></button>; })}
               {!filteredPanels.length && <div className="empty-panel-search">Nenhum painel corresponde à pesquisa nesta agenda.</div>}
             </div>
           </section>

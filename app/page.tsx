@@ -3,8 +3,8 @@
 import { ChangeEvent, useEffect, useMemo, useState } from "react";
 import { normalizeAcronyms } from "./text-normalization";
 
-const APP_BUILD = "2026.11.11-v13";
-const ANALYSIS_ENGINE_VERSION = 13;
+const APP_BUILD = "2026.11.11-v14";
+const ANALYSIS_ENGINE_VERSION = 14;
 
 type View = "visao" | "documentos" | "privacidade" | "analise" | "estatistica" | "evidencias" | "entrevistas" | "triangulacao" | "relatorio" | "conclusoes";
 type EvidenceStatus = "Confirmada" | "Por triangular" | "Contraditória" | "Ausente";
@@ -1337,7 +1337,30 @@ function requiredAcademicComparisons(records: Evidence[]) {
     .filter((claim, index, claims) => claims.findIndex((candidate) => normalizeText(candidate.match(/indicador\s+«([^»]+)»/i)?.[1] || candidate) === normalizeText(claim.match(/indicador\s+«([^»]+)»/i)?.[1] || claim)) === index);
 }
 
-function academicComparisonsFromMatrixTreatments(records: Evidence[], treatments: StatisticalTreatment[]) {
+function academicComparisonTitle(value: string) {
+  const normalized = normalizeText(value);
+  if (/provas? nacionais?|sem retencoes|retencao|desistencia|por curso/.test(normalized)) return false;
+  return /percentagem de alunos.*concluem.*(?:1|2|3) ciclo.*(?:dois|tres|quatro|[234]) anos/.test(normalized)
+    || /percentagem de alunos.*concluem.*cursos? cientifico.?humanisticos?.*tres anos/.test(normalized)
+    || /percentagem de alunos.*concluem.*(?:curso|ensino) profissional.*tres anos/.test(normalized);
+}
+
+function academicComparisonsFromRawRecords(records: StatisticalRecord[]) {
+  const grouped = new Map<string, StatisticalRecord[]>();
+  records
+    .filter((record) => record.dataset === "infoescolas"
+      && (record.seriesRole === "school" || record.seriesRole === "national")
+      && academicComparisonTitle(record.comparisonKey || record.indicator))
+    .forEach((record) => {
+      const key = `${record.sourceKey || normalizeText(record.source)}|${normalizeText(record.comparisonKey || record.indicator)}`;
+      grouped.set(key, [...(grouped.get(key) ?? []), { ...record, evidenceUse: "academic-comparison" }]);
+    });
+  return [...grouped.entries()]
+    .map(([id, items]) => buildInfoEscolasComparison(items, `repaired|${id}`).summary)
+    .filter((summary) => Boolean(latestAcademicComparison(summary)));
+}
+
+function academicComparisonsFromMatrixTreatments(records: Evidence[], treatments: StatisticalTreatment[], rawRecords: StatisticalRecord[]) {
   const matrixTreatmentIds = new Set(records
     .filter((record) => record.fieldId === "res-acad" && record.validated && record.statisticalTreatmentId)
     .map((record) => record.statisticalTreatmentId as string));
@@ -1349,7 +1372,8 @@ function academicComparisonsFromMatrixTreatments(records: Evidence[], treatments
     .map((treatment) => treatment.summary.trim())
     .filter(Boolean);
   const fromEvidence = requiredAcademicComparisons(records);
-  return [...summaries, ...fromEvidence]
+  const repairedFromRawData = academicComparisonsFromRawRecords(rawRecords);
+  return [...repairedFromRawData, ...summaries, ...fromEvidence]
     .filter((value, index, values) => values.findIndex((candidate) => normalizeText(candidate.match(/indicador\s+«([^»]+)»/i)?.[1] || candidate) === normalizeText(value.match(/indicador\s+«([^»]+)»/i)?.[1] || value)) === index)
     .sort((a, b) => Number(infoEscolasScopeFromText(a) || 99) - Number(infoEscolasScopeFromText(b) || 99));
 }
@@ -1474,7 +1498,7 @@ function latestAcademicComparison(value: string) {
   return rows.at(-1);
 }
 
-function structuredAcademicNarrative(comparisons: string[], qualitative = "") {
+function structuredAcademicNarrative(comparisons: string[], _qualitative = "") {
   const format = (value: number) => `${value.toLocaleString("pt-PT", { maximumFractionDigits: 1 })}%`;
   const entries = ["1", "2", "3", "4", "5"].flatMap((scope) => {
     const candidates = comparisons.filter((comparison) => infoEscolasScopeFromText(comparison) === scope);
@@ -1506,10 +1530,6 @@ function structuredAcademicNarrative(comparisons: string[], qualitative = "") {
     const period = equityBasic.at(-1)?.latest.period;
     paragraphs.push(`Os resultados dos alunos beneficiários da ação social escolar (ASE) evidenciam indicadores favoráveis de equidade no ensino básico. Em ${period || "no último ano disponível"}, as taxas de conclusão no tempo esperado situam-se em ${equityBasic.map((item) => `${format(item.latest.school)} no ${item.label}`).join(", ")}, superando as respetivas referências nacionais contextualizadas.`);
   }
-  const usefulQualitative = qualitative.split(/(?<=[.!?])\s+/)
-    .filter((sentence) => sentence.length >= 35 && !/\b(?:meta|evidência validada|base probatória|triangulação|indicadores aplicáveis|identificador removido|reserva:)\b/i.test(sentence))
-    .slice(0, 2).join(" ");
-  if (usefulQualitative) paragraphs.push(usefulQualitative);
   return paragraphs.join("\n\n");
 }
 
@@ -2692,7 +2712,7 @@ export default function Home() {
 
   function generateReport() {
     const completedNarratives = preserveReviewedNarratives(evidence, narratives, indicatorApplicability);
-  const comparisons = academicComparisonsFromMatrixTreatments(evidence, statisticalTreatments);
+    const comparisons = academicComparisonsFromMatrixTreatments(evidence, statisticalTreatments, statisticalRecords);
     const academicRecords = evidence.filter((record) => record.fieldId === "res-acad" && record.validated);
     const academicRevision = evidenceRevision(evidence, "res-acad");
     const academicOutdated = academicRecords.length > 0 && triangulationRevisions["res-acad"] !== academicRevision;
@@ -2979,7 +2999,7 @@ export default function Home() {
 
   async function improveReportWithAi() {
     const completedNarratives = preserveReviewedNarratives(evidence, narratives, indicatorApplicability);
-    const comparisons = academicComparisonsFromMatrixTreatments(evidence, statisticalTreatments);
+    const comparisons = academicComparisonsFromMatrixTreatments(evidence, statisticalTreatments, statisticalRecords);
     const academicRecords = evidence.filter((record) => record.fieldId === "res-acad" && record.validated);
     const academicRevision = evidenceRevision(evidence, "res-acad");
     const academicOutdated = academicRecords.length > 0 && triangulationRevisions["res-acad"] !== academicRevision;

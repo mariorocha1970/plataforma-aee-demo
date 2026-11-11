@@ -3,7 +3,7 @@
 import { ChangeEvent, useEffect, useMemo, useState } from "react";
 import { normalizeAcronyms } from "./text-normalization";
 
-const APP_BUILD = "2026.11.11-v21";
+const APP_BUILD = "2026.11.11-v22";
 const ANALYSIS_ENGINE_VERSION = 19;
 
 type View = "visao" | "documentos" | "privacidade" | "analise" | "estatistica" | "evidencias" | "entrevistas" | "triangulacao" | "relatorio" | "conclusoes";
@@ -91,6 +91,7 @@ type InterviewQuestionDraft = {
   rationale: string;
   references: string[];
   answer: string;
+  origin?: "ai" | "manual";
 };
 
 type InterviewAgenda = {
@@ -2697,7 +2698,7 @@ export default function Home() {
       setInterviewQuestionsStatus("Ainda não existem evidências validadas, resultados de questionários ou comentários para fundamentar um guião contextualizado.");
       return;
     }
-    if (!window.confirm(`Gerar um guião contextualizado para o painel «${interviewPanel}»? Esta operação utiliza 1 chamada à IA.`)) return;
+    if (!window.confirm(`Gerar um guião contextualizado para o painel «${interviewPanel}»? Esta operação utiliza 1 chamada à IA. As questões acrescentadas manualmente serão preservadas.`)) return;
     setInterviewQuestionsGenerating(true);
     setInterviewQuestionsStatus("A cruzar documentos, questionários, comentários e lacunas de evidência…");
     try {
@@ -2726,10 +2727,11 @@ export default function Home() {
           rationale: typeof item.finalidade === "string" ? item.finalidade.trim() : "",
           references: Array.isArray(item.referencias) ? item.referencias.filter((value: unknown) => typeof value === "string" && value.trim()).map((value: string) => value.trim()) : [],
           answer: "",
+          origin: "ai",
         };
       });
       if (!generated.length) throw new Error("A informação disponível não permitiu formular questões fundamentadas para este painel.");
-      setInterviewQuestionDrafts((current) => [...current.filter((item) => item.agendaId !== interviewAgendaId || item.panel !== interviewPanel), ...generated]);
+      setInterviewQuestionDrafts((current) => [...current.filter((item) => item.agendaId !== interviewAgendaId || item.panel !== interviewPanel || item.origin === "manual"), ...generated]);
       setInterviewQuestionsStatus(`${generated.length} questões propostas. Reveja-as antes da entrevista; as referências reproduzem apenas localizações existentes na Matriz.`);
       setChangesPending(true);
     } catch (error) {
@@ -2753,9 +2755,9 @@ export default function Home() {
       setInterviewQuestionsStatus("Ainda não existem evidências validadas, resultados de questionários ou comentários para fundamentar os guiões.");
       return;
     }
-    const existing = interviewQuestionDrafts.filter((item) => item.agendaId === interviewAgendaId);
+    const existing = interviewQuestionDrafts.filter((item) => item.agendaId === interviewAgendaId && item.origin !== "manual");
     const answered = existing.filter((item) => item.answer.trim()).length;
-    const warning = answered ? `\n\nAtenção: serão substituídos ${existing.length} itens existentes, incluindo ${answered} resposta(s) já registada(s).` : existing.length ? `\n\nSerão substituídas as ${existing.length} questões atualmente guardadas nesta agenda.` : "";
+    const warning = answered ? `\n\nAtenção: serão substituídas ${existing.length} questões geradas anteriormente, incluindo ${answered} resposta(s) já registada(s). As questões manuais serão preservadas.` : existing.length ? `\n\nSerão substituídas as ${existing.length} questões geradas anteriormente. As questões manuais serão preservadas.` : "";
     if (!window.confirm(`Gerar, numa única chamada à IA, os guiões contextualizados dos ${agenda.panels.length} painéis da Agenda ${agenda.id}?${warning}`)) return;
     setInterviewQuestionsGenerating(true);
     setInterviewQuestionsStatus(`A preparar os guiões dos ${agenda.panels.length} painéis numa única chamada…`);
@@ -2774,13 +2776,13 @@ export default function Home() {
         if (!matchedPanel || !Array.isArray(guide?.questoes)) return [];
         return guide.questoes.filter((item: any) => typeof item.pergunta === "string" && item.pergunta.trim()).map((item: any, questionIndex: number) => {
           const field = fields.find((candidate) => normalizeText(candidate.name) === normalizeText(item.campo ?? "")) ?? fields[0];
-          return { id: `${agenda.id}-${now}-${panelIndex}-${questionIndex}`, agendaId: agenda.id, panel: matchedPanel, fieldId: field.id, question: item.pergunta.trim(), rationale: typeof item.finalidade === "string" ? item.finalidade.trim() : "", references: Array.isArray(item.referencias) ? item.referencias.filter((value: unknown) => typeof value === "string" && value.trim()).map((value: string) => value.trim()) : [], answer: "" };
+          return { id: `${agenda.id}-${now}-${panelIndex}-${questionIndex}`, agendaId: agenda.id, panel: matchedPanel, fieldId: field.id, question: item.pergunta.trim(), rationale: typeof item.finalidade === "string" ? item.finalidade.trim() : "", references: Array.isArray(item.referencias) ? item.referencias.filter((value: unknown) => typeof value === "string" && value.trim()).map((value: string) => value.trim()) : [], answer: "", origin: "ai" as const };
         });
       });
       const coveredPanels = new Set(generated.map((item) => item.panel));
       if (!generated.length) throw new Error("A informação disponível não permitiu formular guiões fundamentados.");
       if (coveredPanels.size !== agenda.panels.length) throw new Error(`A resposta ficou incompleta: foram recebidos guiões para ${coveredPanels.size} de ${agenda.panels.length} painéis. Os guiões anteriores foram preservados e não haverá uma segunda chamada automática.`);
-      setInterviewQuestionDrafts((current) => [...current.filter((item) => item.agendaId !== agenda.id), ...generated]);
+      setInterviewQuestionDrafts((current) => [...current.filter((item) => item.agendaId !== agenda.id || item.origin === "manual"), ...generated]);
       setInterviewQuestionsStatus(`${generated.length} questões geradas para os ${coveredPanels.size} painéis da Agenda ${agenda.id}, numa única chamada. Selecione cada painel para rever o respetivo guião.`);
       setChangesPending(true);
     } catch (error) {
@@ -2795,8 +2797,26 @@ export default function Home() {
     setChangesPending(true);
   }
 
+  function addManualInterviewQuestion() {
+    const draft: InterviewQuestionDraft = {
+      id: `${interviewAgendaId}-manual-${Date.now()}`,
+      agendaId: interviewAgendaId,
+      panel: interviewPanel,
+      fieldId: interviewField,
+      question: "",
+      rationale: "Questão acrescentada pela equipa de avaliação.",
+      references: [],
+      answer: "",
+      origin: "manual",
+    };
+    setInterviewQuestionDrafts((current) => [...current, draft]);
+    setInterviewQuestionsStatus("Questão manual acrescentada. Preencha a pergunta e, se pertinente, a referência documental.");
+    setChangesPending(true);
+    window.setTimeout(() => document.getElementById(`interview-question-${draft.id}`)?.focus(), 0);
+  }
+
   function transferInterviewAnswers() {
-    const answered = interviewQuestionDrafts.filter((item) => item.agendaId === interviewAgendaId && item.panel === interviewPanel && item.answer.trim());
+    const answered = interviewQuestionDrafts.filter((item) => item.agendaId === interviewAgendaId && item.panel === interviewPanel && item.question.trim() && item.answer.trim());
     if (!answered.length) {
       setInterviewQuestionsStatus("Registe pelo menos uma resposta antes de a transferir para as notas completas.");
       return;
@@ -3723,17 +3743,17 @@ export default function Home() {
           <div className="interview-import-card">
             <div className="selected-panel-banner"><span>Agenda {selectedAgenda.id}</span><div><small>Painel selecionado</small><strong>{interviewPanel}</strong></div></div>
             <section className="interview-guide">
-              <div className="section-heading"><div><p className="eyebrow">Preparação contextualizada</p><h3>Guião de questões do painel</h3><p>As perguntas cruzam documentos analisados, localizações disponíveis, questionários e comentários. Constituem pistas de inquirição, não conclusões probatórias.</p></div><button className="button secondary" disabled={interviewQuestionsGenerating || interviewAnalyzing} onClick={suggestInterviewQuestions}>{interviewQuestionsGenerating ? "A preparar…" : currentQuestions.length ? "Refazer sugestões com IA · 1 chamada" : "Sugerir questões com IA · 1 chamada"}</button></div>
+              <div className="section-heading"><div><p className="eyebrow">Preparação contextualizada</p><h3>Guião de questões do painel</h3><p>As perguntas cruzam documentos analisados, localizações disponíveis, questionários e comentários. Constituem pistas de inquirição, não conclusões probatórias.</p></div><div className="action-row"><button className="button secondary" disabled={interviewQuestionsGenerating || interviewAnalyzing} onClick={addManualInterviewQuestion}>Adicionar questão manual</button><button className="button secondary" disabled={interviewQuestionsGenerating || interviewAnalyzing} onClick={suggestInterviewQuestions}>{interviewQuestionsGenerating ? "A preparar…" : currentQuestions.length ? "Refazer sugestões com IA · 1 chamada" : "Sugerir questões com IA · 1 chamada"}</button></div></div>
               {interviewQuestionsStatus && <div className="statistics-status" role="status">{interviewQuestionsStatus}</div>}
               {currentQuestions.length > 0 && <div className="interview-question-list">
                 {currentQuestions.map((item, index) => { const field = getField(item.fieldId); return <article className="interview-question" key={item.id}>
                   <div className="interview-question-top"><span>{index + 1}</span><label>Campo<select value={item.fieldId} onChange={(event) => updateInterviewQuestion(item.id, { fieldId: event.target.value })}>{fields.map((option) => <option value={option.id} key={option.id}>{option.section} · {option.name}</option>)}</select></label><button className="text-button danger-text" onClick={() => setInterviewQuestionDrafts((current) => current.filter((question) => question.id !== item.id))}>Remover</button></div>
-                  <label>Questão<textarea value={item.question} onChange={(event) => updateInterviewQuestion(item.id, { question: event.target.value })} /></label>
-                  {item.references.length > 0 && <div className="question-references"><strong>Referências para preparação</strong><ul>{item.references.map((reference, referenceIndex) => <li key={`${item.id}-${referenceIndex}`}>{reference}</li>)}</ul></div>}
+                  <label>Questão<textarea id={`interview-question-${item.id}`} value={item.question} onChange={(event) => updateInterviewQuestion(item.id, { question: event.target.value })} placeholder="Escreva a questão a colocar ao painel…" /></label>
+                  <label>Referências para preparação <small>(uma por linha; opcional)</small><textarea className="question-reference-editor" value={item.references.join("\n")} onChange={(event) => updateInterviewQuestion(item.id, { references: event.target.value.split("\n").map((value) => value.trim()).filter(Boolean) })} placeholder="Documento, página/secção, questionário ou comentário…" /></label>
                   {item.rationale && <small><strong>Finalidade:</strong> {item.rationale}</small>}
                   <label>Resposta / notas do painel<textarea className="question-answer" value={item.answer} onChange={(event) => updateInterviewQuestion(item.id, { answer: event.target.value })} placeholder="Registe a resposta, exemplos concretos, divergências e elementos a confirmar…" /></label>
                 </article>; })}
-                <div className="interview-guide-actions"><small>{currentQuestions.filter((item) => item.answer.trim()).length} de {currentQuestions.length} respostas registadas</small><button className="button primary" onClick={transferInterviewAnswers}>Transferir respostas para as notas completas</button></div>
+                <div className="interview-guide-actions"><small>{currentQuestions.filter((item) => item.question.trim() && item.answer.trim()).length} de {currentQuestions.length} respostas registadas</small><button className="button primary" onClick={transferInterviewAnswers}>Transferir respostas para as notas completas</button></div>
               </div>}
             </section>
             <label className="interview-full-text">Notas completas ou síntese global da entrevista<textarea id="interview-notes" value={interviewText} onChange={(event) => setInterviewText(event.target.value)} placeholder="Cole aqui as notas da entrevista, sem identificação nominal. A organização por campos será proposta automaticamente…" /></label>
@@ -3777,6 +3797,7 @@ export default function Home() {
             .interview-question-top > span { display: grid; place-items: center; width: 2rem; height: 2rem; border-radius: 50%; background: #1e6b56; color: white; font-weight: 800; }
             .interview-question textarea { min-height: 5rem; }
             .interview-question textarea.question-answer { min-height: 7rem; }
+            .interview-question textarea.question-reference-editor { min-height: 4rem; }
             .question-references { padding: .65rem .8rem; border-left: 3px solid #c38b25; border-radius: 7px; background: #fff8e9; }
             .question-references ul { margin: .35rem 0 0; padding-left: 1.2rem; }
             .interview-guide-actions { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }

@@ -3,7 +3,7 @@
 import { ChangeEvent, useEffect, useMemo, useState } from "react";
 import { normalizeAcronyms } from "./text-normalization";
 
-const APP_BUILD = "2026.11.11-v25";
+const APP_BUILD = "2026.11.11-v26";
 const ANALYSIS_ENGINE_VERSION = 19;
 
 type View = "visao" | "documentos" | "privacidade" | "analise" | "estatistica" | "evidencias" | "entrevistas" | "triangulacao" | "relatorio" | "simplificados" | "conclusoes";
@@ -1930,7 +1930,9 @@ async function createQuestionnaireChart(group: string, title: string, items: any
 }
 
 async function createAutomaticQuestionnaireCharts(analysis: any, audience: SimplifiedAudience) {
-  const groups = Array.isArray(analysis?.grupos) ? analysis.grupos : [];
+  const allowed = audience === "alunos" ? new Set(["Q1", "Q2"]) : new Set(["Q5", "Q6"]);
+  const groupCode = (value: string) => normalizeText(value).toUpperCase().match(/\bQ\s*([1-6])\b/)?.[1] ? `Q${normalizeText(value).toUpperCase().match(/\bQ\s*([1-6])\b/)?.[1]}` : "";
+  const groups = (Array.isArray(analysis?.grupos) ? analysis.grupos : []).filter((group: any) => allowed.has(groupCode(String(group?.grupo || ""))));
   const charts: SimplifiedGraph[] = [];
   for (const group of groups) {
     if (Array.isArray(group.maiorConcordancia) && group.maiorConcordancia.length) charts.push(await createQuestionnaireChart(group.grupo, "Itens de maior concordância", group.maiorConcordancia, audience, "maior-concordancia"));
@@ -2004,6 +2006,7 @@ export default function Home() {
   const [validatedReportName, setValidatedReportName] = useState("");
   const [validatedReportText, setValidatedReportText] = useState("");
   const [validatedReportConfirmed, setValidatedReportConfirmed] = useState(false);
+  const [validatedReportCover, setValidatedReportCover] = useState<{ file: File; width: number; height: number } | null>(null);
   const [simplifiedGraphs, setSimplifiedGraphs] = useState<SimplifiedGraph[]>([]);
   const [simplifiedQuestionnaireFiles, setSimplifiedQuestionnaireFiles] = useState<string[]>([]);
   const [simplifiedQuestionnaireText, setSimplifiedQuestionnaireText] = useState("");
@@ -2252,6 +2255,7 @@ export default function Home() {
     setValidatedReportName("");
     setValidatedReportText("");
     setValidatedReportConfirmed(false);
+    setValidatedReportCover(null);
     simplifiedGraphs.forEach((item) => URL.revokeObjectURL(item.preview));
     setSimplifiedGraphs([]);
     setSimplifiedQuestionnaireFiles([]);
@@ -3585,11 +3589,29 @@ export default function Home() {
       const chunks = await extractFile(file);
       const text = chunks.map((item) => item.text).join("\n\n").trim();
       if (text.length < 500) throw new Error("O documento não contém texto suficiente ou necessita de OCR.");
+      let cover: { file: File; width: number; height: number } | null = null;
+      if (file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")) {
+        const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+        pdfjs.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/legacy/build/pdf.worker.min.mjs", import.meta.url).toString();
+        const pdf = await pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
+        const page = await pdf.getPage(1);
+        const viewport = page.getViewport({ scale: 1.65 });
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.ceil(viewport.width);
+        canvas.height = Math.ceil(viewport.height);
+        const context = canvas.getContext("2d");
+        if (context) {
+          await page.render({ canvas, canvasContext: context, viewport }).promise;
+          const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
+          if (blob) cover = { file: new File([blob], "capa-relatorio-validado.png", { type: "image/png" }), width: canvas.width, height: canvas.height };
+        }
+      }
       setValidatedReportName(file.name);
       setValidatedReportText(text);
+      setValidatedReportCover(cover);
       setValidatedReportConfirmed(false);
       setSimplifiedReports({});
-      setSimplifiedStatus(`${file.name}: ${text.length.toLocaleString("pt-PT")} caracteres extraídos. Confirme que esta é a versão validada.`);
+      setSimplifiedStatus(`${file.name}: ${text.length.toLocaleString("pt-PT")} caracteres extraídos.${cover ? " A capa original foi preservada." : " Em Word, será usada a capa do template; para preservar exatamente a capa original, carregue o relatório validado em PDF."} Confirme que esta é a versão validada.`);
       setChangesPending(true);
     } catch (error) {
       setSimplifiedStatus(error instanceof Error ? error.message : "Não foi possível ler o relatório.");
@@ -3755,6 +3777,11 @@ export default function Home() {
       form.append("questionnaireAnalysis", JSON.stringify(analysis));
       form.append("graphManifest", JSON.stringify(graphs.map(({ id, name, width, height }) => ({ id, name, width, height }))));
       graphs.forEach((graph) => form.append(`graph-${graph.id}`, graph.file, graph.file.name));
+      if (validatedReportCover) {
+        form.append("cover", validatedReportCover.file, validatedReportCover.file.name);
+        form.append("coverWidth", String(validatedReportCover.width));
+        form.append("coverHeight", String(validatedReportCover.height));
+      }
       const response = await fetch("/api/export-simplified-report", { method: "POST", body: form });
       if (!response.ok) throw new Error(await response.text() || "Não foi possível exportar o documento.");
       const blob = await response.blob();

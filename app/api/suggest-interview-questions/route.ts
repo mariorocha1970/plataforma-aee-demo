@@ -35,6 +35,27 @@ const QUESTION_SCHEMA = {
   required: ["questoes"],
 };
 
+const ALL_PANELS_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    paineis: {
+      type: "array",
+      maxItems: 16,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          painel: { type: "string" },
+          questoes: QUESTION_SCHEMA.properties.questoes,
+        },
+        required: ["painel", "questoes"],
+      },
+    },
+  },
+  required: ["paineis"],
+};
+
 function outputText(data: any): string {
   if (typeof data?.output_text === "string") return data.output_text;
   if (!Array.isArray(data?.output)) return "";
@@ -48,6 +69,8 @@ export async function POST(request: NextRequest) {
     if (!apiKey) return NextResponse.json({ ok: false, error: "O Agente de IA ainda não está configurado." }, { status: 503 });
     const body = await request.json().catch(() => null) as any;
     if (!body) return NextResponse.json({ ok: false, error: "O pedido não contém JSON válido." }, { status: 400 });
+    const panels = Array.isArray(body.panels) ? body.panels.filter((item: unknown) => typeof item === "string" && item.trim()).map((item: string) => item.trim()).slice(0, 16) : [];
+    const allPanels = panels.length > 0;
     const panel = typeof body.panel === "string" ? body.panel.trim() : "Painel não identificado";
     const agenda = typeof body.agenda === "string" ? body.agenda.trim() : "não identificada";
     const evidence = Array.isArray(body.evidence) ? body.evidence.slice(0, 90) : [];
@@ -55,13 +78,14 @@ export async function POST(request: NextRequest) {
     const report = typeof body.questionnaireReport === "string" ? body.questionnaireReport.slice(0, 12_000) : "";
     if (!evidence.length && !comments.length && !report.trim()) return NextResponse.json({ ok: false, error: "Não foi fornecida base probatória para preparar o guião." }, { status: 400 });
 
-    const prompt = `Prepare um guião de entrevista para a Avaliação Externa das Escolas.
+    const prompt = `Prepare ${allPanels ? "os guiões de entrevista de todos os painéis indicados" : "um guião de entrevista"} para a Avaliação Externa das Escolas.
 
 AGENDA: ${agenda}
-PAINEL: ${panel}
+${allPanels ? `PAINÉIS (use exatamente estas designações e mantenha esta ordem):\n${panels.map((item: string, index: number) => `${index + 1}. ${item}`).join("\n")}` : `PAINEL: ${panel}`}
 
 REGRAS OBRIGATÓRIAS:
-- Formule 4 a 10 perguntas abertas, claras, curtas, não indutoras e adequadas às responsabilidades e experiência deste painel.
+- Formule 4 a 10 perguntas por painel, abertas, claras, curtas, não indutoras e adequadas às responsabilidades e experiência de cada painel.
+- ${allPanels ? "Inclua todos os painéis indicados, sem omitir ou fundir nenhum. Diferencie efetivamente os guiões; não repita mecanicamente as mesmas perguntas." : "Produza apenas o guião do painel indicado."}
 - Use as perguntas para confirmar, aprofundar ou contraditar práticas, resultados, impactos, lacunas e divergências presentes na base fornecida.
 - Não peça ao painel informação que, razoavelmente, não possa conhecer.
 - Distribua as perguntas pelos campos materialmente pertinentes; evite perguntas genéricas ou repetidas.
@@ -88,8 +112,8 @@ ${report}`;
         store: false,
         input: prompt,
         reasoning: { effort: "minimal" },
-        max_output_tokens: 3_000,
-        text: { format: { type: "json_schema", name: "guiao_entrevista_aee", strict: true, schema: QUESTION_SCHEMA } },
+        max_output_tokens: allPanels ? 14_000 : 3_000,
+        text: { format: { type: "json_schema", name: allPanels ? "guioes_paineis_aee" : "guiao_entrevista_aee", strict: true, schema: allPanels ? ALL_PANELS_SCHEMA : QUESTION_SCHEMA } },
       }),
     });
     const data = await response.json().catch(() => ({}));
@@ -100,6 +124,10 @@ ${report}`;
     const raw = outputText(data);
     if (!raw) return NextResponse.json({ ok: false, error: "A resposta da IA não contém um guião utilizável." }, { status: 502 });
     const parsed = JSON.parse(raw);
+    if (allPanels) {
+      if (!Array.isArray(parsed?.paineis)) return NextResponse.json({ ok: false, error: "A resposta não contém os guiões dos painéis esperados." }, { status: 502 });
+      return NextResponse.json({ ok: true, panelGuides: parsed.paineis });
+    }
     if (!Array.isArray(parsed?.questoes)) return NextResponse.json({ ok: false, error: "A resposta não contém a lista de questões esperada." }, { status: 502 });
     return NextResponse.json({ ok: true, questions: parsed.questoes });
   } catch (error) {

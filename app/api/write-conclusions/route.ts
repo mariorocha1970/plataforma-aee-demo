@@ -62,6 +62,22 @@ function enforceRatingConsistency(conclusions: any[], domains: any[]) {
   });
 }
 
+function enforceConclusionShape(conclusions: any[]) {
+  const clean = (values: any[], limit: number) => values
+    .map((value) => String(value || "").replace(/^[§•\-–—]\s*/, "").replace(/\s+/g, " ").trim())
+    .filter(Boolean)
+    .slice(0, limit);
+  return conclusions.map((item: any) => {
+    const strengths = clean(Array.isArray(item?.strengths) ? item.strengths : [], 4);
+    let improvements = clean(Array.isArray(item?.improvements) ? item.improvements : [], 3);
+    if (item?.rating === "Muito bom" && improvements.length >= strengths.length) {
+      improvements = improvements.slice(0, Math.max(0, strengths.length - 1));
+    }
+    if (item?.rating === "Muito bom" && improvements.length > 2) improvements = improvements.slice(0, 2);
+    return { ...item, strengths, improvements };
+  });
+}
+
 export async function POST(request: NextRequest) {
   try {
     const apiKey = process.env.OPENAI_API_KEY?.trim();
@@ -91,7 +107,8 @@ REGRAS:
 - Em supportWarning, explique de modo conciso a lacuna ou contradição quando a sustentação não for plena. Se for «Sustentada», devolva uma cadeia vazia.
 - Se uma menção fixada não estiver sustentada, mantenha-a como decisão da equipa, mas não produza uma fundamentação fictícia. A rationale deve distinguir a decisão assumida da limitação probatória e indicar objetivamente o que impede a sua validação plena.
 - Pontos fortes e áreas de melhoria são juízos avaliativos concisos, autónomos e coerentes com o texto do relatório; não são listas de atividades nem transcrições de evidências.
-- Produza, em regra, três pontos fortes e duas áreas de melhoria por domínio. Cada enunciado deve ser uma frase completa, sintaticamente autónoma, com conteúdo substantivo e redação própria de relatório da IGEC.
+- Produza, em regra, três pontos fortes e duas áreas de melhoria por domínio. Cada item deve conter uma única frase forte, curta e mobilizadora, preferencialmente entre 12 e 28 palavras, com redação própria de relatório da IGEC.
+- Quando a menção seja «Muito bom», devolva obrigatoriamente mais pontos fortes do que áreas de melhoria, em coerência com o predomínio de evidências positivas exigido pela escala.
 - Não transforme reservas sobre amostras, anexos, causalidade, desagregação, método de apuramento ou quantidade de fontes em áreas de melhoria da organização, salvo quando as evidências demonstrem que essa insuficiência corresponde efetivamente a uma fragilidade das práticas de monitorização ou avaliação do agrupamento.
 - As áreas de melhoria devem incidir em processos ou resultados concretos a aperfeiçoar. Nunca use como área de melhoria fórmulas editoriais como «a interpretação deve atender», «carece de evidência adicional», «consultar anexo» ou referências ao funcionamento da análise.
 - Não fragmente percentagens, abreviaturas ou frases em vários pontos. Reveja a sintaxe final de cada enunciado antes de responder.
@@ -138,7 +155,7 @@ REGRAS:
     if (!raw) return NextResponse.json({ ok: false, error: "A IA não devolveu conclusões utilizáveis. Não houve repetição automática." }, { status: 502 });
     let result: any;
     try { result = JSON.parse(raw); } catch { return NextResponse.json({ ok: false, error: "A resposta ficou incompleta. A proposta local foi preservada e não houve repetição automática paga." }, { status: 502 }); }
-    const conclusions = enforceRatingConsistency((Array.isArray(result?.conclusions) ? result.conclusions : []).map((item: any) => {
+    const conclusions = enforceConclusionShape(enforceRatingConsistency((Array.isArray(result?.conclusions) ? result.conclusions : []).map((item: any) => {
       const sourceDomain = domains.find((domain: any) => String(domain?.domain) === String(item?.domain));
       return {
       ...item,
@@ -149,7 +166,7 @@ REGRAS:
       strengths: (Array.isArray(item?.strengths) ? item.strengths : []).map((value: any) => normalizeAcronyms(String(value))),
       improvements: (Array.isArray(item?.improvements) ? item.improvements : []).map((value: any) => normalizeAcronyms(String(value))),
       rationale: normalizeAcronyms(String(item?.rationale || "")),
-    }; }), domains);
+    }; }), domains));
     return NextResponse.json({ ok: true, conclusions });
   } catch (error) {
     return NextResponse.json({ ok: false, error: error instanceof Error ? error.message : "Erro interno na síntese conclusiva." }, { status: 500 });

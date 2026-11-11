@@ -71,7 +71,7 @@ export async function POST(request: NextRequest) {
     if (domains.length !== 4) return NextResponse.json({ ok: false, error: "São necessários os quatro domínios e respetivas triangulações." }, { status: 400 });
     const schoolName = String(body?.schoolName || "a organização escolar").slice(0, 180);
     const domainsJson = JSON.stringify(domains);
-    if (domainsJson.length > 320_000) return NextResponse.json({ ok: false, error: "O perfil probatório excede o limite seguro. Consolide as evidências excessivamente repetidas antes de repetir a síntese." }, { status: 413 });
+    if (domainsJson.length > 700_000) return NextResponse.json({ ok: false, error: "O perfil probatório excede o limite seguro. Consolide as evidências excessivamente repetidas antes de repetir a síntese." }, { status: 413 });
     const prompt = `Formule a síntese conclusiva de uma Avaliação Externa das Escolas, em português europeu, relativa a ${schoolName}.
 
 DADOS POR DOMÍNIO (narrativas trianguladas e perfil probatório detalhado por campo):

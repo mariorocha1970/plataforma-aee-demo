@@ -3,8 +3,8 @@
 import { ChangeEvent, useEffect, useMemo, useState } from "react";
 import { normalizeAcronyms } from "./text-normalization";
 
-const APP_BUILD = "2026.11.11-v12";
-const ANALYSIS_ENGINE_VERSION = 12;
+const APP_BUILD = "2026.11.11-v13";
+const ANALYSIS_ENGINE_VERSION = 13;
 
 type View = "visao" | "documentos" | "privacidade" | "analise" | "estatistica" | "evidencias" | "entrevistas" | "triangulacao" | "relatorio" | "conclusoes";
 type EvidenceStatus = "Confirmada" | "Por triangular" | "Contraditória" | "Ausente";
@@ -1337,6 +1337,23 @@ function requiredAcademicComparisons(records: Evidence[]) {
     .filter((claim, index, claims) => claims.findIndex((candidate) => normalizeText(candidate.match(/indicador\s+«([^»]+)»/i)?.[1] || candidate) === normalizeText(claim.match(/indicador\s+«([^»]+)»/i)?.[1] || claim)) === index);
 }
 
+function academicComparisonsFromMatrixTreatments(records: Evidence[], treatments: StatisticalTreatment[]) {
+  const matrixTreatmentIds = new Set(records
+    .filter((record) => record.fieldId === "res-acad" && record.validated && record.statisticalTreatmentId)
+    .map((record) => record.statisticalTreatmentId as string));
+  const summaries = treatments
+    .filter((treatment) => matrixTreatmentIds.has(treatment.id)
+      && treatment.fieldId === "res-acad"
+      && /nacional|país|pais|portugal/i.test(treatment.summary)
+      && Boolean(latestAcademicComparison(treatment.summary)))
+    .map((treatment) => treatment.summary.trim())
+    .filter(Boolean);
+  const fromEvidence = requiredAcademicComparisons(records);
+  return [...summaries, ...fromEvidence]
+    .filter((value, index, values) => values.findIndex((candidate) => normalizeText(candidate.match(/indicador\s+«([^»]+)»/i)?.[1] || candidate) === normalizeText(value.match(/indicador\s+«([^»]+)»/i)?.[1] || value)) === index)
+    .sort((a, b) => Number(infoEscolasScopeFromText(a) || 99) - Number(infoEscolasScopeFromText(b) || 99));
+}
+
 function infoEscolasScopeFromText(value: string) {
   const normalized = normalizeText(value);
   if (/1 ciclo|primeiro ciclo/.test(normalized)) return "1";
@@ -1459,20 +1476,36 @@ function latestAcademicComparison(value: string) {
 
 function structuredAcademicNarrative(comparisons: string[], qualitative = "") {
   const format = (value: number) => `${value.toLocaleString("pt-PT", { maximumFractionDigits: 1 })}%`;
-  const byScope = ["1", "2", "3", "4", "5"].flatMap((scope) => {
+  const entries = ["1", "2", "3", "4", "5"].flatMap((scope) => {
     const candidates = comparisons.filter((comparison) => infoEscolasScopeFromText(comparison) === scope);
-    const selected = candidates.find((comparison) => !/\b(?:ASE|ação social escolar)\b/i.test(comparison)) || candidates[0];
-    if (!selected) return [];
-    const latest = latestAcademicComparison(selected);
-    if (!latest) return [];
-    return [{ scope, label: academicScopeLabel(selected), latest, equity: /\b(?:ASE|ação social escolar)\b/i.test(selected) }];
+    return candidates.flatMap((comparison) => {
+      const latest = latestAcademicComparison(comparison);
+      return latest ? [{ scope, label: academicScopeLabel(comparison), latest, equity: /\b(?:ASE|ação social escolar)\b/i.test(comparison), comparison }] : [];
+    });
   });
-  const basic = byScope.filter((item) => ["1", "2", "3"].includes(item.scope));
-  const postBasic = byScope.filter((item) => ["4", "5"].includes(item.scope));
-  const describe = (item: typeof byScope[number]) => `${item.label}${item.equity ? " entre os alunos beneficiários da ação social escolar" : ""}, com ${format(item.latest.school)} no agrupamento, face a ${format(item.latest.national)} no país, em ${item.latest.period}`;
+  const select = (scope: string, equity: boolean) => entries.find((item) => item.scope === scope && item.equity === equity);
+  const generalBasic = ["1", "2", "3"].map((scope) => select(scope, false)).filter((item): item is NonNullable<typeof item> => Boolean(item));
+  const equityBasic = ["1", "2", "3"].map((scope) => select(scope, true)).filter((item): item is NonNullable<typeof item> => Boolean(item));
+  const secondary = select("4", false) || entries.find((item) => item.scope === "4");
+  const professional = select("5", false) || entries.find((item) => item.scope === "5");
+  const describe = (item: NonNullable<typeof secondary>) => `${format(item.latest.school)} no ${item.label}, face a ${format(item.latest.national)} no país`;
   const paragraphs: string[] = [];
-  if (basic.length) paragraphs.push(`No ensino básico, os percursos de conclusão no tempo esperado apresentam uma evolução globalmente favorável. No último ano disponível, registaram-se ${basic.map(describe).join("; ")}.`);
-  if (postBasic.length) paragraphs.push(`No ensino secundário e nas restantes ofertas comparáveis, a leitura mais recente evidencia ${postBasic.map(describe).join("; ")}.`);
+  if (generalBasic.length) {
+    const period = generalBasic.at(-1)?.latest.period;
+    paragraphs.push(`No triénio disponível, as taxas de conclusão no tempo esperado apresentam uma evolução globalmente favorável nos ciclos do ensino básico com informação comparável. No último ano letivo${period ? ` (${period})` : ""}, atingem ${generalBasic.map(describe).join("; ")}. Estes resultados evidenciam percursos escolares globalmente bem-sucedidos.`);
+  }
+  if (secondary) {
+    const relation = secondary.latest.school >= secondary.latest.national ? "acima" : "abaixo";
+    paragraphs.push(`Nos cursos científico-humanísticos, a conclusão em três anos ${relation === "acima" ? "mantém-se acima da referência nacional no último ano disponível" : "situa-se abaixo da referência nacional no último ano disponível"}, atingindo ${format(secondary.latest.school)} em ${secondary.latest.period}, face a ${format(secondary.latest.national)} no país.`);
+  }
+  if (professional) {
+    const relation = professional.latest.school >= professional.latest.national ? "acima" : "abaixo";
+    paragraphs.push(`No ensino profissional, a taxa de conclusão no tempo esperado situa-se ${relation} da referência nacional no último ano disponível: ${format(professional.latest.school)} no agrupamento, face a ${format(professional.latest.national)} no país, em ${professional.latest.period}. A evolução dos percursos e das situações de atraso na conclusão constitui uma dimensão relevante para consolidar o sucesso nesta oferta formativa.`);
+  }
+  if (equityBasic.length) {
+    const period = equityBasic.at(-1)?.latest.period;
+    paragraphs.push(`Os resultados dos alunos beneficiários da ação social escolar (ASE) evidenciam indicadores favoráveis de equidade no ensino básico. Em ${period || "no último ano disponível"}, as taxas de conclusão no tempo esperado situam-se em ${equityBasic.map((item) => `${format(item.latest.school)} no ${item.label}`).join(", ")}, superando as respetivas referências nacionais contextualizadas.`);
+  }
   const usefulQualitative = qualitative.split(/(?<=[.!?])\s+/)
     .filter((sentence) => sentence.length >= 35 && !/\b(?:meta|evidência validada|base probatória|triangulação|indicadores aplicáveis|identificador removido|reserva:)\b/i.test(sentence))
     .slice(0, 2).join(" ");
@@ -2659,7 +2692,7 @@ export default function Home() {
 
   function generateReport() {
     const completedNarratives = preserveReviewedNarratives(evidence, narratives, indicatorApplicability);
-    const comparisons = requiredAcademicComparisons(evidence);
+  const comparisons = academicComparisonsFromMatrixTreatments(evidence, statisticalTreatments);
     const academicRecords = evidence.filter((record) => record.fieldId === "res-acad" && record.validated);
     const academicRevision = evidenceRevision(evidence, "res-acad");
     const academicOutdated = academicRecords.length > 0 && triangulationRevisions["res-acad"] !== academicRevision;
@@ -2677,7 +2710,9 @@ export default function Home() {
       setTriangulationRevisions((current) => ({ ...current, "res-acad": academicRevision }));
     }
     setNarratives(completedNarratives);
-    setReport(normalizeAcronyms(buildReport(evidence, completedNarratives, indicatorApplicability)));
+    const localReport = buildReport(evidence, completedNarratives, indicatorApplicability);
+    const academicSection = structuredAcademicNarrative(comparisons, completedNarratives["res-acad"] || "");
+    setReport(normalizeAcronyms(replaceAcademicSectionInReport(localReport, academicSection)));
     setExportStatus(academicOutdated || academicComparisonsMissing
       ? "Minuta local gerada. A narrativa de 5.4.1 foi sincronizada automaticamente com as evidências validadas do InfoEscolas, sem utilizar a API."
       : "Minuta local gerada sem utilizar a API.");
@@ -2944,7 +2979,7 @@ export default function Home() {
 
   async function improveReportWithAi() {
     const completedNarratives = preserveReviewedNarratives(evidence, narratives, indicatorApplicability);
-    const comparisons = requiredAcademicComparisons(evidence);
+    const comparisons = academicComparisonsFromMatrixTreatments(evidence, statisticalTreatments);
     const academicRecords = evidence.filter((record) => record.fieldId === "res-acad" && record.validated);
     const academicRevision = evidenceRevision(evidence, "res-acad");
     const academicOutdated = academicRecords.length > 0 && triangulationRevisions["res-acad"] !== academicRevision;
@@ -2957,7 +2992,8 @@ export default function Home() {
       setNarratives((current) => ({ ...current, "res-acad": completedNarratives["res-acad"] }));
       setTriangulationRevisions((current) => ({ ...current, "res-acad": academicRevision }));
     }
-    const localDraft = report.trim() || buildReport(evidence, completedNarratives, indicatorApplicability);
+    const rawLocalDraft = report.trim() || buildReport(evidence, completedNarratives, indicatorApplicability);
+    const localDraft = replaceAcademicSectionInReport(rawLocalDraft, structuredAcademicNarrative(comparisons, completedNarratives["res-acad"] || ""));
     const usable = fields.filter((field) => completedNarratives[field.id]?.trim()).map((field) => ({
       section: field.section, domain: field.domain, name: field.name, narrative: completedNarratives[field.id].trim(),
       diagnostic: fieldDiagnostic(field, evidence.filter((record) => record.fieldId === field.id && record.validated), indicatorApplicability),
@@ -2993,7 +3029,10 @@ export default function Home() {
       if (!response.ok || payload?.ok === false) throw new Error(payload?.error || `O servidor devolveu o estado ${response.status}.`);
       const sanitized = sanitizeAcademicSectionInReport(String(payload?.report || "").trim());
       const academicFallback = structuredAcademicNarrative(comparisons, completedNarratives["res-acad"] || "");
-      const improved = normalizeAcronyms(ensureAcademicScopeCoverage(sanitized, comparisons, academicFallback));
+      // 5.4.1 é reconstruído a partir dos tratamentos efetivamente enviados
+      // para a Matriz. A IA aprimora o restante relatório, mas não pode omitir,
+      // reordenar ou substituir os níveis de ensino com dados comparáveis.
+      const improved = normalizeAcronyms(replaceAcademicSectionInReport(sanitized, academicFallback));
       if (!improved) throw new Error("A IA não devolveu um relatório utilizável.");
       setReport(improved);
       setChangesPending(true);

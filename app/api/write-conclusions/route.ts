@@ -123,7 +123,7 @@ REGRAS:
         model: process.env.OPENAI_CONCLUSIONS_MODEL?.trim() || "gpt-5-mini",
         store: false,
         input: prompt,
-        reasoning: { effort: "high" },
+        reasoning: { effort: "medium" },
         max_output_tokens: 4_500,
         text: { format: { type: "json_schema", name: "conclusoes_aee", strict: true, schema: RESULT_SCHEMA } },
       }),

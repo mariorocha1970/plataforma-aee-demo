@@ -3,10 +3,10 @@
 import { ChangeEvent, useEffect, useMemo, useState } from "react";
 import { normalizeAcronyms } from "./text-normalization";
 
-const APP_BUILD = "2026.11.11-v22";
+const APP_BUILD = "2026.11.11-v25";
 const ANALYSIS_ENGINE_VERSION = 19;
 
-type View = "visao" | "documentos" | "privacidade" | "analise" | "estatistica" | "evidencias" | "entrevistas" | "triangulacao" | "relatorio" | "conclusoes";
+type View = "visao" | "documentos" | "privacidade" | "analise" | "estatistica" | "evidencias" | "entrevistas" | "triangulacao" | "relatorio" | "simplificados" | "conclusoes";
 type EvidenceStatus = "Confirmada" | "Por triangular" | "Contraditória" | "Ausente";
 type Strength = "Forte" | "Moderada" | "Insuficiente";
 type TriangulationLevel = "Confirmada" | "Parcial" | "Não realizada" | "Contraditória";
@@ -18,6 +18,17 @@ type IndicatorSuggestion = {
   justification: string;
   confidence: "Alta" | "Média";
 };
+
+type SimplifiedAudience = "alunos" | "familias";
+type SimplifiedReportContent = {
+  introducao: string;
+  pontosFortes: Record<string, string[]>;
+  areasMelhoria: Record<string, string[]>;
+  projetosInteressantes: string[];
+  papelFamilias: string[];
+  classificacoes: Array<{ dominio: string; classificacao: string }>;
+};
+type SimplifiedGraph = { id: string; name: string; file: File; preview: string; width: number; height: number; audience?: SimplifiedAudience };
 
 type DomainConclusion = {
   domain: string;
@@ -1782,6 +1793,152 @@ function createAnalysisBlocks(chunks: TextChunk[], targetSize = 8_000, overlapSi
   return blocks;
 }
 
+const simplifiedDomainNames = ["Autoavaliação", "Liderança e Gestão", "Prestação do Serviço Educativo", "Resultados"] as const;
+
+function reportSection(text: string, startNumber: number, endNumber?: number) {
+  const start = new RegExp(`(?:^|\\n)\\s*${startNumber}\\.\\s+`, "im").exec(text);
+  if (!start) return "";
+  const from = start.index + start[0].length;
+  if (!endNumber) return text.slice(from);
+  const rest = text.slice(from);
+  const end = new RegExp(`(?:^|\\n)\\s*${endNumber}\\.\\s+`, "im").exec(rest);
+  return end ? rest.slice(0, end.index) : rest;
+}
+
+function canonicalSimplifiedDomain(value: string): typeof simplifiedDomainNames[number] | "" {
+  const normalized = normalizeText(value.replace(/[*#:|]/g, " ").trim());
+  if (/^autoavaliacao\b/.test(normalized)) return "Autoavaliação";
+  if (/^lideranca e gestao\b/.test(normalized)) return "Liderança e Gestão";
+  if (/^prestacao do servico educativo\b/.test(normalized)) return "Prestação do Serviço Educativo";
+  if (/^resultados\b/.test(normalized) && !/^resultados academicos/.test(normalized) && !/^resultados sociais/.test(normalized)) return "Resultados";
+  return "";
+}
+
+function cleanSimplifiedItem(value: string) {
+  return value.replace(/^\s*(?:[•§▪◦*-]|\d+[.)])\s*/, "").replace(/\s+/g, " ").trim();
+}
+
+function extractDomainItems(section: string) {
+  const result: Record<string, string[]> = Object.fromEntries(simplifiedDomainNames.map((domain) => [domain, []]));
+  let current: typeof simplifiedDomainNames[number] | "" = "";
+  section.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).forEach((line) => {
+    const domain = canonicalSimplifiedDomain(line);
+    if (domain) { current = domain; return; }
+    const item = cleanSimplifiedItem(line);
+    if (!current || item.length < 12 || /^(domínio|classificação|pontos fortes|áreas de melhoria)$/i.test(item)) return;
+    if (!result[current].some((existing) => normalizeText(existing) === normalizeText(item))) result[current].push(item);
+  });
+  return result;
+}
+
+function simplifyForStudents(value: string) {
+  const replacements: Array<[RegExp, string]> = [
+    [/procedimentos? de autoavaliação sistemáticos?/gi, "formas regulares de avaliar o trabalho da escola"],
+    [/articulação curricular/gi, "ligação entre as diferentes disciplinas"],
+    [/metodologias? ativas?/gi, "formas de aprender com participação dos alunos"],
+    [/sentido de pertença/gi, "sentir que fazem parte da escola"],
+    [/resultados académicos/gi, "resultados escolares"],
+    [/monitorização/gi, "acompanhamento regular"],
+    [/planeamento estratégico/gi, "definição de objetivos e das formas de os alcançar"],
+    [/comunidade educativa/gi, "alunos, famílias e profissionais da escola"],
+    [/práticas letivas/gi, "formas de ensinar"],
+    [/processos de ensino e de aprendizagem/gi, "formas de ensinar e aprender"],
+  ];
+  return replacements.reduce((text, [pattern, replacement]) => text.replace(pattern, replacement), value).replace(/\s+/g, " ").trim();
+}
+
+function nominalizeImprovement(value: string) {
+  const rules: Array<[RegExp, string]> = [
+    [/^Reforçar\s+/i, "Reforço de "], [/^Melhorar\s+/i, "Melhoria de "], [/^Aprofundar\s+/i, "Aprofundamento de "],
+    [/^Consolidar\s+/i, "Consolidação de "], [/^Promover\s+/i, "Promoção de "], [/^Assegurar\s+/i, "Garantia de "],
+    [/^Definir\s+/i, "Definição de "], [/^Monitorizar\s+/i, "Acompanhamento de "], [/^Articular\s+/i, "Articulação de "],
+  ];
+  const matched = rules.find(([pattern]) => pattern.test(value));
+  return matched ? value.replace(matched[0], matched[1]) : value;
+}
+
+function localSimplifiedReport(text: string, audience: SimplifiedAudience): SimplifiedReportContent {
+  const strengthsRaw = extractDomainItems(reportSection(text, 3, 4));
+  const improvementsRaw = extractDomainItems(reportSection(text, 4, 5));
+  const transform = (value: string, improvement = false) => audience === "alunos" ? simplifyForStudents(value) : improvement ? nominalizeImprovement(value) : value;
+  const points = (source: Record<string, string[]>, improvement = false) => Object.fromEntries(simplifiedDomainNames.map((domain) => [domain, source[domain].length ? source[domain].map((item) => transform(item, improvement)) : [improvement ? "Não foram identificados aspetos específicos a melhorar neste domínio." : "Não foram identificados aspetos específicos a destacar neste domínio."]]));
+  const body = reportSection(text, 5);
+  const projects = body.split(/\r?\n/).map(cleanSimplifiedItem).filter((line) => line.length > 15 && /\b(projeto|programa|clube|iniciativa|parceria|atividade|mentoria|assembleia|intercambio|voluntariado)\b/i.test(line)).filter((line, index, values) => values.findIndex((item) => normalizeText(item) === normalizeText(line)) === index).slice(0, 14).map((item) => transform(item));
+  const familyRole = audience === "familias" ? body.split(/\r?\n/).map(cleanSimplifiedItem).filter((line) => line.length > 15 && /\b(familias?|pais|encarregados? de educacao|associacao de pais|escola-familia)\b/i.test(normalizeText(line))).filter((line, index, values) => values.findIndex((item) => normalizeText(item) === normalizeText(line)) === index).slice(0, 12) : [];
+  const ratingsSection = reportSection(text, 2, 3);
+  const ratingValues = ["Excelente", "Muito bom", "Bom", "Suficiente", "Insuficiente"];
+  const classifications = simplifiedDomainNames.map((domain) => {
+    const domainIndex = normalizeText(ratingsSection).indexOf(normalizeText(domain));
+    const nearby = domainIndex >= 0 ? ratingsSection.slice(domainIndex, domainIndex + 300) : "";
+    return { dominio: domain, classificacao: ratingValues.find((rating) => normalizeText(nearby).includes(normalizeText(rating))) || "Não indicada" };
+  });
+  return {
+    introducao: audience === "alunos" ? "Este documento apresenta, de forma simples, o que a avaliação externa identificou sobre a escola." : "Este documento apresenta, em linguagem acessível, os principais resultados da avaliação externa da escola.",
+    pontosFortes: points(strengthsRaw),
+    areasMelhoria: points(improvementsRaw, true),
+    projetosInteressantes: projects.length ? projects : ["Não foram identificados projetos específicos no texto extraído do relatório."],
+    papelFamilias: familyRole.length ? familyRole : audience === "familias" ? ["Não foram identificadas referências específicas ao papel das famílias no texto extraído do relatório."] : [],
+    classificacoes: classifications,
+  };
+}
+
+async function createQuestionnaireChart(group: string, title: string, items: any[], audience: SimplifiedAudience, suffix: string): Promise<SimplifiedGraph> {
+  const canvas = document.createElement("canvas");
+  canvas.width = 1400;
+  canvas.height = Math.max(620, 210 + items.length * 105);
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("O navegador não conseguiu criar os gráficos.");
+  const accent = audience === "alunos" ? "#80c342" : "#d41445";
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.fillStyle = "#2b2b2b";
+  context.font = "700 32px Arial";
+  context.fillText(group, 60, 55);
+  context.fillStyle = "#35a8ae";
+  context.font = "700 25px Arial";
+  context.fillText(title, 60, 100);
+  context.font = "20px Arial";
+  const barLeft = 780;
+  const barWidth = 500;
+  items.forEach((item, index) => {
+    const y = 165 + index * 105;
+    const words = `${item.numero ? `${item.numero}. ` : ""}${item.item || "Item sem designação"}`.split(/\s+/);
+    const lines: string[] = [];
+    let line = "";
+    words.forEach((word) => {
+      const candidate = line ? `${line} ${word}` : word;
+      if (context.measureText(candidate).width > 660 && line) { lines.push(line); line = word; }
+      else line = candidate;
+    });
+    if (line) lines.push(line);
+    context.fillStyle = "#333333";
+    lines.slice(0, 3).forEach((value, lineIndex) => context.fillText(value, 60, y + lineIndex * 25));
+    const total = Math.max(0, Math.min(100, Number(item.total) || 0));
+    context.fillStyle = "#eef1f0";
+    context.fillRect(barLeft, y - 20, barWidth, 34);
+    context.fillStyle = accent;
+    context.fillRect(barLeft, y - 20, barWidth * total / 100, 34);
+    context.fillStyle = "#222222";
+    context.font = "700 20px Arial";
+    context.fillText(`${total.toLocaleString("pt-PT", { maximumFractionDigits: 1 })}%`, barLeft + barWidth + 18, y + 5);
+    context.font = "20px Arial";
+  });
+  const blob = await new Promise<Blob>((resolve, reject) => canvas.toBlob((value) => value ? resolve(value) : reject(new Error("Não foi possível finalizar o gráfico.")), "image/png"));
+  const safeGroup = group.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-+|-+$/g, "").toLowerCase();
+  const file = new File([blob], `${audience}-${safeGroup}-${suffix}.png`, { type: "image/png" });
+  return { id: `${audience}-${safeGroup}-${suffix}-${crypto.randomUUID()}`, name: `${group} — ${title}`, file, preview: URL.createObjectURL(file), width: canvas.width, height: canvas.height, audience };
+}
+
+async function createAutomaticQuestionnaireCharts(analysis: any, audience: SimplifiedAudience) {
+  const groups = Array.isArray(analysis?.grupos) ? analysis.grupos : [];
+  const charts: SimplifiedGraph[] = [];
+  for (const group of groups) {
+    if (Array.isArray(group.maiorConcordancia) && group.maiorConcordancia.length) charts.push(await createQuestionnaireChart(group.grupo, "Itens de maior concordância", group.maiorConcordancia, audience, "maior-concordancia"));
+    if (Array.isArray(group.menorConcordancia) && group.menorConcordancia.length) charts.push(await createQuestionnaireChart(group.grupo, "Itens de menor concordância", group.menorConcordancia, audience, "menor-concordancia"));
+  }
+  return charts;
+}
+
 export default function Home() {
   const [view, setView] = useState<View>("visao");
   const [schoolName, setSchoolName] = useState("Agrupamento do Vale");
@@ -1843,6 +2000,17 @@ export default function Home() {
   const [indicatorDrafts, setIndicatorDrafts] = useState<Record<number, string[]>>({});
   const [indicatorSuggestionStatus, setIndicatorSuggestionStatus] = useState("");
   const [aiSuggestingIndicators, setAiSuggestingIndicators] = useState(false);
+  const [simplifiedAudience, setSimplifiedAudience] = useState<SimplifiedAudience>("alunos");
+  const [validatedReportName, setValidatedReportName] = useState("");
+  const [validatedReportText, setValidatedReportText] = useState("");
+  const [validatedReportConfirmed, setValidatedReportConfirmed] = useState(false);
+  const [simplifiedGraphs, setSimplifiedGraphs] = useState<SimplifiedGraph[]>([]);
+  const [simplifiedQuestionnaireFiles, setSimplifiedQuestionnaireFiles] = useState<string[]>([]);
+  const [simplifiedQuestionnaireText, setSimplifiedQuestionnaireText] = useState("");
+  const [simplifiedQuestionnaireAnalysis, setSimplifiedQuestionnaireAnalysis] = useState<any>({ grupos: [] });
+  const [simplifiedReports, setSimplifiedReports] = useState<Partial<Record<SimplifiedAudience, SimplifiedReportContent>>>({});
+  const [simplifiedStatus, setSimplifiedStatus] = useState("");
+  const [simplifiedWorking, setSimplifiedWorking] = useState(false);
 
   useEffect(() => {
     const stored = window.localStorage.getItem("aee-piloto-v2");
@@ -1866,6 +2034,11 @@ export default function Home() {
         if (Array.isArray(data.statisticalTreatments)) setStatisticalTreatments(deduplicateStatisticalTreatments(data.statisticalTreatments.filter((item: StatisticalTreatment) => Array.isArray(item.points) && Array.isArray(item.strengths) && Array.isArray(item.improvements)), restoredStatisticalRecords));
         if (Array.isArray(data.questionnaireComments)) setQuestionnaireComments(data.questionnaireComments);
         if (typeof data.questionnaireReport === "string") setQuestionnaireReport(data.questionnaireReport);
+        if (data.simplifiedReports && typeof data.simplifiedReports === "object") setSimplifiedReports(data.simplifiedReports);
+        if (typeof data.validatedReportName === "string") setValidatedReportName(data.validatedReportName);
+        if (typeof data.validatedReportText === "string") setValidatedReportText(data.validatedReportText);
+        if (typeof data.validatedReportConfirmed === "boolean") setValidatedReportConfirmed(data.validatedReportConfirmed);
+        if (data.simplifiedQuestionnaireAnalysis && typeof data.simplifiedQuestionnaireAnalysis === "object") setSimplifiedQuestionnaireAnalysis(data.simplifiedQuestionnaireAnalysis);
         if (Array.isArray(data.files)) setFiles(data.files);
         if (data.fileAnalysis && typeof data.fileAnalysis === "object") setFileAnalysis(data.fileAnalysis);
         if (generatedContentIsCurrent) {
@@ -1937,13 +2110,13 @@ export default function Home() {
   const triangulationBatchCount = Math.max(1, Math.ceil(validatedEvidenceCount / 180));
 
   function saveLocal() {
-    window.localStorage.setItem("aee-piloto-v2", JSON.stringify({ analysisEngineVersion: ANALYSIS_ENGINE_VERSION, schoolName, evidence, documentCandidates, statisticalRecords, statisticalTreatments, questionnaireComments, questionnaireReport, interviews, interviewCandidates, interviewQuestionDrafts, files, fileAnalysis, narratives, triangulationRevisions, report, conclusions, indicatorApplicability, lastUpdated }));
+    window.localStorage.setItem("aee-piloto-v2", JSON.stringify({ analysisEngineVersion: ANALYSIS_ENGINE_VERSION, schoolName, evidence, documentCandidates, statisticalRecords, statisticalTreatments, questionnaireComments, questionnaireReport, interviews, interviewCandidates, interviewQuestionDrafts, files, fileAnalysis, narratives, triangulationRevisions, report, conclusions, indicatorApplicability, lastUpdated, simplifiedReports, validatedReportName, validatedReportText, validatedReportConfirmed, simplifiedQuestionnaireAnalysis }));
     setSaved(true);
     window.setTimeout(() => setSaved(false), 1800);
   }
 
   function exportBackup() {
-    const payload = { analysisEngineVersion: ANALYSIS_ENGINE_VERSION, schoolName, evidence, documentCandidates, statisticalRecords, statisticalTreatments, questionnaireComments, questionnaireReport, interviews, interviewCandidates, interviewQuestionDrafts, files, fileAnalysis, narratives, triangulationRevisions, report, conclusions, indicatorApplicability, lastUpdated };
+    const payload = { analysisEngineVersion: ANALYSIS_ENGINE_VERSION, schoolName, evidence, documentCandidates, statisticalRecords, statisticalTreatments, questionnaireComments, questionnaireReport, interviews, interviewCandidates, interviewQuestionDrafts, files, fileAnalysis, narratives, triangulationRevisions, report, conclusions, indicatorApplicability, lastUpdated, simplifiedReports, validatedReportName, validatedReportText, validatedReportConfirmed, simplifiedQuestionnaireAnalysis };
     const backup = {
       format: "plataforma-aee-backup",
       version: 1,
@@ -1991,6 +2164,11 @@ export default function Home() {
       setSelectedTreatmentIds([]);
       setQuestionnaireComments(Array.isArray(data.questionnaireComments) ? data.questionnaireComments : []);
       setQuestionnaireReport(typeof data.questionnaireReport === "string" ? data.questionnaireReport : "");
+      setSimplifiedReports(data.simplifiedReports && typeof data.simplifiedReports === "object" ? data.simplifiedReports : {});
+      setValidatedReportName(typeof data.validatedReportName === "string" ? data.validatedReportName : "");
+      setValidatedReportText(typeof data.validatedReportText === "string" ? data.validatedReportText : "");
+      setValidatedReportConfirmed(Boolean(data.validatedReportConfirmed));
+      setSimplifiedQuestionnaireAnalysis(data.simplifiedQuestionnaireAnalysis && typeof data.simplifiedQuestionnaireAnalysis === "object" ? data.simplifiedQuestionnaireAnalysis : { grupos: [] });
       setInterviews(data.interviews);
       setInterviewCandidates(Array.isArray(data.interviewCandidates) ? data.interviewCandidates : []);
       setInterviewQuestionDrafts(Array.isArray(data.interviewQuestionDrafts) ? data.interviewQuestionDrafts : []);
@@ -2034,7 +2212,7 @@ export default function Home() {
     setNarratives(refreshedNarratives);
     setLastUpdated(timestamp);
     setChangesPending(false);
-    window.localStorage.setItem("aee-piloto-v2", JSON.stringify({ analysisEngineVersion: ANALYSIS_ENGINE_VERSION, schoolName, evidence, documentCandidates, statisticalRecords, statisticalTreatments, questionnaireComments, questionnaireReport, interviews, interviewCandidates, interviewQuestionDrafts, files, fileAnalysis, narratives: refreshedNarratives, triangulationRevisions, report: refreshedReport, conclusions, indicatorApplicability, lastUpdated: timestamp }));
+    window.localStorage.setItem("aee-piloto-v2", JSON.stringify({ analysisEngineVersion: ANALYSIS_ENGINE_VERSION, schoolName, evidence, documentCandidates, statisticalRecords, statisticalTreatments, questionnaireComments, questionnaireReport, interviews, interviewCandidates, interviewQuestionDrafts, files, fileAnalysis, narratives: refreshedNarratives, triangulationRevisions, report: refreshedReport, conclusions, indicatorApplicability, lastUpdated: timestamp, simplifiedReports, validatedReportName, validatedReportText, validatedReportConfirmed, simplifiedQuestionnaireAnalysis }));
     window.setTimeout(() => setUpdating(false), 650);
   }
 
@@ -2047,6 +2225,7 @@ export default function Home() {
       statisticalTreatments: [] as StatisticalTreatment[],
       questionnaireComments: [] as QuestionnaireComment[],
       questionnaireReport: "",
+      simplifiedReports: {} as Partial<Record<SimplifiedAudience, SimplifiedReportContent>>,
       interviews: [] as Interview[],
       interviewQuestionDrafts: [] as InterviewQuestionDraft[],
       files: [] as string[],
@@ -2069,6 +2248,15 @@ export default function Home() {
     setSelectedTreatmentIds([]);
     setQuestionnaireComments([]);
     setQuestionnaireReport("");
+    setSimplifiedReports({});
+    setValidatedReportName("");
+    setValidatedReportText("");
+    setValidatedReportConfirmed(false);
+    simplifiedGraphs.forEach((item) => URL.revokeObjectURL(item.preview));
+    setSimplifiedGraphs([]);
+    setSimplifiedQuestionnaireFiles([]);
+    setSimplifiedQuestionnaireText("");
+    setSimplifiedQuestionnaireAnalysis({ grupos: [] });
     setInterviews(emptyProcess.interviews);
     setInterviewCandidates([]);
     setInterviewQuestionDrafts([]);
@@ -3387,6 +3575,203 @@ export default function Home() {
     openExportCenter(conclusionsExport(conclusions), "classificacoes-pontos-fortes-areas-melhoria-aee", "docx", setConclusionsStatus);
   }
 
+  async function loadValidatedReport(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    setSimplifiedWorking(true);
+    setSimplifiedStatus("A extrair o texto do relatório validado…");
+    try {
+      const chunks = await extractFile(file);
+      const text = chunks.map((item) => item.text).join("\n\n").trim();
+      if (text.length < 500) throw new Error("O documento não contém texto suficiente ou necessita de OCR.");
+      setValidatedReportName(file.name);
+      setValidatedReportText(text);
+      setValidatedReportConfirmed(false);
+      setSimplifiedReports({});
+      setSimplifiedStatus(`${file.name}: ${text.length.toLocaleString("pt-PT")} caracteres extraídos. Confirme que esta é a versão validada.`);
+      setChangesPending(true);
+    } catch (error) {
+      setSimplifiedStatus(error instanceof Error ? error.message : "Não foi possível ler o relatório.");
+    } finally {
+      setSimplifiedWorking(false);
+    }
+  }
+
+  async function loadSimplifiedQuestionnaires(event: ChangeEvent<HTMLInputElement>) {
+    const selected = Array.from(event.target.files ?? []);
+    event.target.value = "";
+    if (!selected.length) return;
+    setSimplifiedWorking(true);
+    setSimplifiedStatus("A extrair as tabelas dos questionários…");
+    try {
+      const sections: string[] = [];
+      for (const file of selected) {
+        const chunks = await extractFile(file);
+        sections.push(`FICHEIRO: ${file.name}\n${chunks.map((item) => `[${item.location}] ${item.text}`).join("\n")}`);
+      }
+      const combined = sections.join("\n\n").slice(0, 140_000);
+      setSimplifiedQuestionnaireFiles(selected.map((file) => file.name));
+      setSimplifiedQuestionnaireText(combined);
+      setSimplifiedQuestionnaireAnalysis({ grupos: [] });
+      setSimplifiedStatus(`${selected.length} ficheiro(s) preparado(s). Use «Analisar questionários» para calcular as tabelas.`);
+    } catch (error) {
+      setSimplifiedStatus(error instanceof Error ? error.message : "Não foi possível ler os questionários.");
+    } finally {
+      setSimplifiedWorking(false);
+    }
+  }
+
+  async function analyzeSimplifiedQuestionnaires() {
+    if (!simplifiedQuestionnaireText || simplifiedWorking) return;
+    if (!window.confirm("Analisar todos os questionários numa única chamada à IA?")) return;
+    setSimplifiedWorking(true);
+    setSimplifiedStatus("A calcular os itens de maior e menor concordância por grupo…");
+    try {
+      const response = await fetch("/api/analyze-simplified-questionnaires", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: simplifiedQuestionnaireText }) });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || payload?.ok === false) throw new Error(payload?.error || `O servidor devolveu o estado ${response.status}.`);
+      setSimplifiedQuestionnaireAnalysis(payload.analysis ?? { grupos: [] });
+      setSimplifiedStatus(`${payload.analysis?.grupos?.length ?? 0} grupo(s) analisado(s). Reveja as tabelas antes da exportação.`);
+      setChangesPending(true);
+    } catch (error) {
+      setSimplifiedStatus(error instanceof Error ? error.message : "Não foi possível analisar os questionários.");
+    } finally {
+      setSimplifiedWorking(false);
+    }
+  }
+
+  async function loadSimplifiedGraphs(event: ChangeEvent<HTMLInputElement>) {
+    const selected = Array.from(event.target.files ?? []).filter((file) => /^image\/(png|jpeg)$/.test(file.type));
+    event.target.value = "";
+    const loaded = await Promise.all(selected.map((file) => new Promise<SimplifiedGraph>((resolve) => {
+      const preview = URL.createObjectURL(file);
+      const image = new Image();
+      image.onload = () => resolve({ id: `${Date.now()}-${crypto.randomUUID()}`, name: file.name.replace(/\.[^.]+$/, ""), file, preview, width: image.naturalWidth, height: image.naturalHeight });
+      image.onerror = () => resolve({ id: `${Date.now()}-${crypto.randomUUID()}`, name: file.name.replace(/\.[^.]+$/, ""), file, preview, width: 1200, height: 700 });
+      image.src = preview;
+    })));
+    setSimplifiedGraphs((current) => [...current, ...loaded].slice(0, 12));
+    setSimplifiedStatus(`${loaded.length} gráfico(s) acrescentado(s). Pode editar as legendas e ordenar a seleção removendo e reinserindo.`);
+  }
+
+  async function generateSimplifiedReport(audience: SimplifiedAudience) {
+    if (!validatedReportText || !validatedReportConfirmed || simplifiedWorking) {
+      setSimplifiedStatus(!validatedReportText ? "Carregue primeiro o relatório técnico validado." : "Confirme primeiro que o documento carregado corresponde à versão validada.");
+      return;
+    }
+    if (!window.confirm(`Gerar o Relatório — ${audience === "alunos" ? "Alunos" : "Famílias"} numa chamada à IA?`)) return;
+    setSimplifiedWorking(true);
+    setSimplifiedStatus(`A redigir a versão para ${audience === "alunos" ? "alunos" : "famílias"}…`);
+    try {
+      const response = await fetch("/api/write-simplified-report", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ audience, report: validatedReportText }) });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || payload?.ok === false) throw new Error(payload?.error || `O servidor devolveu o estado ${response.status}.`);
+      setSimplifiedReports((current) => ({ ...current, [audience]: payload.content }));
+      setSimplifiedAudience(audience);
+      setSimplifiedStatus(`Relatório para ${audience === "alunos" ? "alunos" : "famílias"} produzido. A validação humana continua obrigatória antes de exportar.`);
+      setChangesPending(true);
+    } catch (error) {
+      setSimplifiedStatus(error instanceof Error ? error.message : "Não foi possível gerar o relatório simplificado.");
+    } finally {
+      setSimplifiedWorking(false);
+    }
+  }
+
+  function generateSimplifiedReportLocally(audience: SimplifiedAudience) {
+    if (!validatedReportText || !validatedReportConfirmed) {
+      setSimplifiedStatus(!validatedReportText ? "Carregue primeiro o relatório técnico validado." : "Confirme primeiro que o documento carregado corresponde à versão validada.");
+      return;
+    }
+    const content = localSimplifiedReport(validatedReportText, audience);
+    setSimplifiedReports((current) => ({ ...current, [audience]: content }));
+    setSimplifiedAudience(audience);
+    setSimplifiedStatus(`Rascunho local para ${audience === "alunos" ? "alunos" : "famílias"} criado sem chamada à IA. Reveja sobretudo a simplificação das frases e a seleção dos projetos.`);
+    setChangesPending(true);
+  }
+
+  async function buildCompleteSimplifiedPackage() {
+    if (!validatedReportText || !validatedReportConfirmed || !simplifiedQuestionnaireText || simplifiedWorking) {
+      setSimplifiedStatus(!validatedReportText ? "Carregue o relatório técnico validado." : !validatedReportConfirmed ? "Confirme que o relatório corresponde à versão final validada." : "Carregue os PDF com as respostas aos questionários.");
+      return;
+    }
+    const totalCharacters = validatedReportText.length + simplifiedQuestionnaireText.length;
+    if (totalCharacters > 300_000) {
+      setSimplifiedStatus(`O conjunto tem ${totalCharacters.toLocaleString("pt-PT")} caracteres e excede o limite preventivo de 300 000. Remova PDF repetidos antes de continuar.`);
+      return;
+    }
+    if (!window.confirm("Produzir os dois relatórios, analisar os questionários, criar os gráficos e descarregar os dois Word numa única operação? Será utilizada 1 chamada à IA.")) return;
+    setSimplifiedWorking(true);
+    setSimplifiedStatus("Operação única em curso: a analisar questionários e a redigir as duas versões…");
+    try {
+      const response = await fetch("/api/build-simplified-package", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ report: validatedReportText, questionnaires: simplifiedQuestionnaireText }) });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || payload?.ok === false) throw new Error(payload?.error || `O servidor devolveu o estado ${response.status}.`);
+      const packageData = payload?.package;
+      if (!packageData?.alunos || !packageData?.familias || !Array.isArray(packageData?.questionarios?.grupos) || !packageData.questionarios.grupos.length) throw new Error("A resposta ficou incompleta. Não foram exportados documentos nem efetuada uma segunda chamada.");
+      setSimplifiedStatus("A criar automaticamente os gráficos para os dois públicos…");
+      const [studentCharts, familyCharts] = await Promise.all([createAutomaticQuestionnaireCharts(packageData.questionarios, "alunos"), createAutomaticQuestionnaireCharts(packageData.questionarios, "familias")]);
+      const automaticCharts = [...studentCharts, ...familyCharts];
+      setSimplifiedReports({ alunos: packageData.alunos, familias: packageData.familias });
+      setSimplifiedQuestionnaireAnalysis(packageData.questionarios);
+      setSimplifiedGraphs((current) => {
+        current.filter((graph) => graph.audience).forEach((graph) => URL.revokeObjectURL(graph.preview));
+        return [...current.filter((graph) => !graph.audience), ...automaticCharts];
+      });
+      setSimplifiedStatus("A compor e descarregar os dois documentos Word…");
+      const manualCharts = simplifiedGraphs.filter((graph) => !graph.audience);
+      await exportSimplifiedReport("alunos", packageData.alunos, packageData.questionarios, [...manualCharts, ...studentCharts]);
+      await exportSimplifiedReport("familias", packageData.familias, packageData.questionarios, [...manualCharts, ...familyCharts]);
+      setSimplifiedStatus(`Operação concluída com 1 chamada à IA: ${packageData.questionarios.grupos.length} grupo(s) analisado(s), gráficos construídos e dois relatórios Word descarregados.`);
+      setChangesPending(true);
+    } catch (error) {
+      setSimplifiedStatus(error instanceof Error ? error.message : "Não foi possível produzir o pacote completo.");
+    } finally {
+      setSimplifiedWorking(false);
+    }
+  }
+
+  function updateSimplifiedList(audience: SimplifiedAudience, section: "pontosFortes" | "areasMelhoria", domain: string, value: string) {
+    setSimplifiedReports((current) => {
+      const content = current[audience];
+      if (!content) return current;
+      return { ...current, [audience]: { ...content, [section]: { ...content[section], [domain]: value.split("\n").map((item) => item.trim()).filter(Boolean) } } };
+    });
+    setChangesPending(true);
+  }
+
+  async function exportSimplifiedReport(audience: SimplifiedAudience, contentOverride?: SimplifiedReportContent, analysisOverride?: any, graphsOverride?: SimplifiedGraph[]) {
+    const content = contentOverride ?? simplifiedReports[audience];
+    if (!content || (simplifiedWorking && !contentOverride)) return;
+    if (!contentOverride) setSimplifiedWorking(true);
+    setSimplifiedStatus("A compor o documento Word com o template e os gráficos…");
+    try {
+      const analysis = analysisOverride ?? simplifiedQuestionnaireAnalysis;
+      const graphs = (graphsOverride ?? simplifiedGraphs).filter((graph) => !graph.audience || graph.audience === audience);
+      const form = new FormData();
+      form.append("audience", audience);
+      form.append("school", schoolName);
+      form.append("content", JSON.stringify(content));
+      form.append("questionnaireAnalysis", JSON.stringify(analysis));
+      form.append("graphManifest", JSON.stringify(graphs.map(({ id, name, width, height }) => ({ id, name, width, height }))));
+      graphs.forEach((graph) => form.append(`graph-${graph.id}`, graph.file, graph.file.name));
+      const response = await fetch("/api/export-simplified-report", { method: "POST", body: form });
+      if (!response.ok) throw new Error(await response.text() || "Não foi possível exportar o documento.");
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${schoolName}-${audience}.docx`.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9_.-]+/g, "-");
+      link.click();
+      URL.revokeObjectURL(url);
+      setSimplifiedStatus("Documento Word exportado. Confirme a paginação final e a legibilidade dos gráficos.");
+    } catch (error) {
+      setSimplifiedStatus(error instanceof Error ? error.message : "Não foi possível exportar o relatório.");
+    } finally {
+      if (!contentOverride) setSimplifiedWorking(false);
+    }
+  }
+
   const nav: { id: View; label: string; step: string }[] = [
     { id: "visao", label: "Visão geral", step: "00" },
     { id: "documentos", label: "Documentos", step: "01" },
@@ -3398,6 +3783,7 @@ export default function Home() {
     { id: "triangulacao", label: "Triangulação", step: "07" },
     { id: "relatorio", label: "Relatório", step: "08" },
     { id: "conclusoes", label: "Pontos fortes e melhoria", step: "09" },
+    { id: "simplificados", label: "Relatórios simplificados", step: "10" },
   ];
 
   return (
@@ -3839,6 +4225,69 @@ export default function Home() {
             <textarea value={report} onChange={(event) => setReport(event.target.value)} placeholder="Selecione “Gerar minuta” para produzir um texto organizado a partir das evidências atuais." aria-label="Minuta do relatório" />
           </div>
         </section>}
+
+        {view === "simplificados" && (() => {
+          const content = simplifiedReports[simplifiedAudience];
+          const simplifiedDomains = ["Autoavaliação", "Liderança e Gestão", "Prestação do Serviço Educativo", "Resultados"];
+          return <section className="view simplified-reports-view">
+            <div className="page-heading"><div><p className="eyebrow">Agente 9 · Comunicação dos resultados</p><h2>Relatórios simplificados</h2><p>Produza, valide e exporte separadamente as versões destinadas aos alunos e às famílias. Comece pelo rascunho local sem custos; a revisão por IA é opcional.</p></div><span className="badge">Pode funcionar sem API</span></div>
+            <div className="narrative-guidance"><strong>Condição de utilização</strong><span>O documento carregado deve ser a versão final validada pela equipa. A IA simplifica a linguagem; não reabre a avaliação nem pode alterar o sentido dos juízos.</span></div>
+            <section className="simplified-source-card">
+              <div className="section-heading"><div><p className="eyebrow">1 · Fonte obrigatória</p><h3>Relatório técnico validado</h3><p>Formatos aceites: Word, PDF e texto. O conteúdo substitui qualquer minuta ainda existente na plataforma.</p></div><label className="button secondary file-button">Carregar relatório<input type="file" accept=".docx,.pdf,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain" onChange={loadValidatedReport} hidden /></label></div>
+              {validatedReportName ? <div className="uploaded-source"><div><strong>{validatedReportName}</strong><small>{validatedReportText.length.toLocaleString("pt-PT")} caracteres extraídos</small></div><label className="checkbox-line"><input type="checkbox" checked={validatedReportConfirmed} onChange={(event) => setValidatedReportConfirmed(event.target.checked)} /> Confirmo que corresponde ao relatório final validado</label></div> : <div className="empty-analysis"><strong>Nenhum relatório validado carregado.</strong><p>A geração das versões simplificadas permanece bloqueada.</p></div>}
+            </section>
+            <section className="simplified-source-card">
+              <div className="section-heading"><div><p className="eyebrow">2 · Questionários e elementos gráficos</p><h3>Resultados a integrar nas duas versões</h3><p>Para trabalhar sem API, insira diretamente os gráficos finais em PNG ou JPEG. A análise automática dos PDF dos questionários é apenas uma opção.</p></div><div className="action-row"><label className="button secondary file-button">Inserir gráficos · sem API<input type="file" multiple accept="image/png,image/jpeg" onChange={loadSimplifiedGraphs} hidden /></label><label className="button secondary file-button">Inserir PDF dos questionários<input type="file" multiple accept=".pdf,application/pdf" onChange={loadSimplifiedQuestionnaires} hidden /></label><button className="button secondary" disabled={!simplifiedQuestionnaireText || simplifiedWorking} onClick={analyzeSimplifiedQuestionnaires}>Analisar PDF com IA · 1 chamada</button></div></div>
+              {simplifiedQuestionnaireFiles.length > 0 && <div className="file-chips">{simplifiedQuestionnaireFiles.map((name) => <span className="badge" key={name}>{name}</span>)}</div>}
+              {Array.isArray(simplifiedQuestionnaireAnalysis?.grupos) && simplifiedQuestionnaireAnalysis.grupos.length > 0 && <div className="questionnaire-analysis-preview">{simplifiedQuestionnaireAnalysis.grupos.map((group: any) => <article key={group.grupo}><strong>{group.grupo}</strong><span>{group.maiorConcordancia?.length ?? 0} itens de maior concordância · {group.menorConcordancia?.length ?? 0} itens de menor concordância</span></article>)}</div>}
+              {simplifiedGraphs.length > 0 && <div className="simplified-graph-grid">{simplifiedGraphs.map((graph) => <article key={graph.id}><img src={graph.preview} alt={graph.name} /><label>Legenda<input value={graph.name} onChange={(event) => setSimplifiedGraphs((current) => current.map((item) => item.id === graph.id ? { ...item, name: event.target.value } : item))} /></label><button className="text-button danger-text" onClick={() => { URL.revokeObjectURL(graph.preview); setSimplifiedGraphs((current) => current.filter((item) => item.id !== graph.id)); }}>Remover</button></article>)}</div>}
+            </section>
+            <section className="simplified-one-click">
+              <div><p className="eyebrow">Percurso recomendado</p><h3>Gerar tudo com um clique</h3><p>Analisa todos os questionários, constrói automaticamente os gráficos com cores próprias para cada público, redige os dois relatórios, aplica os templates e descarrega os dois ficheiros Word.</p></div>
+              <button className="button primary" disabled={!validatedReportConfirmed || !simplifiedQuestionnaireText || simplifiedWorking} onClick={buildCompleteSimplifiedPackage}>{simplifiedWorking ? "A produzir o pacote completo…" : "Gerar os 2 relatórios e gráficos · 1 clique · 1 chamada"}</button>
+            </section>
+            {simplifiedStatus && <div className="statistics-status" role="status">{simplifiedStatus}</div>}
+            <section className="simplified-editor-card">
+              <div className="simplified-tabs"><button className={simplifiedAudience === "alunos" ? "selected" : ""} onClick={() => setSimplifiedAudience("alunos")}>Relatório — Alunos</button><button className={simplifiedAudience === "familias" ? "selected family" : "family"} onClick={() => setSimplifiedAudience("familias")}>Relatório — Famílias</button></div>
+              <div className="section-heading"><div><p className="eyebrow">3 · Redação e validação</p><h3>{simplifiedAudience === "alunos" ? "Versão para alunos dos 10 aos 15 anos" : "Versão para pais e encarregados de educação"}</h3><p>{simplifiedAudience === "alunos" ? "Linguagem clara, não infantilizada, com o que está a correr bem, o que pode melhorar e projetos interessantes." : "Linguagem acessível, com pontos fortes, áreas de melhoria, projetos e valorização do papel das famílias."}</p></div><div className="action-row"><button className="button primary" disabled={!validatedReportConfirmed || simplifiedWorking} onClick={() => generateSimplifiedReportLocally(simplifiedAudience)}>Gerar rascunho local · sem API</button><button className="button secondary" disabled={!validatedReportConfirmed || simplifiedWorking} onClick={() => generateSimplifiedReport(simplifiedAudience)}>{simplifiedWorking ? "A processar…" : content ? "Aprimorar com IA · 1 chamada" : "Gerar diretamente com IA · 1 chamada"}</button><button className="button secondary" disabled={!content || simplifiedWorking} onClick={() => exportSimplifiedReport(simplifiedAudience)}>Guardar Word com template</button></div></div>
+              {simplifiedStatus && <div className="statistics-status" role="status">{simplifiedStatus}</div>}
+              {!content ? <div className="empty-analysis"><strong>Esta versão ainda não foi produzida.</strong><p>O relatório para alunos e o relatório para famílias são gerados e validados separadamente.</p></div> : <div className="simplified-content-editor">
+                <label>Introdução<textarea value={content.introducao} onChange={(event) => setSimplifiedReports((current) => ({ ...current, [simplifiedAudience]: { ...content, introducao: event.target.value } }))} /></label>
+                <h3>{simplifiedAudience === "alunos" ? "O que está a correr bem?" : "Pontos fortes"}</h3>
+                <div className="simplified-domain-grid">{simplifiedDomains.map((domain) => <label key={`strong-${domain}`}>{domain}<textarea value={(content.pontosFortes?.[domain] || []).join("\n")} onChange={(event) => updateSimplifiedList(simplifiedAudience, "pontosFortes", domain, event.target.value)} /><small>Um ponto por linha</small></label>)}</div>
+                <h3>{simplifiedAudience === "alunos" ? "O que pode melhorar?" : "Áreas de melhoria"}</h3>
+                <div className="simplified-domain-grid">{simplifiedDomains.map((domain) => <label key={`improve-${domain}`}>{domain}<textarea value={(content.areasMelhoria?.[domain] || []).join("\n")} onChange={(event) => updateSimplifiedList(simplifiedAudience, "areasMelhoria", domain, event.target.value)} /><small>Um ponto por linha</small></label>)}</div>
+                <label>Projetos interessantes<textarea value={(content.projetosInteressantes || []).join("\n")} onChange={(event) => setSimplifiedReports((current) => ({ ...current, [simplifiedAudience]: { ...content, projetosInteressantes: event.target.value.split("\n").map((item) => item.trim()).filter(Boolean) } }))} /><small>Um projeto ou iniciativa por linha</small></label>
+                {simplifiedAudience === "familias" && <label>Valorização do papel dos pais na vida escolar<textarea value={(content.papelFamilias || []).join("\n")} onChange={(event) => setSimplifiedReports((current) => ({ ...current, familias: { ...content, papelFamilias: event.target.value.split("\n").map((item) => item.trim()).filter(Boolean) } }))} /><small>Apenas referências explicitamente presentes no relatório técnico</small></label>}
+              </div>}
+            </section>
+            <style jsx>{`
+              .simplified-source-card, .simplified-editor-card { margin-top: 1rem; padding: 1.2rem; border: 1px solid #dce5e1; border-radius: 18px; background: white; }
+              .simplified-one-click { display: flex; align-items: center; justify-content: space-between; gap: 1.2rem; margin-top: 1rem; padding: 1.2rem; border: 2px solid #27836a; border-radius: 18px; background: linear-gradient(135deg, #eff9f5, #ffffff); }
+              .simplified-one-click h3, .simplified-one-click p { margin: .15rem 0; }
+              .uploaded-source { display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding: .9rem; border-radius: 12px; background: #f1f8f5; }
+              .uploaded-source > div { display: grid; gap: .2rem; }
+              .file-button { cursor: pointer; }
+              .file-chips { display: flex; flex-wrap: wrap; gap: .5rem; margin: .8rem 0; }
+              .questionnaire-analysis-preview { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .6rem; margin: .8rem 0; }
+              .questionnaire-analysis-preview article { display: grid; gap: .2rem; padding: .75rem; border: 1px solid #e1e8e5; border-radius: 10px; }
+              .simplified-graph-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .8rem; margin-top: 1rem; }
+              .simplified-graph-grid article { display: grid; gap: .6rem; padding: .7rem; border: 1px solid #dce4e1; border-radius: 12px; }
+              .simplified-graph-grid img { width: 100%; height: 170px; object-fit: contain; background: #fafafa; }
+              .simplified-tabs { display: flex; gap: .5rem; margin-bottom: 1rem; }
+              .simplified-tabs button { padding: .7rem 1rem; border: 1px solid #77a996; border-radius: 10px; background: white; color: #285d4c; font-weight: 800; cursor: pointer; }
+              .simplified-tabs button.selected { background: #80c342; border-color: #80c342; color: #173819; }
+              .simplified-tabs button.selected.family { background: #d41445; border-color: #d41445; color: white; }
+              .simplified-content-editor { display: grid; gap: 1rem; }
+              .simplified-content-editor > label { font-weight: 750; }
+              .simplified-content-editor textarea { min-height: 8rem; }
+              .simplified-domain-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .8rem; }
+              .simplified-domain-grid label { font-weight: 750; }
+              .simplified-domain-grid textarea { min-height: 9rem; }
+              @media (max-width: 900px) { .simplified-graph-grid, .questionnaire-analysis-preview, .simplified-domain-grid { grid-template-columns: 1fr; } .uploaded-source, .simplified-one-click { align-items: flex-start; flex-direction: column; } }
+            `}</style>
+          </section>;
+        })()}
 
         {view === "conclusoes" && <section className="view">
           <div className="page-heading"><div><p className="eyebrow">Agente 8 · Síntese conclusiva</p><h2>Classificações, Pontos Fortes e Áreas de Melhoria</h2><p>As propostas partem das narrativas trianguladas e devem ser consistentes com o relatório. A decisão final pertence à equipa de avaliação.</p></div><div className="action-row"><button className="button secondary" onClick={generateConclusions}>Gerar proposta local · sem API</button><button className="button primary" disabled={aiConclusionsWriting} onClick={improveConclusionsWithAi}>{aiConclusionsWriting ? "A rever…" : "Melhorar e propor menções com IA · 1 chamada"}</button><button className="button secondary" disabled={!conclusions.length} onClick={exportConclusionsWord}>Guardar Word (.docx)</button></div></div>

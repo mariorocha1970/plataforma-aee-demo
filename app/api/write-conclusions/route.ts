@@ -10,8 +10,8 @@ const conclusion = {
   additionalProperties: false,
   properties: {
     domain: { type: "string", enum: ["Autoavaliação", "Liderança e gestão", "Prestação do serviço educativo", "Resultados"] },
-    strengths: { type: "array", items: { type: "string" }, maxItems: 6 },
-    improvements: { type: "array", items: { type: "string" }, maxItems: 6 },
+    strengths: { type: "array", items: { type: "string", minLength: 45, maxLength: 260 }, minItems: 2, maxItems: 4 },
+    improvements: { type: "array", items: { type: "string", minLength: 35, maxLength: 260 }, minItems: 1, maxItems: 3 },
     rating: { type: "string", enum: ["Excelente", "Muito bom", "Bom", "Suficiente", "Insuficiente", "Por definir"] },
     rationale: { type: "string" },
     evidenceSupport: { type: "string", enum: ["Sustentada", "Parcialmente sustentada", "Não sustentada"] },
@@ -107,7 +107,9 @@ REGRAS:
 - Em supportWarning, explique de modo conciso a lacuna ou contradição quando a sustentação não for plena. Se for «Sustentada», devolva uma cadeia vazia.
 - Se uma menção fixada não estiver sustentada, mantenha-a como decisão da equipa, mas não produza uma fundamentação fictícia. A rationale deve distinguir a decisão assumida da limitação probatória e indicar objetivamente o que impede a sua validação plena.
 - Pontos fortes e áreas de melhoria são juízos avaliativos concisos, autónomos e coerentes com o texto do relatório; não são listas de atividades nem transcrições de evidências.
-- Produza, em regra, três pontos fortes e duas áreas de melhoria por domínio. Cada item deve conter uma única frase forte, curta e mobilizadora, preferencialmente entre 12 e 28 palavras, com redação própria de relatório da IGEC.
+- Produza três pontos fortes e, em regra, duas áreas de melhoria por domínio. Cada item deve conter uma única frase forte, curta, precisa e mobilizadora, entre 12 e 30 palavras e nunca acima de 260 caracteres.
+- Comece cada item diretamente pelo processo, prática ou resultado avaliado, usando uma construção nominal densa: «Processo plurianual de…», «Monitorização sistemática de…», «Articulação consistente entre…», «Consolidação de…». Não introduza o item com «A evidência mostra», «Verifica-se», «Existe», «Há» ou fórmulas semelhantes.
+- Elimine explicações acessórias, enumerações longas, percentagens, exemplos entre parênteses, reservas probatórias e orações sucessivas. Cada item deve comunicar uma única ideia nuclear e o respetivo alcance avaliativo.
 - Quando a menção seja «Muito bom», devolva obrigatoriamente mais pontos fortes do que áreas de melhoria, em coerência com o predomínio de evidências positivas exigido pela escala.
 - Não transforme reservas sobre amostras, anexos, causalidade, desagregação, método de apuramento ou quantidade de fontes em áreas de melhoria da organização, salvo quando as evidências demonstrem que essa insuficiência corresponde efetivamente a uma fragilidade das práticas de monitorização ou avaliação do agrupamento.
 - As áreas de melhoria devem incidir em processos ou resultados concretos a aperfeiçoar. Nunca use como área de melhoria fórmulas editoriais como «a interpretação deve atender», «carece de evidência adicional», «consultar anexo» ou referências ao funcionamento da análise.

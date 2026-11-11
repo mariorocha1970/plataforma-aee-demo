@@ -71,7 +71,7 @@ export async function POST(request: NextRequest) {
     if (domains.length !== 4) return NextResponse.json({ ok: false, error: "São necessários os quatro domínios e respetivas triangulações." }, { status: 400 });
     const schoolName = String(body?.schoolName || "a organização escolar").slice(0, 180);
     const domainsJson = JSON.stringify(domains);
-    if (domainsJson.length > 180_000) return NextResponse.json({ ok: false, error: "O perfil probatório excede o limite seguro. Consolide as evidências excessivamente repetidas antes de repetir a síntese." }, { status: 413 });
+    if (domainsJson.length > 320_000) return NextResponse.json({ ok: false, error: "O perfil probatório excede o limite seguro. Consolide as evidências excessivamente repetidas antes de repetir a síntese." }, { status: 413 });
     const prompt = `Formule a síntese conclusiva de uma Avaliação Externa das Escolas, em português europeu, relativa a ${schoolName}.
 
 DADOS POR DOMÍNIO (narrativas trianguladas e perfil probatório detalhado por campo):
@@ -95,6 +95,7 @@ REGRAS:
 - Reanalise cada domínio de raiz. Não use uma proposta anterior como âncora e não presuma que a menção deve descer ou subir.
 - Todos os quatro domínios foram incluídos integralmente. Nunca afirme que as narrativas ou o perfil probatório não contêm informação quando o campo apresenta count superior a zero ou uma narrativa não vazia. Nessa situação, analise expressamente a informação fornecida e identifique apenas a limitação concreta que subsista.
 - Percorra todos os campos de cada domínio antes de formular a menção. A fundamentação deve refletir o padrão global do domínio e não uma única reserva ou um único campo.
+- Leia integralmente evidenceInventory. Este inventário contém todas as evidências validadas, sem a seleção representativa aplicada aos restantes perfis, e prevalece sobre qualquer síntese abreviada quando esta omita uma prática, resultado, impacto, reserva ou contradição relevante.
 - Percorra também todos os indicatorProfiles de cada campo, incluindo os que apresentem evidência positiva robusta. A seleção da menção deve resultar do conjunto dos indicadores aplicáveis; é proibido ignorar um indicador coberto apenas porque não foi referido na narrativa sintética.
 - Cruze os indicatorProfiles com os sourceProfiles. Estes últimos asseguram que evidências documentais, quantitativas e testemunhais, incluindo entrevistas, são consideradas mesmo quando ainda não foram associadas manualmente a um indicador.
 - A ausência de associação de algumas evidências a um indicador é uma questão de organização da matriz, não um sinal negativo sobre o domínio. Considere unlinkedEvidence pelo seu conteúdo, sem a transformar automaticamente em área de melhoria.

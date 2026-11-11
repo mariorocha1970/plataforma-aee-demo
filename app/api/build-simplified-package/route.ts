@@ -76,7 +76,8 @@ RELATÓRIO PARA FAMÍLIAS:
 - Recolha apenas referências explícitas ao papel e à participação das famílias.
 
 ANÁLISE DOS QUESTIONÁRIOS:
-- Identifique cada grupo e processe-o separadamente.
+- Identifique e processe apenas Q1, Q2, Q5 e Q6, mantendo obrigatoriamente estes códigos no início do nome de cada grupo.
+- Q1 e Q2 destinam-se exclusivamente ao relatório dos alunos; Q5 e Q6 destinam-se exclusivamente ao relatório das famílias.
 - Reconstitua número, texto e percentagens de Concordo Totalmente, Concordo, Discordo e Discordo Totalmente.
 - Corrija apenas quebras de linha ou fusões de células comprovadas pela coerência numérica; não invente valores.
 - Selecione os cinco itens com maior CT + C e ordene do maior para o menor.

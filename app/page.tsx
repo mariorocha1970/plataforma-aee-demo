@@ -3,8 +3,8 @@
 import { ChangeEvent, useEffect, useMemo, useState } from "react";
 import { normalizeAcronyms } from "./text-normalization";
 
-const APP_BUILD = "2026.11.11-v14";
-const ANALYSIS_ENGINE_VERSION = 14;
+const APP_BUILD = "2026.11.11-v15";
+const ANALYSIS_ENGINE_VERSION = 15;
 
 type View = "visao" | "documentos" | "privacidade" | "analise" | "estatistica" | "evidencias" | "entrevistas" | "triangulacao" | "relatorio" | "conclusoes";
 type EvidenceStatus = "Confirmada" | "Por triangular" | "Contraditória" | "Ausente";
@@ -1338,7 +1338,7 @@ function requiredAcademicComparisons(records: Evidence[]) {
 }
 
 function academicComparisonTitle(value: string) {
-  const normalized = normalizeText(value);
+  const normalized = normalizeText(value).replace(/(\d)\s*[.º°]+\s*/g, "$1 ");
   if (/provas? nacionais?|sem retencoes|retencao|desistencia|por curso/.test(normalized)) return false;
   return /percentagem de alunos.*concluem.*(?:1|2|3) ciclo.*(?:dois|tres|quatro|[234]) anos/.test(normalized)
     || /percentagem de alunos.*concluem.*cursos? cientifico.?humanisticos?.*tres anos/.test(normalized)
@@ -1379,12 +1379,15 @@ function academicComparisonsFromMatrixTreatments(records: Evidence[], treatments
 }
 
 function infoEscolasScopeFromText(value: string) {
-  const normalized = normalizeText(value);
+  const normalized = normalizeText(value).replace(/(\d)\s*[.º°]+\s*/g, "$1 ");
+  // As designações do ensino profissional podem mencionar a conclusão
+  // prévia do 3.º ciclo. As ofertas têm de ser reconhecidas antes dos ciclos
+  // para essa referência contextual não alterar a classificação do indicador.
+  if (/profissional/.test(normalized)) return "5";
+  if (/cientifico.?humanistico|ensino secundario/.test(normalized)) return "4";
   if (/1 ciclo|primeiro ciclo/.test(normalized)) return "1";
   if (/2 ciclo|segundo ciclo/.test(normalized)) return "2";
   if (/3 ciclo|terceiro ciclo/.test(normalized)) return "3";
-  if (/cientifico.?humanistico|ensino secundario/.test(normalized)) return "4";
-  if (/profissional/.test(normalized)) return "5";
   return "";
 }
 
@@ -1491,11 +1494,14 @@ function academicScopeLabel(value: string) {
   return "";
 }
 
-function latestAcademicComparison(value: string) {
-  const rows = [...value.matchAll(/\b((?:19|20)\d{2}[\/\-–](?:\d{2}|(?:19|20)\d{2})):\s*escola\s*(-?\d+(?:[,.]\d+)?)%\s*e\s*nacional\s*(-?\d+(?:[,.]\d+)?)%/gi)]
+function academicComparisonRows(value: string) {
+  return [...value.matchAll(/\b((?:19|20)\d{2}[\/\-–](?:\d{2}|(?:19|20)\d{2})):\s*escola\s*(-?\d+(?:[,.]\d+)?)%\s*e\s*nacional\s*(-?\d+(?:[,.]\d+)?)%/gi)]
     .map((match) => ({ period: match[1], school: Number.parseFloat(match[2].replace(",", ".")), national: Number.parseFloat(match[3].replace(",", ".")) }))
     .filter((row) => Number.isFinite(row.school) && Number.isFinite(row.national));
-  return rows.at(-1);
+}
+
+function latestAcademicComparison(value: string) {
+  return academicComparisonRows(value).at(-1);
 }
 
 function structuredAcademicNarrative(comparisons: string[], _qualitative = "") {
@@ -1504,7 +1510,7 @@ function structuredAcademicNarrative(comparisons: string[], _qualitative = "") {
     const candidates = comparisons.filter((comparison) => infoEscolasScopeFromText(comparison) === scope);
     return candidates.flatMap((comparison) => {
       const latest = latestAcademicComparison(comparison);
-      return latest ? [{ scope, label: academicScopeLabel(comparison), latest, equity: /\b(?:ASE|ação social escolar)\b/i.test(comparison), comparison }] : [];
+      return latest ? [{ scope, label: academicScopeLabel(comparison), latest, rows: academicComparisonRows(comparison), equity: /\b(?:ASE|ação social escolar)\b/i.test(comparison), comparison }] : [];
     });
   });
   const select = (scope: string, equity: boolean) => entries.find((item) => item.scope === scope && item.equity === equity);
@@ -1512,11 +1518,14 @@ function structuredAcademicNarrative(comparisons: string[], _qualitative = "") {
   const equityBasic = ["1", "2", "3"].map((scope) => select(scope, true)).filter((item): item is NonNullable<typeof item> => Boolean(item));
   const secondary = select("4", false) || entries.find((item) => item.scope === "4");
   const professional = select("5", false) || entries.find((item) => item.scope === "5");
-  const describe = (item: NonNullable<typeof secondary>) => `${format(item.latest.school)} no ${item.label}, face a ${format(item.latest.national)} no país`;
   const paragraphs: string[] = [];
-  if (generalBasic.length) {
+  if (generalBasic.length === 3) {
+    const years = generalBasic[0].rows.map((row) => row.period);
+    const period = generalBasic[2].latest.period;
+    paragraphs.push(`No triénio de ${years[0] || "2021/22"} a ${years.at(-1) || "2023/24"}, as taxas de conclusão no tempo esperado situam-se acima das referências nacionais contextualizadas nos três ciclos do ensino básico. No último ano letivo (${period}), atingem ${format(generalBasic[0].latest.school)} no 1.º ciclo, ${format(generalBasic[1].latest.school)} no 2.º ciclo e ${format(generalBasic[2].latest.school)} no 3.º ciclo, face a ${format(generalBasic[0].latest.national)}, ${format(generalBasic[1].latest.national)} e ${format(generalBasic[2].latest.national)}, respetivamente. Estes resultados evidenciam percursos escolares globalmente bem-sucedidos.`);
+  } else if (generalBasic.length) {
     const period = generalBasic.at(-1)?.latest.period;
-    paragraphs.push(`No triénio disponível, as taxas de conclusão no tempo esperado apresentam uma evolução globalmente favorável nos ciclos do ensino básico com informação comparável. No último ano letivo${period ? ` (${period})` : ""}, atingem ${generalBasic.map(describe).join("; ")}. Estes resultados evidenciam percursos escolares globalmente bem-sucedidos.`);
+    paragraphs.push(`No ensino básico, as taxas de conclusão no tempo esperado situam-se globalmente acima das referências nacionais contextualizadas nos ciclos com informação comparável. Em ${period || "no último ano disponível"}, registam-se ${generalBasic.map((item) => `${format(item.latest.school)} no ${item.label}, face a ${format(item.latest.national)}`).join("; ")}.`);
   }
   if (secondary) {
     const relation = secondary.latest.school >= secondary.latest.national ? "acima" : "abaixo";
@@ -1524,7 +1533,8 @@ function structuredAcademicNarrative(comparisons: string[], _qualitative = "") {
   }
   if (professional) {
     const relation = professional.latest.school >= professional.latest.national ? "acima" : "abaixo";
-    paragraphs.push(`No ensino profissional, a taxa de conclusão no tempo esperado situa-se ${relation} da referência nacional no último ano disponível: ${format(professional.latest.school)} no agrupamento, face a ${format(professional.latest.national)} no país, em ${professional.latest.period}. A evolução dos percursos e das situações de atraso na conclusão constitui uma dimensão relevante para consolidar o sucesso nesta oferta formativa.`);
+    const earlierAbove = professional.rows.slice(0, -1).filter((row) => row.school > row.national).length;
+    paragraphs.push(`No ensino profissional, a taxa de conclusão no tempo esperado situa-se ${relation} da referência nacional no último ano disponível: ${format(professional.latest.school)} no agrupamento, face a ${format(professional.latest.national)} no país, em ${professional.latest.period}${earlierAbove ? `, após ${earlierAbove === 2 ? "dois anos" : "um ano"} acima da respetiva referência` : ""}. A evolução dos percursos e das situações de atraso na conclusão constitui uma dimensão relevante para consolidar o sucesso nesta oferta formativa.`);
   }
   if (equityBasic.length) {
     const period = equityBasic.at(-1)?.latest.period;
@@ -3135,23 +3145,31 @@ export default function Home() {
           evaluativeBalance: conclusionEvaluativeBalance(records),
         };
       }),
-      evidenceInventory: fields.filter((field) => field.domain === domain).map((field) => ({
+      evidenceInventory: fields.filter((field) => field.domain === domain).map((field) => {
+        const records = evidence.filter((record) => record.validated && record.fieldId === field.id);
+        const distinct = records.filter((record, index, all) => all.findIndex((candidate) => normalizeText(candidate.claim) === normalizeText(record.claim)) === index);
+        return {
         section: field.section,
         name: field.name,
-        records: evidence
-          .filter((record) => record.validated && record.fieldId === field.id)
-          .filter((record, index, records) => records.findIndex((candidate) => normalizeText(candidate.claim) === normalizeText(record.claim)) === index)
+        totalCount: records.length,
+        records: representativeConclusionEvidence(distinct, 12)
           .map((record) => ({
-            claim: record.claim.slice(0, 280),
+            claim: record.claim.slice(0, 520),
             sourceType: record.sourceType,
             status: record.status,
             strength: record.strength,
             indicators: record.indicatorIds ?? [],
           })),
-      })),
+        };
+      }),
     }));
     if (!payloadDomains.some((item) => item.fields.some((field) => field.narrative.trim()))) {
       setConclusionsStatus("Ainda não existem narrativas trianguladas suficientes para formular conclusões.");
+      return;
+    }
+    const conclusionsRequestBody = JSON.stringify({ schoolName, domains: payloadDomains });
+    if (conclusionsRequestBody.length > 280_000) {
+      setConclusionsStatus(`A revisão não foi enviada nem consumiu saldo: o pedido tem ${conclusionsRequestBody.length.toLocaleString("pt-PT")} caracteres e excede o limite preventivo. Consolide evidências repetidas antes de tentar novamente.`);
       return;
     }
     if (!window.confirm("Esta operação utiliza IA e faz 1 chamada à API para rever os Pontos Fortes, as Áreas de Melhoria e propor as quatro menções. Pretende continuar?")) return;
@@ -3161,7 +3179,7 @@ export default function Home() {
       const response = await fetch("/api/write-conclusions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ schoolName, domains: payloadDomains }),
+        body: conclusionsRequestBody,
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok || payload?.ok === false) throw new Error(payload?.error || `O servidor devolveu o estado ${response.status}.`);

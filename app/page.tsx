@@ -3,8 +3,8 @@
 import { ChangeEvent, useEffect, useMemo, useState } from "react";
 import { normalizeAcronyms } from "./text-normalization";
 
-const APP_BUILD = "2026.11.11-v18";
-const ANALYSIS_ENGINE_VERSION = 18;
+const APP_BUILD = "2026.11.11-v19";
+const ANALYSIS_ENGINE_VERSION = 19;
 
 type View = "visao" | "documentos" | "privacidade" | "analise" | "estatistica" | "evidencias" | "entrevistas" | "triangulacao" | "relatorio" | "conclusoes";
 type EvidenceStatus = "Confirmada" | "Por triangular" | "Contraditória" | "Ausente";
@@ -3131,6 +3131,13 @@ export default function Home() {
       }),
       evidenceProfile: fields.filter((field) => field.domain === domain).map((field) => {
         const records = evidence.filter((record) => record.validated && record.fieldId === field.id);
+        const indicatorProfile = conclusionIndicatorProfiles(field, records, indicatorApplicability);
+        const compactIndicatorProfile = {
+          ...indicatorProfile,
+          profiles: indicatorProfile.profiles.map(({ evidence: _evidence, ...profile }) => profile),
+          unlinkedEvidence: [],
+        };
+        const compactSourceProfiles = conclusionSourceProfiles(records).map(({ evidence: _evidence, ...profile }) => profile);
         return {
           section: field.section,
           count: records.length,
@@ -3139,8 +3146,8 @@ export default function Home() {
           sourceTypes: [...new Set(records.map((record) => record.sourceType))],
           sourceFamilies: new Set(records.map(independentSourceKey).filter(Boolean)).size,
           diagnostic: fieldDiagnostic(field, records, indicatorApplicability),
-          indicatorProfiles: conclusionIndicatorProfiles(field, records, indicatorApplicability),
-          sourceProfiles: conclusionSourceProfiles(records),
+          indicatorProfiles: compactIndicatorProfile,
+          sourceProfiles: compactSourceProfiles,
           evaluativeBalance: conclusionEvaluativeBalance(records),
         };
       }),

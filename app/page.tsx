@@ -3,7 +3,7 @@
 import { ChangeEvent, useEffect, useMemo, useState } from "react";
 import { normalizeAcronyms } from "./text-normalization";
 
-const APP_BUILD = "2026.11.12-v28";
+const APP_BUILD = "2026.11.12-v29";
 const ANALYSIS_ENGINE_VERSION = 19;
 
 type View = "visao" | "documentos" | "privacidade" | "analise" | "estatistica" | "evidencias" | "entrevistas" | "triangulacao" | "relatorio" | "simplificados" | "conclusoes";
@@ -3842,6 +3842,7 @@ export default function Home() {
       form.append("school", schoolName);
       form.append("content", JSON.stringify(content));
       form.append("questionnaireAnalysis", JSON.stringify(analysis));
+      form.append("sourceReport", validatedReportText);
       form.append("graphManifest", JSON.stringify(graphs.map(({ id, name, width, height }) => ({ id, name, width, height }))));
       graphs.forEach((graph) => form.append(`graph-${graph.id}`, graph.file, graph.file.name));
       if (validatedReportCover) {

@@ -146,6 +146,23 @@ function insertPageBreakBefore(block: string) {
   return `<w:p><w:r><w:br w:type="page"/></w:r></w:p>${block}`;
 }
 
+function compactStudentSecondChartPage(block: string) {
+  const compacted = block.replace(/(<(?:wp|a):extent\b[^>]*\bcy=")(\d+)(")/g, (_match, start, value, end) => `${start}${Math.round(Number(value) * 0.78)}${end}`);
+  return insertPageBreakBefore(compacted);
+}
+
+function addSpacingBefore(block: string, twips: number) {
+  if (/<w:pPr>/.test(block)) {
+    return block.replace(/<w:pPr>([\s\S]*?)<\/w:pPr>/, (_match, inner) => {
+      const spacing = /<w:spacing\b[^>]*\/>/.test(inner)
+        ? inner.replace(/<w:spacing\b([^>]*)\/>/, (_spacing: string, attributes: string) => `<w:spacing${attributes.replace(/\s+w:before="[^"]*"/g, "")} w:before="${twips}"/>`)
+        : `${inner}<w:spacing w:before="${twips}"/>`;
+      return `<w:pPr>${spacing}</w:pPr>`;
+    });
+  }
+  return block.replace(/(<w:p(?:\s[^>]*)?>)/, `$1<w:pPr><w:spacing w:before="${twips}"/></w:pPr>`);
+}
+
 
 
 type ParagraphInfo = { index: number; block: string; text: string; normalized: string };
@@ -211,7 +228,7 @@ function patchDocumentXml(xml: string, audience: Audience, school: string, conte
   if (questionnaireIntro >= 0) custom.set(questionnaireIntro, insertPageBreakBefore);
   if (audience === "alunos") {
     const chartParagraphs = items.filter((item) => /<c:chart\b/.test(item.block));
-    if (chartParagraphs[1]) custom.set(chartParagraphs[1].index, insertPageBreakBefore);
+    if (chartParagraphs[1]) custom.set(chartParagraphs[1].index, compactStudentSecondChartPage);
   }
 
   const projectsHeading = find(audience === "alunos" ? "Projetos interessantes" : "Projetos");
@@ -224,7 +241,7 @@ function patchDocumentXml(xml: string, audience: Audience, school: string, conte
   }
 
   const ratingIntro = findIncludes("Considerando uma escala de avaliação de cinco níveis");
-  if (ratingIntro >= 0 && audience === "alunos") custom.set(ratingIntro, insertPageBreakBefore);
+  if (ratingIntro >= 0 && audience === "alunos") custom.set(ratingIntro, (block) => addSpacingBefore(block, 900));
   if (ratingIntro >= 0) {
     for (const rating of content.classificacoes || []) {
       const domainIndex = findAfterAny([rating.dominio, rating.dominio.replace("Gestão", "gestão").replace("Serviço", "serviço")], ratingIntro);

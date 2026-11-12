@@ -3,8 +3,63 @@
 import { ChangeEvent, useEffect, useMemo, useState } from "react";
 import { normalizeAcronyms } from "./text-normalization";
 
-const APP_BUILD = "2026.11.12-v30";
+const APP_BUILD = "2026.11.12-v31";
 const ANALYSIS_ENGINE_VERSION = 19;
+const MAIN_STORAGE_KEY = "aee-piloto-v2";
+const RECOVERY_DB_NAME = "plataforma-aee-recovery";
+const RECOVERY_STORE_NAME = "snapshots";
+
+type RecoverySnapshot = { id?: number; createdAt: string; reason: string; serialized: string };
+
+function openRecoveryDatabase(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const request = window.indexedDB.open(RECOVERY_DB_NAME, 1);
+    request.onupgradeneeded = () => {
+      const database = request.result;
+      if (!database.objectStoreNames.contains(RECOVERY_STORE_NAME)) database.createObjectStore(RECOVERY_STORE_NAME, { keyPath: "id", autoIncrement: true });
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error("Não foi possível abrir o histórico de recuperação."));
+  });
+}
+
+async function createAutomaticRecoveryPoint(reason: string) {
+  const serialized = window.localStorage.getItem(MAIN_STORAGE_KEY);
+  if (!serialized) return false;
+  JSON.parse(serialized);
+  const database = await openRecoveryDatabase();
+  await new Promise<void>((resolve, reject) => {
+    const transaction = database.transaction(RECOVERY_STORE_NAME, "readwrite");
+    transaction.objectStore(RECOVERY_STORE_NAME).add({ createdAt: new Date().toISOString(), reason, serialized } satisfies RecoverySnapshot);
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error || new Error("Não foi possível criar a versão de recuperação."));
+  });
+  const snapshots = await new Promise<RecoverySnapshot[]>((resolve, reject) => {
+    const request = database.transaction(RECOVERY_STORE_NAME, "readonly").objectStore(RECOVERY_STORE_NAME).getAll();
+    request.onsuccess = () => resolve(request.result as RecoverySnapshot[]);
+    request.onerror = () => reject(request.error);
+  });
+  const obsolete = snapshots.sort((a, b) => Number(b.id || 0) - Number(a.id || 0)).slice(5);
+  if (obsolete.length) await new Promise<void>((resolve) => {
+    const transaction = database.transaction(RECOVERY_STORE_NAME, "readwrite");
+    obsolete.forEach((snapshot) => snapshot.id && transaction.objectStore(RECOVERY_STORE_NAME).delete(snapshot.id));
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => resolve();
+  });
+  database.close();
+  return true;
+}
+
+async function latestAutomaticRecoveryPoint() {
+  const database = await openRecoveryDatabase();
+  const snapshots = await new Promise<RecoverySnapshot[]>((resolve, reject) => {
+    const request = database.transaction(RECOVERY_STORE_NAME, "readonly").objectStore(RECOVERY_STORE_NAME).getAll();
+    request.onsuccess = () => resolve(request.result as RecoverySnapshot[]);
+    request.onerror = () => reject(request.error);
+  });
+  database.close();
+  return snapshots.sort((a, b) => Number(b.id || 0) - Number(a.id || 0))[0] || null;
+}
 
 type View = "visao" | "documentos" | "privacidade" | "analise" | "estatistica" | "evidencias" | "entrevistas" | "triangulacao" | "relatorio" | "simplificados" | "conclusoes";
 type EvidenceStatus = "Confirmada" | "Por triangular" | "Contraditória" | "Ausente";
@@ -2062,10 +2117,14 @@ export default function Home() {
   const [simplifiedReports, setSimplifiedReports] = useState<Partial<Record<SimplifiedAudience, SimplifiedReportContent>>>({});
   const [simplifiedStatus, setSimplifiedStatus] = useState("");
   const [simplifiedWorking, setSimplifiedWorking] = useState(false);
+  const [storageHydrated, setStorageHydrated] = useState(false);
 
   useEffect(() => {
-    const stored = window.localStorage.getItem("aee-piloto-v2");
-    if (!stored) return;
+    const stored = window.localStorage.getItem(MAIN_STORAGE_KEY);
+    if (!stored) {
+      setStorageHydrated(true);
+      return;
+    }
     const timer = window.setTimeout(() => {
       try {
         const data = JSON.parse(stored);
@@ -2104,13 +2163,15 @@ export default function Home() {
           setConclusions([]);
           setChangesPending(true);
           setBackupStatus(`Motor de análise atualizado para ${APP_BUILD.replace(/^.*-/, "")}. As evidências foram preservadas; refaça a triangulação, o relatório e as menções.`);
-          window.localStorage.setItem("aee-piloto-v2", JSON.stringify({ ...data, analysisEngineVersion: ANALYSIS_ENGINE_VERSION, report: "", narratives: {}, triangulationRevisions: {}, conclusions: [] }));
+          window.localStorage.setItem(MAIN_STORAGE_KEY, JSON.stringify({ ...data, analysisEngineVersion: ANALYSIS_ENGINE_VERSION, report: "", narratives: {}, triangulationRevisions: {}, conclusions: [] }));
         }
         if (data.indicatorApplicability && typeof data.indicatorApplicability === "object") setIndicatorApplicability(data.indicatorApplicability);
         if (typeof data.lastUpdated === "string") setLastUpdated(data.lastUpdated);
         if (typeof data.schoolName === "string") setSchoolName(data.schoolName);
       } catch {
-        window.localStorage.removeItem("aee-piloto-v2");
+        setBackupStatus("Não foi possível restaurar automaticamente os dados guardados. O original foi preservado; exporte uma cópia antes de continuar.");
+      } finally {
+        setStorageHydrated(true);
       }
     }, 0);
     return () => window.clearTimeout(timer);
@@ -2160,10 +2221,19 @@ export default function Home() {
   const validatedEvidenceCount = evidence.filter((record) => record.validated).length;
   const triangulationBatchCount = Math.max(1, Math.ceil(validatedEvidenceCount / 180));
 
-  function saveLocal() {
-    window.localStorage.setItem("aee-piloto-v2", JSON.stringify({ analysisEngineVersion: ANALYSIS_ENGINE_VERSION, schoolName, evidence, documentCandidates, statisticalRecords, statisticalTreatments, questionnaireComments, questionnaireReport, interviews, interviewCandidates, interviewQuestionDrafts, files, fileAnalysis, narratives, triangulationRevisions, report, conclusions, indicatorApplicability, lastUpdated, simplifiedReports, validatedReportName, validatedReportText, validatedReportConfirmed, simplifiedQuestionnaireAnalysis }));
-    setSaved(true);
-    window.setTimeout(() => setSaved(false), 1800);
+  async function saveLocal() {
+    if (!storageHydrated) {
+      setBackupStatus("A gravação foi bloqueada enquanto os dados anteriores estão a ser restaurados.");
+      return;
+    }
+    try {
+      await createAutomaticRecoveryPoint("Antes de guardar manualmente");
+      window.localStorage.setItem(MAIN_STORAGE_KEY, JSON.stringify({ analysisEngineVersion: ANALYSIS_ENGINE_VERSION, schoolName, evidence, documentCandidates, statisticalRecords, statisticalTreatments, questionnaireComments, questionnaireReport, interviews, interviewCandidates, interviewQuestionDrafts, files, fileAnalysis, narratives, triangulationRevisions, report, conclusions, indicatorApplicability, lastUpdated, simplifiedReports, validatedReportName, validatedReportText, validatedReportConfirmed, simplifiedQuestionnaireAnalysis }));
+      setSaved(true);
+      window.setTimeout(() => setSaved(false), 1800);
+    } catch {
+      setBackupStatus("Não foi possível guardar com segurança. O estado anterior foi preservado.");
+    }
   }
 
   function exportBackup() {
@@ -2204,6 +2274,7 @@ export default function Home() {
       const generatedContentIsCurrent = data.analysisEngineVersion === ANALYSIS_ENGINE_VERSION;
       if (!Array.isArray(data.evidence) || !Array.isArray(data.documentCandidates) || !Array.isArray(data.interviews) || !Array.isArray(data.files) || typeof data.fileAnalysis !== "object" || data.fileAnalysis === null) throw new Error("Conteúdo incompleto");
       if (!window.confirm(`Importar a cópia de segurança de “${data.schoolName || "processo AEE"}”? O trabalho atualmente aberto será substituído.`)) return;
+      await createAutomaticRecoveryPoint("Antes de importar uma cópia de segurança");
       setSchoolName(typeof data.schoolName === "string" ? data.schoolName : "Nova escola");
       setEvidence(data.evidence);
       setDocumentCandidates(data.documentCandidates);
@@ -2236,7 +2307,7 @@ export default function Home() {
       setPrivacyConfirmed([]);
       setPreparedDocuments([]);
       setChangesPending(false);
-      window.localStorage.setItem("aee-piloto-v2", JSON.stringify({ ...data, analysisEngineVersion: ANALYSIS_ENGINE_VERSION, narratives: generatedContentIsCurrent ? data.narratives : {}, triangulationRevisions: generatedContentIsCurrent ? data.triangulationRevisions : {}, report: generatedContentIsCurrent ? data.report : "", conclusions: generatedContentIsCurrent ? data.conclusions : [] }));
+      window.localStorage.setItem(MAIN_STORAGE_KEY, JSON.stringify({ ...data, analysisEngineVersion: ANALYSIS_ENGINE_VERSION, narratives: generatedContentIsCurrent ? data.narratives : {}, triangulationRevisions: generatedContentIsCurrent ? data.triangulationRevisions : {}, report: generatedContentIsCurrent ? data.report : "", conclusions: generatedContentIsCurrent ? data.conclusions : [] }));
       setBackupStatus(generatedContentIsCurrent ? "Cópia importada e guardada neste navegador." : "Cópia anterior importada. As evidências foram preservadas; triangulação, relatório e menções devem ser recalculados na v10.");
       window.setTimeout(() => setBackupStatus(""), 4000);
     } catch {
@@ -2244,13 +2315,29 @@ export default function Home() {
     }
   }
 
-  function updateAnalysis() {
+  async function updateAnalysis() {
+    if (!storageHydrated) {
+      setBackupStatus("A atualização foi bloqueada: a plataforma ainda está a restaurar os dados guardados neste navegador.");
+      return;
+    }
+    if (files.length > 0 && evidence.length === 0 && documentCandidates.length === 0 && statisticalRecords.length === 0 && interviews.length === 0) {
+      setBackupStatus("Atualização bloqueada: existem documentos no processo, mas ainda não há evidências, dados estatísticos ou entrevistas recuperados. Volte aos Documentos e confirme o estado antes de gravar.");
+      setView("documentos");
+      return;
+    }
     if (report && evidence.some((record) => record.fieldId === "res-acad" && record.validated) && triangulationRevisions["res-acad"] !== evidenceRevision(evidence, "res-acad")) {
       setAiTriangulationStatus("A atualização foi interrompida: a triangulação de 5.4.1 está desatualizada após alterações na Matriz.");
       setView("triangulacao");
       return;
     }
     setUpdating(true);
+    try {
+      await createAutomaticRecoveryPoint("Antes de atualizar a análise");
+    } catch {
+      setUpdating(false);
+      setBackupStatus("A atualização foi cancelada porque não foi possível criar uma versão automática de recuperação.");
+      return;
+    }
     const refreshedNarratives = preserveReviewedNarratives(evidence, narratives, indicatorApplicability);
     const refreshedReport = report ? buildReport(evidence, refreshedNarratives, indicatorApplicability) : report;
     const timestamp = new Intl.DateTimeFormat("pt-PT", {
@@ -2259,15 +2346,44 @@ export default function Home() {
       hour: "2-digit",
       minute: "2-digit",
     }).format(new Date());
-    setReport(refreshedReport);
-    setNarratives(refreshedNarratives);
-    setLastUpdated(timestamp);
-    setChangesPending(false);
-    window.localStorage.setItem("aee-piloto-v2", JSON.stringify({ analysisEngineVersion: ANALYSIS_ENGINE_VERSION, schoolName, evidence, documentCandidates, statisticalRecords, statisticalTreatments, questionnaireComments, questionnaireReport, interviews, interviewCandidates, interviewQuestionDrafts, files, fileAnalysis, narratives: refreshedNarratives, triangulationRevisions, report: refreshedReport, conclusions, indicatorApplicability, lastUpdated: timestamp, simplifiedReports, validatedReportName, validatedReportText, validatedReportConfirmed, simplifiedQuestionnaireAnalysis }));
+    try {
+      window.localStorage.setItem(MAIN_STORAGE_KEY, JSON.stringify({ analysisEngineVersion: ANALYSIS_ENGINE_VERSION, schoolName, evidence, documentCandidates, statisticalRecords, statisticalTreatments, questionnaireComments, questionnaireReport, interviews, interviewCandidates, interviewQuestionDrafts, files, fileAnalysis, narratives: refreshedNarratives, triangulationRevisions, report: refreshedReport, conclusions, indicatorApplicability, lastUpdated: timestamp, simplifiedReports, validatedReportName, validatedReportText, validatedReportConfirmed, simplifiedQuestionnaireAnalysis }));
+      setReport(refreshedReport);
+      setNarratives(refreshedNarratives);
+      setLastUpdated(timestamp);
+      setChangesPending(false);
+    } catch {
+      setBackupStatus("A atualização não foi gravada. A versão anterior permanece disponível em «Restaurar anterior».");
+    }
     window.setTimeout(() => setUpdating(false), 650);
   }
 
-  function resetProcess() {
+  async function restoreAutomaticRecovery() {
+    try {
+      const snapshot = await latestAutomaticRecoveryPoint();
+      if (!snapshot) {
+        setBackupStatus("Ainda não existe uma versão automática anterior neste navegador.");
+        return;
+      }
+      const payload = JSON.parse(snapshot.serialized);
+      const summary = `${Array.isArray(payload.evidence) ? payload.evidence.length : 0} evidências, ${Array.isArray(payload.statisticalRecords) ? payload.statisticalRecords.length : 0} registos estatísticos e ${Array.isArray(payload.interviews) ? payload.interviews.length : 0} entrevistas`;
+      const createdAt = new Intl.DateTimeFormat("pt-PT", { dateStyle: "short", timeStyle: "short" }).format(new Date(snapshot.createdAt));
+      if (!window.confirm(`Restaurar a versão automática de ${createdAt} (${summary})? O estado atualmente aberto será substituído.`)) return;
+      window.localStorage.setItem(MAIN_STORAGE_KEY, snapshot.serialized);
+      window.location.reload();
+    } catch {
+      setBackupStatus("Não foi possível restaurar a versão automática anterior.");
+    }
+  }
+
+  async function resetProcess() {
+    try {
+      await createAutomaticRecoveryPoint("Antes de reiniciar o processo");
+    } catch {
+      setBackupStatus("O reinício foi cancelado porque não foi possível criar uma versão automática de recuperação.");
+      setShowResetConfirm(false);
+      return;
+    }
     const emptyProcess = {
       schoolName: "Nova escola",
       evidence: [] as Evidence[],
@@ -2330,7 +2446,7 @@ export default function Home() {
     setFilterStatus("Todos");
     setView("visao");
     setShowResetConfirm(false);
-    window.localStorage.setItem("aee-piloto-v2", JSON.stringify(emptyProcess));
+    window.localStorage.setItem(MAIN_STORAGE_KEY, JSON.stringify(emptyProcess));
   }
 
   async function handleFiles(event: ChangeEvent<HTMLInputElement>) {
@@ -3918,11 +4034,12 @@ export default function Home() {
               <small>{changesPending ? "Triangulação automática" : "Última atualização"}</small>
               <strong>{changesPending ? "Minuta por atualizar" : lastUpdated || "Ainda não efetuada"}</strong>
             </div>
-            <button className="button update-button" onClick={updateAnalysis} aria-live="polite">{updating ? "A atualizar…" : "Atualizar análise"}</button>
-            <button className="button secondary" onClick={saveLocal}>{saved ? "Guardado" : "Guardar localmente"}</button>
+            <button className="button update-button" disabled={!storageHydrated || updating} onClick={updateAnalysis} aria-live="polite">{!storageHydrated ? "A restaurar dados…" : updating ? "A atualizar…" : "Atualizar análise"}</button>
+            <button className="button secondary" disabled={!storageHydrated} onClick={saveLocal}>{saved ? "Guardado" : "Guardar localmente"}</button>
             <button className="button secondary" onClick={exportBackup}>Exportar cópia</button>
             <label className="button secondary" htmlFor="import-backup">Importar cópia</label>
             <input id="import-backup" type="file" accept="application/json,.json" onChange={importBackup} hidden />
+            <button className="button secondary" onClick={restoreAutomaticRecovery}>Restaurar anterior</button>
             <button className="button danger-ghost" onClick={() => setShowResetConfirm(true)}>Novo processo</button>
           </div>
         </header>
@@ -3933,7 +4050,7 @@ export default function Home() {
           <section className="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="reset-title">
             <p className="eyebrow">Novo processo</p>
             <h2 id="reset-title">Apagar os dados da escola atual?</h2>
-            <p>Serão eliminados deste navegador os documentos inventariados, evidências, entrevistas, triangulação e minuta. Esta ação não pode ser anulada.</p>
+            <p>Serão retirados do processo aberto os documentos inventariados, evidências, entrevistas, triangulação e minuta. Antes da operação será criada uma versão automática de recuperação.</p>
             <div className="action-row"><button className="button secondary" onClick={() => setShowResetConfirm(false)}>Cancelar</button><button className="button danger" onClick={resetProcess}>Apagar e começar de novo</button></div>
           </section>
         </div>}

@@ -49,7 +49,7 @@ export async function POST(request: NextRequest) {
     const prompt = `Execute, numa única operação, três tarefas articuladas da Avaliação Externa das Escolas: análise dos questionários, relatório para alunos e relatório para famílias.
 
 REGRAS COMUNS DOS DOIS RELATÓRIOS:
-- Considere exclusivamente os pontos 2, 3, 4 e 5 do relatório técnico validado.
+- Use a identificação, as datas da visita, os estabelecimentos visitados e as atividades observadas do ponto 1 apenas para redigir a introdução. Para o restante conteúdo, considere exclusivamente os pontos 2, 3, 4 e 5.
 - Não acrescente factos, interpretações, conclusões, recomendações ou projetos inexistentes.
 - Preserve o sentido, a graduação e os limites dos juízos da equipa.
 - Inclua todos os pontos fortes do ponto 3 e todas as áreas de melhoria do ponto 4.
@@ -66,6 +66,7 @@ RELATÓRIO PARA ALUNOS:
 - Não transforme áreas de melhoria em elogios.
 - Selecione projetos e iniciativas com participação dos alunos ou contributo para aprendizagem, cidadania, inclusão ou bem-estar.
 - Devolva papelFamilias como lista vazia.
+- Em introducao, escreva exatamente dois parágrafos separados por uma linha em branco. O primeiro começa por «Entre os dias» e identifica datas, equipa coordenada pela Inspeção-Geral da Educação e Ciência, unidade orgânica e finalidade da visita. O segundo começa por «Durante a visita» e identifica, apenas se constarem do relatório, os membros ouvidos, os estabelecimentos visitados e a observação de aulas ou atividades. Não inclua saudação nem antecipe pontos fortes.
 
 RELATÓRIO PARA FAMÍLIAS:
 - Linguagem compreensível para adultos com escolaridade básica, frases curtas e listas claras.
@@ -74,6 +75,7 @@ RELATÓRIO PARA FAMÍLIAS:
 - Nenhuma área de melhoria pode começar por verbo no infinitivo.
 - Inclua projetos, clubes, programas, iniciativas, parcerias e atividades mencionados.
 - Recolha apenas referências explícitas ao papel e à participação das famílias.
+- Em introducao, escreva exatamente três parágrafos separados por uma linha em branco. O primeiro começa por «Entre os dias» e identifica datas, equipa coordenada pela Inspeção-Geral da Educação e Ciência, unidade orgânica e finalidade. O segundo começa por «Durante a visita» e identifica, apenas se constarem do relatório, representantes ouvidos, estabelecimentos visitados e atividades ou aulas observadas. O terceiro começa por «A avaliação» e explica, em linguagem simples, os quatro domínios: Autoavaliação, Liderança e gestão, Prestação do serviço educativo e Resultados. Não inclua saudação nem antecipe pontos fortes.
 
 ANÁLISE DOS QUESTIONÁRIOS:
 - Identifique e processe apenas Q1, Q2, Q5 e Q6, mantendo obrigatoriamente estes códigos no início do nome de cada grupo.

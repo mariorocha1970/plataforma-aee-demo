@@ -3,7 +3,7 @@
 import { ChangeEvent, useEffect, useMemo, useState } from "react";
 import { normalizeAcronyms } from "./text-normalization";
 
-const APP_BUILD = "2026.11.11-v26";
+const APP_BUILD = "2026.11.12-v27";
 const ANALYSIS_ENGINE_VERSION = 19;
 
 type View = "visao" | "documentos" | "privacidade" | "analise" | "estatistica" | "evidencias" | "entrevistas" | "triangulacao" | "relatorio" | "simplificados" | "conclusoes";
@@ -1882,10 +1882,10 @@ function localSimplifiedReport(text: string, audience: SimplifiedAudience): Simp
   };
 }
 
-async function createQuestionnaireChart(group: string, title: string, items: any[], audience: SimplifiedAudience, suffix: string): Promise<SimplifiedGraph> {
+async function createQuestionnaireChart(group: string, title: string, items: any[], audience: SimplifiedAudience, suffix: string, orientation: "vertical" | "horizontal"): Promise<SimplifiedGraph> {
   const canvas = document.createElement("canvas");
-  canvas.width = 1400;
-  canvas.height = Math.max(620, 210 + items.length * 105);
+  canvas.width = 1600;
+  canvas.height = orientation === "vertical" ? 940 : Math.max(720, 250 + items.length * 135);
   const context = canvas.getContext("2d");
   if (!context) throw new Error("O navegador não conseguiu criar os gráficos.");
   const accent = audience === "alunos" ? "#80c342" : "#d41445";
@@ -1898,22 +1898,70 @@ async function createQuestionnaireChart(group: string, title: string, items: any
   context.font = "700 25px Arial";
   context.fillText(title, 60, 100);
   context.font = "20px Arial";
-  const barLeft = 780;
-  const barWidth = 500;
-  items.forEach((item, index) => {
-    const y = 165 + index * 105;
+  if (orientation === "vertical") {
+    const chartTop = 170;
+    const chartBottom = 650;
+    const chartLeft = 95;
+    const chartRight = 1510;
+    const chartHeight = chartBottom - chartTop;
+    context.strokeStyle = "#b8c7c3";
+    context.lineWidth = 2;
+    context.beginPath();
+    context.moveTo(chartLeft, chartBottom);
+    context.lineTo(chartRight, chartBottom);
+    context.stroke();
+    [0, 25, 50, 75, 100].forEach((tick) => {
+      const y = chartBottom - chartHeight * tick / 100;
+      context.strokeStyle = "#e6ecea";
+      context.beginPath();
+      context.moveTo(chartLeft, y);
+      context.lineTo(chartRight, y);
+      context.stroke();
+      context.fillStyle = "#555555";
+      context.font = "18px Arial";
+      context.fillText(`${tick}%`, 35, y + 6);
+    });
+    const slot = (chartRight - chartLeft) / Math.max(1, items.length);
+    const barWidth = Math.min(150, slot * 0.48);
+    items.forEach((item, index) => {
+      const total = Math.max(0, Math.min(100, Number(item.total) || 0));
+      const height = chartHeight * total / 100;
+      const x = chartLeft + slot * index + (slot - barWidth) / 2;
+      context.fillStyle = accent;
+      context.fillRect(x, chartBottom - height, barWidth, height);
+      context.fillStyle = "#222222";
+      context.font = "700 21px Arial";
+      const value = `${total.toLocaleString("pt-PT", { maximumFractionDigits: 1 })}%`;
+      context.fillText(value, x + (barWidth - context.measureText(value).width) / 2, chartBottom - height - 12);
+      context.font = "18px Arial";
+      const label = `${item.numero ? `${item.numero}. ` : ""}${item.item || "Item sem designação"}`;
+      const words = label.split(/\s+/);
+      const lines: string[] = [];
+      let line = "";
+      words.forEach((word) => {
+        const candidate = line ? `${line} ${word}` : word;
+        if (context.measureText(candidate).width > slot - 18 && line) { lines.push(line); line = word; }
+        else line = candidate;
+      });
+      if (line) lines.push(line);
+      lines.slice(0, 5).forEach((value, lineIndex) => context.fillText(value, x + barWidth / 2 - context.measureText(value).width / 2, chartBottom + 32 + lineIndex * 23));
+    });
+  } else items.forEach((item, index) => {
+    const y = 185 + index * 135;
     const words = `${item.numero ? `${item.numero}. ` : ""}${item.item || "Item sem designação"}`.split(/\s+/);
     const lines: string[] = [];
     let line = "";
     words.forEach((word) => {
       const candidate = line ? `${line} ${word}` : word;
-      if (context.measureText(candidate).width > 660 && line) { lines.push(line); line = word; }
+      if (context.measureText(candidate).width > 790 && line) { lines.push(line); line = word; }
       else line = candidate;
     });
     if (line) lines.push(line);
     context.fillStyle = "#333333";
-    lines.slice(0, 3).forEach((value, lineIndex) => context.fillText(value, 60, y + lineIndex * 25));
+    lines.slice(0, 4).forEach((value, lineIndex) => context.fillText(value, 60, y + lineIndex * 25));
     const total = Math.max(0, Math.min(100, Number(item.total) || 0));
+    const barLeft = 930;
+    const barWidth = 540;
     context.fillStyle = "#eef1f0";
     context.fillRect(barLeft, y - 20, barWidth, 34);
     context.fillStyle = accent;
@@ -1935,8 +1983,8 @@ async function createAutomaticQuestionnaireCharts(analysis: any, audience: Simpl
   const groups = (Array.isArray(analysis?.grupos) ? analysis.grupos : []).filter((group: any) => allowed.has(groupCode(String(group?.grupo || ""))));
   const charts: SimplifiedGraph[] = [];
   for (const group of groups) {
-    if (Array.isArray(group.maiorConcordancia) && group.maiorConcordancia.length) charts.push(await createQuestionnaireChart(group.grupo, "Itens de maior concordância", group.maiorConcordancia, audience, "maior-concordancia"));
-    if (Array.isArray(group.menorConcordancia) && group.menorConcordancia.length) charts.push(await createQuestionnaireChart(group.grupo, "Itens de menor concordância", group.menorConcordancia, audience, "menor-concordancia"));
+    if (Array.isArray(group.maiorConcordancia) && group.maiorConcordancia.length) charts.push(await createQuestionnaireChart(group.grupo, "Itens de maior concordância", group.maiorConcordancia, audience, "maior-concordancia", "vertical"));
+    if (Array.isArray(group.menorConcordancia) && group.menorConcordancia.length) charts.push(await createQuestionnaireChart(group.grupo, "Itens de menor concordância", group.menorConcordancia, audience, "menor-concordancia", "horizontal"));
   }
   return charts;
 }

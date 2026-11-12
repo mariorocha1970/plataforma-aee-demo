@@ -3,7 +3,7 @@
 import { ChangeEvent, useEffect, useMemo, useState } from "react";
 import { normalizeAcronyms } from "./text-normalization";
 
-const APP_BUILD = "2026.11.12-v27";
+const APP_BUILD = "2026.11.12-v28";
 const ANALYSIS_ENGINE_VERSION = 19;
 
 type View = "visao" | "documentos" | "privacidade" | "analise" | "estatistica" | "evidencias" | "entrevistas" | "triangulacao" | "relatorio" | "simplificados" | "conclusoes";
@@ -3653,13 +3653,35 @@ export default function Home() {
           const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
           if (blob) cover = { file: new File([blob], "capa-relatorio-validado.png", { type: "image/png" }), width: canvas.width, height: canvas.height };
         }
+      } else if (file.name.toLowerCase().endsWith(".docx")) {
+        const JSZip = (await import("jszip")).default;
+        const zip = await JSZip.loadAsync(await file.arrayBuffer());
+        const candidates = Object.keys(zip.files).filter((name) => /^word\/media\/[^/]+\.(?:png|jpe?g)$/i.test(name));
+        let largest: { bytes: Uint8Array; name: string } | null = null;
+        for (const name of candidates) {
+          const bytes = await zip.file(name)?.async("uint8array");
+          if (bytes && (!largest || bytes.length > largest.bytes.length)) largest = { bytes, name };
+        }
+        if (largest) {
+          const type = /\.png$/i.test(largest.name) ? "image/png" : "image/jpeg";
+          const imageBytes = largest.bytes.slice().buffer as ArrayBuffer;
+          const imageFile = new File([imageBytes], `imagem-capa-${largest.name.split("/").at(-1)}`, { type });
+          const dimensions = await new Promise<{ width: number; height: number }>((resolve, reject) => {
+            const url = URL.createObjectURL(imageFile);
+            const image = new Image();
+            image.onload = () => { URL.revokeObjectURL(url); resolve({ width: image.naturalWidth, height: image.naturalHeight }); };
+            image.onerror = () => { URL.revokeObjectURL(url); reject(new Error("A imagem da capa não pôde ser lida.")); };
+            image.src = url;
+          });
+          cover = { file: imageFile, ...dimensions };
+        }
       }
       setValidatedReportName(file.name);
       setValidatedReportText(text);
       setValidatedReportCover(cover);
       setValidatedReportConfirmed(false);
       setSimplifiedReports({});
-      setSimplifiedStatus(`${file.name}: ${text.length.toLocaleString("pt-PT")} caracteres extraídos.${cover ? " A capa original foi preservada." : " Em Word, será usada a capa do template; para preservar exatamente a capa original, carregue o relatório validado em PDF."} Confirme que esta é a versão validada.`);
+      setSimplifiedStatus(`${file.name}: ${text.length.toLocaleString("pt-PT")} caracteres extraídos.${cover ? " A imagem da escola foi recolhida para a capa dos templates." : " Não foi possível identificar uma imagem; confirme a capa antes da exportação."} Confirme que esta é a versão validada.`);
       setChangesPending(true);
     } catch (error) {
       setSimplifiedStatus(error instanceof Error ? error.message : "Não foi possível ler o relatório.");
@@ -3694,7 +3716,7 @@ export default function Home() {
 
   async function analyzeSimplifiedQuestionnaires() {
     if (!simplifiedQuestionnaireText || simplifiedWorking) return;
-    if (!window.confirm("Analisar todos os questionários numa única chamada à IA?")) return;
+    if (!window.confirm("Ler e validar matematicamente todos os questionários, sem chamada à IA?")) return;
     setSimplifiedWorking(true);
     setSimplifiedStatus("A calcular os itens de maior e menor concordância por grupo…");
     try {
@@ -3702,7 +3724,8 @@ export default function Home() {
       const payload = await response.json().catch(() => ({}));
       if (!response.ok || payload?.ok === false) throw new Error(payload?.error || `O servidor devolveu o estado ${response.status}.`);
       setSimplifiedQuestionnaireAnalysis(payload.analysis ?? { grupos: [] });
-      setSimplifiedStatus(`${payload.analysis?.grupos?.length ?? 0} grupo(s) analisado(s). Reveja as tabelas antes da exportação.`);
+      const warnings = (payload.analysis?.grupos ?? []).flatMap((group: any) => group.avisos ?? []);
+      setSimplifiedStatus(`${payload.analysis?.grupos?.length ?? 0} grupo(s) analisado(s) sem IA.${warnings.length ? ` Foram assinalados ${warnings.length} aviso(s) para revisão.` : " Todos os itens passaram a validação numérica."}`);
       setChangesPending(true);
     } catch (error) {
       setSimplifiedStatus(error instanceof Error ? error.message : "Não foi possível analisar os questionários.");
@@ -3779,20 +3802,16 @@ export default function Home() {
       if (!response.ok || payload?.ok === false) throw new Error(payload?.error || `O servidor devolveu o estado ${response.status}.`);
       const packageData = payload?.package;
       if (!packageData?.alunos || !packageData?.familias || !Array.isArray(packageData?.questionarios?.grupos) || !packageData.questionarios.grupos.length) throw new Error("A resposta ficou incompleta. Não foram exportados documentos nem efetuada uma segunda chamada.");
-      setSimplifiedStatus("A criar automaticamente os gráficos para os dois públicos…");
-      const [studentCharts, familyCharts] = await Promise.all([createAutomaticQuestionnaireCharts(packageData.questionarios, "alunos"), createAutomaticQuestionnaireCharts(packageData.questionarios, "familias")]);
-      const automaticCharts = [...studentCharts, ...familyCharts];
       setSimplifiedReports({ alunos: packageData.alunos, familias: packageData.familias });
       setSimplifiedQuestionnaireAnalysis(packageData.questionarios);
       setSimplifiedGraphs((current) => {
         current.filter((graph) => graph.audience).forEach((graph) => URL.revokeObjectURL(graph.preview));
-        return [...current.filter((graph) => !graph.audience), ...automaticCharts];
+        return current.filter((graph) => !graph.audience);
       });
-      setSimplifiedStatus("A compor e descarregar os dois documentos Word…");
-      const manualCharts = simplifiedGraphs.filter((graph) => !graph.audience);
-      await exportSimplifiedReport("alunos", packageData.alunos, packageData.questionarios, [...manualCharts, ...studentCharts]);
-      await exportSimplifiedReport("familias", packageData.familias, packageData.questionarios, [...manualCharts, ...familyCharts]);
-      setSimplifiedStatus(`Operação concluída com 1 chamada à IA: ${packageData.questionarios.grupos.length} grupo(s) analisado(s), gráficos construídos e dois relatórios Word descarregados.`);
+      setSimplifiedStatus("A preencher os dois templates Word e a atualizar os gráficos editáveis…");
+      await exportSimplifiedReport("alunos", packageData.alunos, packageData.questionarios, []);
+      await exportSimplifiedReport("familias", packageData.familias, packageData.questionarios, []);
+      setSimplifiedStatus(`Operação concluída: 1 chamada à IA apenas para os textos; ${packageData.questionarios.grupos.length} questionário(s) calculado(s) sem IA; dois templates Word preenchidos.`);
       setChangesPending(true);
     } catch (error) {
       setSimplifiedStatus(error instanceof Error ? error.message : "Não foi possível produzir o pacote completo.");
@@ -4312,7 +4331,7 @@ export default function Home() {
               {validatedReportName ? <div className="uploaded-source"><div><strong>{validatedReportName}</strong><small>{validatedReportText.length.toLocaleString("pt-PT")} caracteres extraídos</small></div><label className="checkbox-line"><input type="checkbox" checked={validatedReportConfirmed} onChange={(event) => setValidatedReportConfirmed(event.target.checked)} /> Confirmo que corresponde ao relatório final validado</label></div> : <div className="empty-analysis"><strong>Nenhum relatório validado carregado.</strong><p>A geração das versões simplificadas permanece bloqueada.</p></div>}
             </section>
             <section className="simplified-source-card">
-              <div className="section-heading"><div><p className="eyebrow">2 · Questionários e elementos gráficos</p><h3>Resultados a integrar nas duas versões</h3><p>Para trabalhar sem API, insira diretamente os gráficos finais em PNG ou JPEG. A análise automática dos PDF dos questionários é apenas uma opção.</p></div><div className="action-row"><label className="button secondary file-button">Inserir gráficos · sem API<input type="file" multiple accept="image/png,image/jpeg" onChange={loadSimplifiedGraphs} hidden /></label><label className="button secondary file-button">Inserir PDF dos questionários<input type="file" multiple accept=".pdf,application/pdf" onChange={loadSimplifiedQuestionnaires} hidden /></label><button className="button secondary" disabled={!simplifiedQuestionnaireText || simplifiedWorking} onClick={analyzeSimplifiedQuestionnaires}>Analisar PDF com IA · 1 chamada</button></div></div>
+              <div className="section-heading"><div><p className="eyebrow">2 · Questionários e elementos gráficos</p><h3>Resultados a integrar nas duas versões</h3><p>Carregue Q1 e Q2 para o relatório dos alunos e Q5 e Q6 para o relatório das famílias. A plataforma lê as tabelas, valida as percentagens e atualiza diretamente os gráficos dos templates, sem usar IA nos cálculos.</p></div><div className="action-row"><label className="button secondary file-button">Inserir gráficos manualmente<input type="file" multiple accept="image/png,image/jpeg" onChange={loadSimplifiedGraphs} hidden /></label><label className="button secondary file-button">Inserir PDF dos questionários<input type="file" multiple accept=".pdf,application/pdf" onChange={loadSimplifiedQuestionnaires} hidden /></label><button className="button secondary" disabled={!simplifiedQuestionnaireText || simplifiedWorking} onClick={analyzeSimplifiedQuestionnaires}>Validar Q1, Q2, Q5 e Q6 · sem IA</button></div></div>
               {simplifiedQuestionnaireFiles.length > 0 && <div className="file-chips">{simplifiedQuestionnaireFiles.map((name) => <span className="badge" key={name}>{name}</span>)}</div>}
               {Array.isArray(simplifiedQuestionnaireAnalysis?.grupos) && simplifiedQuestionnaireAnalysis.grupos.length > 0 && <div className="questionnaire-analysis-preview">{simplifiedQuestionnaireAnalysis.grupos.map((group: any) => <article key={group.grupo}><strong>{group.grupo}</strong><span>{group.maiorConcordancia?.length ?? 0} itens de maior concordância · {group.menorConcordancia?.length ?? 0} itens de menor concordância</span></article>)}</div>}
               {simplifiedGraphs.length > 0 && <div className="simplified-graph-grid">{simplifiedGraphs.map((graph) => <article key={graph.id}><img src={graph.preview} alt={graph.name} /><label>Legenda<input value={graph.name} onChange={(event) => setSimplifiedGraphs((current) => current.map((item) => item.id === graph.id ? { ...item, name: event.target.value } : item))} /></label><button className="text-button danger-text" onClick={() => { URL.revokeObjectURL(graph.preview); setSimplifiedGraphs((current) => current.filter((item) => item.id !== graph.id)); }}>Remover</button></article>)}</div>}

@@ -4,7 +4,7 @@ import { ChangeEvent, useEffect, useMemo, useState } from "react";
 import { normalizeAcronyms } from "./text-normalization";
 import { parseValidatedReportTables, SIMPLIFIED_DOMAINS, type ValidatedReportStructure } from "./validated-report-structure";
 
-const APP_BUILD = "2026.11.22-v32";
+const APP_BUILD = "2026.11.22-v33";
 const ANALYSIS_ENGINE_VERSION = 19;
 const MAIN_STORAGE_KEY = "aee-piloto-v2";
 const RECOVERY_DB_NAME = "plataforma-aee-recovery";
@@ -1117,7 +1117,7 @@ async function extractFile(file: File): Promise<TextChunk[]> {
   throw new Error("Formato não suportado para leitura local");
 }
 
-async function extractValidatedReportStructure(file: File): Promise<ValidatedReportStructure> {
+async function extractValidatedReportStructure(file: File, reportText: string): Promise<ValidatedReportStructure> {
   if (!file.name.toLowerCase().endsWith(".docx")) {
     return { classificacoes: [], pontosFortes: {}, areasMelhoria: {}, complete: false, warnings: ["A verificação estrutural rigorosa exige o relatório validado em formato Word (.docx)."] };
   }
@@ -1136,7 +1136,29 @@ async function extractValidatedReportStructure(file: File): Promise<ValidatedRep
       })
     )
   );
-  return parseValidatedReportTables(tables);
+  const structure = parseValidatedReportTables(tables);
+  const normalizedText = reportText.replace(/\s+/g, " ");
+  const school = normalizedText.match(/resultados da avaliação externa d[oa]\s+(Agrupamento de Escolas[^,.;]+)/i)?.[1]?.trim()
+    || tables.flat(2).find((value) => /^Agrupamento de Escolas\b/i.test(value))?.trim() || "";
+  const coreProperties = await zip.file("docProps/core.xml")?.async("string") || "";
+  const year = coreProperties.match(/<(?:dcterms:)?modified[^>]*>(20\d{2})-/i)?.[1]
+    || coreProperties.match(/<(?:dcterms:)?created[^>]*>(20\d{2})-/i)?.[1]
+    || "";
+  const observation = normalizedText.match(/observação da prática educativa e letiva[^.!?]{0,100}?dias?\s+(\d{1,2})\s+e\s+(\d{1,2})\s+de\s+([\p{L}]+)/iu);
+  const visits = normalizedText.match(/visita às instalações e entrevistas[^.!?]{0,140}?entre os dias\s+(\d{1,2})\s+e\s+(\d{1,2})\s+de\s+([\p{L}]+)/iu);
+  const visitedSentence = normalizedText.match(/A equipa de avaliação externa visitou\s+(.+?),\s+tendo realizado/iu)?.[1] || "";
+  const schools = visitedSentence.split(/,\s*(?=(?:EB|Escola|Jardim)\b)/i).map((value) => value.trim()).filter(Boolean);
+  structure.metadata = {
+    school,
+    observationDates: observation ? `${observation[1]} e ${observation[2]} de ${observation[3]}${year ? ` de ${year}` : ""}` : "",
+    visitDates: visits ? `${visits[1]} a ${visits[2]} de ${visits[3]}${year ? ` de ${year}` : ""}` : "",
+    schools,
+  };
+  if (!school) structure.warnings.push("Não foi possível confirmar a identificação da unidade orgânica.");
+  if (!visits) structure.warnings.push("Não foi possível confirmar as datas das visitas e entrevistas.");
+  if (!schools.length) structure.warnings.push("Não foi possível confirmar os estabelecimentos visitados.");
+  structure.complete = structure.warnings.length === 0;
+  return structure;
 }
 
 const privacyPatterns: Array<{ kind: PrivacyFinding["kind"]; pattern: RegExp; replacement?: string }> = [
@@ -3780,7 +3802,7 @@ export default function Home() {
       const chunks = await extractFile(file);
       const text = chunks.map((item) => item.text).join("\n\n").trim();
       if (text.length < 500) throw new Error("O documento não contém texto suficiente ou necessita de OCR.");
-      const structure = await extractValidatedReportStructure(file);
+      const structure = await extractValidatedReportStructure(file, text);
       let cover: { file: File; width: number; height: number } | null = null;
       if (file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")) {
         const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
@@ -3800,9 +3822,17 @@ export default function Home() {
       } else if (file.name.toLowerCase().endsWith(".docx")) {
         const JSZip = (await import("jszip")).default;
         const zip = await JSZip.loadAsync(await file.arrayBuffer());
-        const candidates = Object.keys(zip.files).filter((name) => /^word\/media\/[^/]+\.(?:png|jpe?g)$/i.test(name));
+        const documentXml = await zip.file("word/document.xml")?.async("string") || "";
+        const relationships = await zip.file("word/_rels/document.xml.rels")?.async("string") || "";
+        const firstPageEnd = documentXml.search(/<w:br\b[^>]*w:type="page"/i);
+        const firstPageXml = firstPageEnd > 0 ? documentXml.slice(0, firstPageEnd) : documentXml.slice(0, Math.min(documentXml.length, 180_000));
+        const firstPageIds = new Set([...firstPageXml.matchAll(/r:embed="([^"]+)"/g)].map((match) => match[1]));
+        const firstPageTargets = new Set([...relationships.matchAll(/<Relationship\b[^>]*Id="([^"]+)"[^>]*Target="media\/([^"]+)"[^>]*\/?>(?:<\/Relationship>)?/g)]
+          .filter((match) => firstPageIds.has(match[1])).map((match) => `word/media/${match[2]}`));
+        const rasterImages = Object.keys(zip.files).filter((name) => /^word\/media\/[^/]+\.(?:png|jpe?g)$/i.test(name));
+        const candidates = rasterImages.filter((name) => firstPageTargets.has(name));
         let largest: { bytes: Uint8Array; name: string } | null = null;
-        for (const name of candidates) {
+        for (const name of candidates.length ? candidates : rasterImages) {
           const bytes = await zip.file(name)?.async("uint8array");
           if (bytes && (!largest || bytes.length > largest.bytes.length)) largest = { bytes, name };
         }
@@ -3823,6 +3853,7 @@ export default function Home() {
       setValidatedReportName(file.name);
       setValidatedReportText(text);
       setValidatedReportStructure(structure);
+      if (structure.metadata?.school) setSchoolName(structure.metadata.school);
       setValidatedReportCover(cover);
       setValidatedReportConfirmed(false);
       setSimplifiedReports({});
@@ -3991,6 +4022,7 @@ export default function Home() {
       form.append("content", JSON.stringify(content));
       form.append("questionnaireAnalysis", JSON.stringify(analysis));
       form.append("sourceReport", validatedReportText);
+      form.append("reportMetadata", JSON.stringify(validatedReportStructure?.metadata || {}));
       form.append("graphManifest", JSON.stringify(graphs.map(({ id, name, width, height }) => ({ id, name, width, height }))));
       graphs.forEach((graph) => form.append(`graph-${graph.id}`, graph.file, graph.file.name));
       if (validatedReportCover) {

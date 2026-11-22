@@ -4,7 +4,7 @@ import { ChangeEvent, useEffect, useMemo, useState } from "react";
 import { normalizeAcronyms } from "./text-normalization";
 import { parseValidatedReportTables, SIMPLIFIED_DOMAINS, type ValidatedReportStructure } from "./validated-report-structure";
 
-const APP_BUILD = "2026.11.22-v33";
+const APP_BUILD = "2026.11.22-v35";
 const ANALYSIS_ENGINE_VERSION = 19;
 const MAIN_STORAGE_KEY = "aee-piloto-v2";
 const RECOVERY_DB_NAME = "plataforma-aee-recovery";
@@ -2156,6 +2156,7 @@ export default function Home() {
   const [validatedReportConfirmed, setValidatedReportConfirmed] = useState(false);
   const [validatedReportStructure, setValidatedReportStructure] = useState<ValidatedReportStructure | null>(null);
   const [validatedReportCover, setValidatedReportCover] = useState<{ file: File; width: number; height: number } | null>(null);
+  const [validatedReportCoverPreview, setValidatedReportCoverPreview] = useState("");
   const [simplifiedGraphs, setSimplifiedGraphs] = useState<SimplifiedGraph[]>([]);
   const [simplifiedQuestionnaireFiles, setSimplifiedQuestionnaireFiles] = useState<string[]>([]);
   const [simplifiedQuestionnaireText, setSimplifiedQuestionnaireText] = useState("");
@@ -2469,6 +2470,8 @@ export default function Home() {
     setValidatedReportConfirmed(false);
     setValidatedReportStructure(null);
     setValidatedReportCover(null);
+    if (validatedReportCoverPreview) URL.revokeObjectURL(validatedReportCoverPreview);
+    setValidatedReportCoverPreview("");
     simplifiedGraphs.forEach((item) => URL.revokeObjectURL(item.preview));
     setSimplifiedGraphs([]);
     setSimplifiedQuestionnaireFiles([]);
@@ -3854,7 +3857,9 @@ export default function Home() {
       setValidatedReportText(text);
       setValidatedReportStructure(structure);
       if (structure.metadata?.school) setSchoolName(structure.metadata.school);
+      if (validatedReportCoverPreview) URL.revokeObjectURL(validatedReportCoverPreview);
       setValidatedReportCover(cover);
+      setValidatedReportCoverPreview(cover ? URL.createObjectURL(cover.file) : "");
       setValidatedReportConfirmed(false);
       setSimplifiedReports({});
       setSimplifiedStatus(`${file.name}: ${text.length.toLocaleString("pt-PT")} caracteres extraídos. ${structure.complete ? "As classificações, os pontos fortes e as áreas de melhoria foram verificados nas tabelas do relatório." : `A geração ficou bloqueada: ${structure.warnings.join(" ")}`}${cover ? " A imagem da escola foi recolhida para a capa dos templates." : " Não foi possível identificar uma imagem; confirme a capa antes da exportação."}`);
@@ -3922,6 +3927,23 @@ export default function Home() {
     })));
     setSimplifiedGraphs((current) => [...current, ...loaded].slice(0, 12));
     setSimplifiedStatus(`${loaded.length} gráfico(s) acrescentado(s). Pode editar as legendas e ordenar a seleção removendo e reinserindo.`);
+  }
+
+  async function loadSimplifiedCover(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file || !/^image\/(png|jpeg)$/.test(file.type)) return;
+    const dimensions = await new Promise<{ width: number; height: number }>((resolve, reject) => {
+      const url = URL.createObjectURL(file);
+      const image = new Image();
+      image.onload = () => { URL.revokeObjectURL(url); resolve({ width: image.naturalWidth, height: image.naturalHeight }); };
+      image.onerror = () => { URL.revokeObjectURL(url); reject(new Error("A fotografia não pôde ser lida.")); };
+      image.src = url;
+    });
+    if (validatedReportCoverPreview) URL.revokeObjectURL(validatedReportCoverPreview);
+    setValidatedReportCover({ file, ...dimensions });
+    setValidatedReportCoverPreview(URL.createObjectURL(file));
+    setSimplifiedStatus("Fotografia da capa substituída. Confirme a pré-visualização antes de gerar os relatórios.");
   }
 
   async function generateSimplifiedReport(audience: SimplifiedAudience) {
@@ -4511,13 +4533,13 @@ export default function Home() {
             <section className="simplified-source-card">
               <div className="section-heading"><div><p className="eyebrow">1 · Fonte obrigatória</p><h3>Relatório técnico validado</h3><p>Formatos aceites: Word, PDF e texto. O conteúdo substitui qualquer minuta ainda existente na plataforma.</p></div><label className="button secondary file-button">Carregar relatório<input type="file" accept=".docx,.pdf,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain" onChange={loadValidatedReport} hidden /></label></div>
               {validatedReportName ? <><div className="uploaded-source"><div><strong>{validatedReportName}</strong><small>{validatedReportText.length.toLocaleString("pt-PT")} caracteres extraídos</small></div><label className="checkbox-line"><input type="checkbox" disabled={!validatedReportStructure?.complete} checked={validatedReportConfirmed} onChange={(event) => setValidatedReportConfirmed(event.target.checked)} /> Confirmo que corresponde ao relatório final validado</label></div>
-                {validatedReportStructure && <div className={`validated-structure ${validatedReportStructure.complete ? "complete" : "incomplete"}`}><strong>{validatedReportStructure.complete ? "Estrutura probatória confirmada" : "Estrutura incompleta — geração bloqueada"}</strong>{validatedReportStructure.complete ? <div className="structure-grid">{validatedReportStructure.classificacoes.map((item) => <article key={item.dominio}><span>{item.dominio}</span><b>{item.classificacao}</b><small>{validatedReportStructure.pontosFortes[item.dominio]?.length || 0} pontos fortes · {validatedReportStructure.areasMelhoria[item.dominio]?.length || 0} áreas de melhoria</small></article>)}</div> : <ul>{validatedReportStructure.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul>}</div>}
+                {validatedReportStructure && <div className={`validated-structure ${validatedReportStructure.complete ? "complete" : "incomplete"}`}><strong>{validatedReportStructure.complete ? "Estrutura probatória confirmada" : "Estrutura incompleta — geração bloqueada"}</strong>{validatedReportCoverPreview && <div className="cover-check"><img src={validatedReportCoverPreview} alt="Fotografia extraída da primeira página" /><span>Fotografia que será usada na capa. Confirme visualmente antes de gerar.</span><label className="button secondary file-button">Corrigir fotografia<input type="file" accept="image/png,image/jpeg" onChange={loadSimplifiedCover} hidden /></label></div>}{validatedReportStructure.complete ? <div className="structure-grid">{validatedReportStructure.classificacoes.map((item) => <article key={item.dominio}><span>{item.dominio}</span><b>{item.classificacao}</b><small>{validatedReportStructure.pontosFortes[item.dominio]?.length || 0} pontos fortes · {validatedReportStructure.areasMelhoria[item.dominio]?.length || 0} áreas de melhoria</small></article>)}</div> : <ul>{validatedReportStructure.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul>}</div>}
               </> : <div className="empty-analysis"><strong>Nenhum relatório validado carregado.</strong><p>A geração das versões simplificadas permanece bloqueada.</p></div>}
             </section>
             <section className="simplified-source-card">
               <div className="section-heading"><div><p className="eyebrow">2 · Questionários e elementos gráficos</p><h3>Resultados a integrar nas duas versões</h3><p>Carregue Q1 e Q2 para o relatório dos alunos e Q5 e Q6 para o relatório das famílias. A plataforma lê as tabelas, valida as percentagens e atualiza diretamente os gráficos dos templates, sem usar IA nos cálculos.</p></div><div className="action-row"><label className="button secondary file-button">Inserir gráficos manualmente<input type="file" multiple accept="image/png,image/jpeg" onChange={loadSimplifiedGraphs} hidden /></label><label className="button secondary file-button">Inserir PDF dos questionários<input type="file" multiple accept=".pdf,application/pdf" onChange={loadSimplifiedQuestionnaires} hidden /></label><button className="button secondary" disabled={!simplifiedQuestionnaireText || simplifiedWorking} onClick={analyzeSimplifiedQuestionnaires}>Validar Q1, Q2, Q5 e Q6 · sem IA</button></div></div>
               {simplifiedQuestionnaireFiles.length > 0 && <div className="file-chips">{simplifiedQuestionnaireFiles.map((name) => <span className="badge" key={name}>{name}</span>)}</div>}
-              {Array.isArray(simplifiedQuestionnaireAnalysis?.grupos) && simplifiedQuestionnaireAnalysis.grupos.length > 0 && <div className="questionnaire-analysis-preview">{simplifiedQuestionnaireAnalysis.grupos.map((group: any) => <article key={group.grupo}><strong>{group.grupo}</strong><span>{group.maiorConcordancia?.length ?? 0} itens de maior concordância · {group.menorConcordancia?.length ?? 0} itens de menor concordância</span></article>)}</div>}
+              {Array.isArray(simplifiedQuestionnaireAnalysis?.grupos) && simplifiedQuestionnaireAnalysis.grupos.length > 0 && <div className="questionnaire-analysis-preview">{simplifiedQuestionnaireAnalysis.grupos.map((group: any) => <article key={group.grupo}><strong>{group.grupo}</strong><span>{group.maiorConcordancia?.length ?? 0} itens de maior concordância · {group.menorConcordancia?.length ?? 0} itens de menor concordância</span><details><summary>Confirmar afirmações e valores</summary><b>Maior concordância</b><ul>{(group.maiorConcordancia || []).map((item: any) => <li key={`pos-${item.numero}`}>{item.numero} · {item.total}% — {item.item}</li>)}</ul><b>Maior discordância</b><ul>{(group.menorConcordancia || []).map((item: any) => <li key={`neg-${item.numero}`}>{item.numero} · {item.total}% — {item.item}</li>)}</ul></details></article>)}</div>}
               {simplifiedGraphs.length > 0 && <div className="simplified-graph-grid">{simplifiedGraphs.map((graph) => <article key={graph.id}><img src={graph.preview} alt={graph.name} /><label>Legenda<input value={graph.name} onChange={(event) => setSimplifiedGraphs((current) => current.map((item) => item.id === graph.id ? { ...item, name: event.target.value } : item))} /></label><button className="text-button danger-text" onClick={() => { URL.revokeObjectURL(graph.preview); setSimplifiedGraphs((current) => current.filter((item) => item.id !== graph.id)); }}>Remover</button></article>)}</div>}
             </section>
             <section className="simplified-one-click">
@@ -4548,6 +4570,9 @@ export default function Home() {
               .validated-structure { margin-top: .75rem; padding: .85rem; border: 1px solid #d8e4df; border-radius: 12px; }
               .validated-structure.complete { background: #f1f8f5; border-color: #77a996; }
               .validated-structure.incomplete { background: #fff5f3; border-color: #cf7c6c; }
+              .cover-check { display: flex; align-items: center; gap: .75rem; margin-top: .65rem; padding: .55rem; background: white; border-radius: 9px; }
+              .cover-check span { flex: 1; }
+              .cover-check img { width: 120px; height: 82px; object-fit: contain; border: 1px solid #d8e4df; }
               .structure-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .55rem; margin-top: .65rem; }
               .structure-grid article { display: grid; gap: .2rem; padding: .65rem; background: white; border-radius: 9px; }
               .structure-grid span, .structure-grid small { color: #52645e; }

@@ -68,6 +68,8 @@ Nos dois relatórios, reformule cada item dentro do domínio em que se encontra,
 RELATÓRIO PARA ALUNOS:
 - Destinatários entre 10 e 15 anos. Frases curtas, diretas, voz ativa e vocabulário simples, sem infantilizar.
 - Explique em linguagem comum conceitos técnicos indispensáveis.
+- Não use, sem explicação imediata em palavras comuns, expressões como «contratualização interna», «referenciais», «ecossistema digital», «monitorização sistemática», «mecanismos integrados», «paradigma de ensino», «supervisão pedagógica», «observação de pares», «metodologias ativas», «intencionalidade estratégica», «cocriação», «validação externa», «assimetrias» ou «resiliência».
+- Prefira, respetivamente, ideias como metas acordadas dentro da escola, orientações, sistema digital, acompanhamento regular, formas articuladas de trabalho, aulas sobretudo expositivas, acompanhamento do trabalho dos professores, professores observarem aulas uns dos outros, aprendizagem com participação, objetivo planeado, construção conjunta, reconhecimento externo, diferenças e capacidade de lidar com dificuldades.
 - Pontos fortes correspondem a «O que está a correr bem»; áreas de melhoria correspondem a «O que pode melhorar».
 - Não transforme áreas de melhoria em elogios.
 - Selecione projetos e iniciativas com participação dos alunos ou contributo para aprendizagem, cidadania, inclusão ou bem-estar.

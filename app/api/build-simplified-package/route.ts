@@ -53,8 +53,9 @@ REGRAS COMUNS DOS DOIS RELATÓRIOS:
 - Preserve o sentido, a graduação e os limites dos juízos da equipa.
 - Inclua todos os pontos fortes do ponto 3 e todas as áreas de melhoria do ponto 4.
 - Organize sempre pelos quatro domínios. Se não houver elementos, declare a ausência.
-- Um bullet contém uma ideia principal e, no máximo, duas frases.
-- Cada bullet deve ser curto e caber confortavelmente no template: preferencialmente 12 a 28 palavras e nunca mais de 45 palavras.
+- Cada item de origem corresponde obrigatoriamente a um único bullet de destino, no mesmo domínio e na mesma posição.
+- Preserve todas as componentes essenciais do juízo de origem, incluindo práticas, destinatários, efeitos, reservas e dimensões como equidade, autonomia ou avaliação formativa. Simplificar a linguagem não autoriza reduzir o alcance do juízo.
+- Um bullet contém o juízo completo em uma ou, quando indispensável, duas frases curtas. Procure concisão, sem impor um limite que obrigue a omitir conteúdo.
 - Reformule; não copie períodos completos.
 - Extraia as classificações apenas quando constem explicitamente do ponto 2.
 - Escreva em português europeu.
@@ -70,6 +71,7 @@ RELATÓRIO PARA ALUNOS:
 - Pontos fortes correspondem a «O que está a correr bem»; áreas de melhoria correspondem a «O que pode melhorar».
 - Não transforme áreas de melhoria em elogios.
 - Selecione projetos e iniciativas com participação dos alunos ou contributo para aprendizagem, cidadania, inclusão ou bem-estar.
+- Não trate o Projeto Educativo, relatórios, matrizes, órgãos, cargos ou procedimentos administrativos como projetos interessantes. Não inclua referências ao chefe da equipa de avaliação.
 - Devolva papelFamilias como lista vazia.
 - Em introducao, escreva exatamente dois parágrafos separados por uma linha em branco. O primeiro começa por «Entre os dias» e identifica datas, equipa coordenada pela Inspeção-Geral da Educação e Ciência, unidade orgânica e finalidade da visita. O segundo começa por «Durante a visita» e identifica, apenas se constarem do relatório, os membros ouvidos, os estabelecimentos visitados e a observação de aulas ou atividades. Não inclua saudação nem antecipe pontos fortes.
 
@@ -79,7 +81,9 @@ RELATÓRIO PARA FAMÍLIAS:
 - Inclua áreas do ponto 4 e outros elementos a melhorar do ponto 5.
 - Nenhuma área de melhoria pode começar por verbo no infinitivo.
 - Inclua projetos, clubes, programas, iniciativas, parcerias e atividades mencionados.
+- Não trate o Projeto Educativo, relatórios, matrizes, órgãos, cargos ou procedimentos administrativos como projetos interessantes. Não inclua referências ao chefe da equipa de avaliação.
 - Recolha apenas referências explícitas ao papel e à participação das famílias.
+- Na secção das famílias, procure separadamente comunicação escola-família, divulgação de critérios de avaliação, participação em órgãos ou atividades, acompanhamento dos alunos e corresponsabilização. Não omita uma dimensão apenas por já existir outra referência às famílias.
 - Em introducao, escreva exatamente dois parágrafos separados por uma linha em branco. O primeiro começa por «Entre os dias» e integra datas, finalidade, representantes ouvidos, estabelecimentos visitados e observação de atividades, apenas quando constem do relatório. O segundo começa por «A avaliação» e explica, em linguagem simples, os quatro domínios: Autoavaliação, Liderança e gestão, Prestação do serviço educativo e Resultados. Não inclua saudação nem antecipe pontos fortes.
 
 RELATÓRIO TÉCNICO VALIDADO:

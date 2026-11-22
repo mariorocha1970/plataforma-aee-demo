@@ -55,6 +55,13 @@ function parseSection(section: string): QuestionnaireGroup | null {
     const percentageSum = roundedSum(ct, c, d, dt, ns, nr);
     if (percentageSum < 98.5 || percentageSum > 101.5) warnings.push(`${code} item ${match[1]}: as percentagens totalizam ${percentageSum}%.`);
     if (!responseCount) warnings.push(`${code} item ${match[1]}: sem respostas contabilizadas.`);
+    if (responseCount) {
+      const pairs: Array<[number, number, string]> = [[ctCount, ct, "Concordo totalmente"], [cCount, c, "Concordo"], [dCount, d, "Discordo"], [dtCount, dt, "Discordo totalmente"], [nsCount, ns, "Não sei"], [nrCount, nr, "Não respondeu"]];
+      for (const [count, percentage, label] of pairs) {
+        const expected = count / responseCount * 100;
+        if (Math.abs(expected - percentage) > 0.65) warnings.push(`${code} item ${match[1]}: ${label} apresenta ${percentage}%, mas a contagem corresponde a ${expected.toFixed(1)}%.`);
+      }
+    }
     parsed.push({ numero: match[1].padStart(2, "0"), item, concordoTotalmente: ct, concordo: c, discordo: d, discordoTotalmente: dt, total: roundedSum(ct, c) });
   }
   if (parsed.length < 5) throw new Error(`${code}: só foi possível reconstituir ${parsed.length} item(ns). Confirme se o PDF contém texto selecionável.`);
@@ -77,5 +84,9 @@ export function parseQuestionnaires(text: string) {
   const byCode = new Map(groups.map((group) => [questionnaireCode(group.grupo), group]));
   const ordered = ["Q1", "Q2", "Q5", "Q6"].flatMap((code) => byCode.get(code) ? [byCode.get(code)!] : []);
   if (!ordered.length) throw new Error("Não foram reconhecidos questionários Q1, Q2, Q5 ou Q6.");
+  const missing = ["Q1", "Q2", "Q5", "Q6"].filter((code) => !byCode.has(code));
+  if (missing.length) throw new Error(`Faltam os questionários ${missing.join(", ")}. A geração dos gráficos foi bloqueada para evitar cruzar grupos ou reutilizar valores de outro ficheiro.`);
+  const numericalWarnings = ordered.flatMap((group) => group.avisos);
+  if (numericalWarnings.length) throw new Error(`A validação numérica detetou inconsistências e bloqueou os gráficos: ${numericalWarnings.slice(0, 4).join(" ")}`);
   return { grupos: ordered };
 }

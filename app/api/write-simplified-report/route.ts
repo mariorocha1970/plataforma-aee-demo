@@ -60,7 +60,9 @@ export async function POST(request: NextRequest) {
 - Preserve integralmente o sentido, a graduação e os limites dos juízos da equipa de avaliação.
 - Inclua todos os pontos fortes do ponto 3 e todas as áreas de melhoria do ponto 4, sem os fundir de modo a perder ideias.
 - Use os quatro domínios, mesmo quando não existam elementos específicos; nesse caso declare expressamente a ausência.
-- Um bullet contém uma ideia principal e, no máximo, duas frases.
+- Cada item de origem corresponde obrigatoriamente a um único bullet de destino, no mesmo domínio e na mesma posição.
+- Preserve todas as componentes essenciais do juízo de origem, incluindo práticas, destinatários, efeitos, reservas e dimensões como equidade, autonomia ou avaliação formativa. Simplificar a linguagem não autoriza reduzir o alcance do juízo.
+- Um bullet contém o juízo completo em uma ou, quando indispensável, duas frases curtas.
 - Não copie períodos completos do original; reformule.
 - Extraia as classificações apenas se estiverem explicitamente indicadas no ponto 2.
 - Escreva em português europeu.`;
@@ -75,6 +77,7 @@ Use frases curtas, diretas e voz ativa. Empregue vocabulário simples, mas não 
 PONTOS FORTES: apresente como «O que está a correr bem», por domínio.
 ÁREAS DE MELHORIA: apresente como «O que pode melhorar», por domínio, sem converter fragilidades em elogios.
 PROJETOS INTERESSANTES: selecione apenas projetos, clubes, atividades, parcerias ou iniciativas referidos no relatório que envolvam alunos ou contribuam para aprendizagem, cidadania, inclusão ou bem-estar.
+Não trate o Projeto Educativo, relatórios, matrizes, órgãos, cargos ou procedimentos administrativos como projetos interessantes. Não inclua referências ao chefe da equipa de avaliação.
 PAPEL DAS FAMÍLIAS: devolva uma lista vazia, porque esta secção não integra a versão para alunos.`;
 
     const families = `DESTINATÁRIOS: pais e encarregados de educação com diferentes níveis de literacia.
@@ -82,6 +85,7 @@ Use frases curtas, vocabulário acessível e listas claras. Elimine linguagem t�
 PONTOS FORTES: inclua os do ponto 3 e outros elementos positivos relevantes explicitamente referidos no ponto 5, organizados pelos quatro domínios.
 ÁREAS DE MELHORIA: inclua as do ponto 4 e outros elementos a melhorar explicitamente referidos no ponto 5. As frases não podem começar por verbos no infinitivo, para não assumirem a forma de recomendação.
 PROJETOS INTERESSANTES: identifique projetos, clubes, programas, iniciativas, parcerias e atividades mencionados no relatório.
+Não trate o Projeto Educativo, relatórios, matrizes, órgãos, cargos ou procedimentos administrativos como projetos interessantes. Não inclua referências ao chefe da equipa de avaliação.
 PAPEL DAS FAMÍLIAS: recolha apenas referências explícitas à participação das famílias, comunicação escola-família, associação de pais, acompanhamento dos alunos, reuniões, órgãos de participação ou iniciativas dirigidas aos pais.`;
 
     const prompt = `Transforme o relatório técnico de Avaliação Externa das Escolas numa versão simplificada.

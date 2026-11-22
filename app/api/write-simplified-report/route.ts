@@ -74,6 +74,7 @@ Reformule cada item dentro do domínio em que se encontra, preservando exatament
 
     const students = `DESTINATÁRIOS: alunos entre os 10 e os 15 anos.
 Use frases curtas, diretas e voz ativa. Empregue vocabulário simples, mas não infantilizado. Explique em linguagem comum qualquer conceito técnico indispensável.
+Não use, sem explicação imediata em palavras comuns, expressões como «contratualização interna», «referenciais», «ecossistema digital», «monitorização sistemática», «mecanismos integrados», «paradigma de ensino», «supervisão pedagógica», «observação de pares», «metodologias ativas», «intencionalidade estratégica», «cocriação», «validação externa», «assimetrias» ou «resiliência».
 PONTOS FORTES: apresente como «O que está a correr bem», por domínio.
 ÁREAS DE MELHORIA: apresente como «O que pode melhorar», por domínio, sem converter fragilidades em elogios.
 PROJETOS INTERESSANTES: selecione apenas projetos, clubes, atividades, parcerias ou iniciativas referidos no relatório que envolvam alunos ou contribuam para aprendizagem, cidadania, inclusão ou bem-estar.

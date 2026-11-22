@@ -14,11 +14,12 @@ export async function POST(request: Request) {
     const content = JSON.parse(String(form.get("content") || "{}"));
     const analysis = JSON.parse(String(form.get("questionnaireAnalysis") || "{}"));
     const sourceReport = String(form.get("sourceReport") || "");
+    const metadata = JSON.parse(String(form.get("reportMetadata") || "{}"));
     const audience = form.get("audience") === "familias" ? "familias" : "alunos";
     const school = String(form.get("school") || "Unidade orgânica avaliada").slice(0, 180);
     const coverValue = form.get("cover");
     const cover = coverValue instanceof File ? coverValue : null;
-    const document = await buildTemplateReport({ audience, school, content, analysis, cover, sourceReport });
+    const document = await buildTemplateReport({ audience, school, content, analysis, cover, sourceReport, metadata });
     return new Response(Buffer.from(document), {
       headers: {
         "Content-Type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",

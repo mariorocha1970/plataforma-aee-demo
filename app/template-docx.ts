@@ -18,6 +18,8 @@ type SchoolMeta = {
   schools: string[];
 };
 
+type ValidatedMeta = { school?: string; observationDates?: string; visitDates?: string; schools?: string[] };
+
 const DOMAINS = ["Autoavaliação", "Liderança e gestão", "Prestação do serviço educativo", "Resultados"];
 
 function decodeXml(value: string) {
@@ -100,8 +102,9 @@ function naturalList(values: string[]) {
   return `${values.slice(0, -1).join(", ")} e ${values.at(-1)}`;
 }
 
-function fixedIntroduction(audience: Audience, school: string, sourceReport: string) {
-  const meta = extractSchoolMeta(sourceReport);
+function fixedIntroduction(audience: Audience, school: string, sourceReport: string, validatedMeta?: ValidatedMeta) {
+  const extracted = extractSchoolMeta(sourceReport);
+  const meta = { dates: validatedMeta?.visitDates || extracted.dates, schools: validatedMeta?.schools?.length ? validatedMeta.schools : extracted.schools };
   const establishments = naturalList(meta.schools);
   const count = meta.schools.length;
   if (audience === "alunos") {
@@ -175,7 +178,7 @@ function paragraphs(xml: string): ParagraphInfo[] {
   });
 }
 
-function patchDocumentXml(xml: string, audience: Audience, school: string, content: ReportContent, sourceReport: string, igecRelationshipId: string) {
+function patchDocumentXml(xml: string, audience: Audience, school: string, content: ReportContent, sourceReport: string, igecRelationshipId: string, validatedMeta?: ValidatedMeta) {
   const items = paragraphs(xml);
   const replacements = new Map<number, string>();
   const custom = new Map<number, (block: string) => string>();
@@ -215,7 +218,7 @@ function patchDocumentXml(xml: string, audience: Audience, school: string, conte
   const greeting = audience === "alunos" ? find("Caros alunos") : find("Caros Pais e Encarregados de Educação");
   const strengthIntro = audience === "alunos" ? findIncludes("A equipa de avaliação identificou os seguintes aspetos", greeting) : findIncludes("A equipa de avaliação identificou os seguintes pontos fortes", greeting);
   const introductionTargets = nonEmptyBetween(greeting, strengthIntro);
-  const introduction = fixedIntroduction(audience, school, sourceReport);
+  const introduction = fixedIntroduction(audience, school, sourceReport, validatedMeta);
   introductionTargets.forEach((target, index) => {
     if (introduction[index]) custom.set(target.index, (block) => paragraphWithFragments(block, introduction[index]));
     else replacements.set(target.index, "");
@@ -285,7 +288,8 @@ function patchChartXml(xml: string, items: Array<{ item: string; total: number }
   const values = `<c:formatCode>0.0</c:formatCode>${cachePoints(items.map((item) => item.total), true)}`;
   return xml
     .replace(/(<c:cat>[\s\S]*?<c:strCache>)[\s\S]*?(<\/c:strCache>[\s\S]*?<\/c:cat>)/, `$1${categories}$2`)
-    .replace(/(<c:val>[\s\S]*?<c:numCache>)[\s\S]*?(<\/c:numCache>[\s\S]*?<\/c:val>)/, `$1${values}$2`);
+    .replace(/(<c:val>[\s\S]*?<c:numCache>)[\s\S]*?(<\/c:numCache>[\s\S]*?<\/c:val>)/, `$1${values}$2`)
+    .replace(/<c:externalData\b[\s\S]*?<\/c:externalData>/g, "");
 }
 
 async function exactCoverImage(file: File) {
@@ -298,7 +302,7 @@ function groupCode(value: string) {
   return value.match(/\bQ\s*([1256])\b/i)?.[1] ? `Q${value.match(/\bQ\s*([1256])\b/i)?.[1]}` : "";
 }
 
-export async function buildTemplateReport(args: { audience: Audience; school: string; content: ReportContent; analysis: any; cover?: File | null; sourceReport?: string }) {
+export async function buildTemplateReport(args: { audience: Audience; school: string; content: ReportContent; analysis: any; cover?: File | null; sourceReport?: string; metadata?: ValidatedMeta }) {
   const template = path.join(process.cwd(), "templates", args.audience === "alunos" ? "relatorio-alunos.docx" : "relatorio-familias.docx");
   const zip = await JSZip.loadAsync(await fs.readFile(template));
   const documentPath = "word/document.xml";
@@ -311,7 +315,7 @@ export async function buildTemplateReport(args: { audience: Audience; school: st
     documentRels = documentRels.replace("</Relationships>", `<Relationship Id="${igecRelationshipId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="${escapeXml(igecUrl)}" TargetMode="External"/></Relationships>`);
     zip.file(relPath, documentRels);
   }
-  zip.file(documentPath, patchDocumentXml(documentXml, args.audience, args.school, args.content, args.sourceReport || "", igecRelationshipId));
+  zip.file(documentPath, patchDocumentXml(documentXml, args.audience, args.school, args.content, args.sourceReport || "", igecRelationshipId, args.metadata));
   for (const name of Object.keys(zip.files).filter((value) => /^word\/(?:header|footer)\d+\.xml$/i.test(value))) {
     const file = zip.file(name);
     if (file) zip.file(name, patchSchoolReferences(await file.async("string"), args.school));

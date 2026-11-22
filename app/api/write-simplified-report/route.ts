@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
+import { SIMPLIFIED_DOMAINS, validateGeneratedReport, type ValidatedReportStructure } from "../../validated-report-structure";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-const DOMAINS = ["Autoavaliação", "Liderança e Gestão", "Prestação do Serviço Educativo", "Resultados"] as const;
+const DOMAINS = SIMPLIFIED_DOMAINS;
 const domainMap = {
   type: "object",
   additionalProperties: false,
@@ -48,8 +49,10 @@ export async function POST(request: NextRequest) {
     const body = await request.json().catch(() => null) as any;
     const audience = body?.audience === "familias" ? "familias" : "alunos";
     const report = typeof body?.report === "string" ? body.report.trim() : "";
+    const structure = body?.structure as ValidatedReportStructure | undefined;
     if (report.length < 500) return NextResponse.json({ ok: false, error: "O relatório validado não contém texto suficiente." }, { status: 400 });
     if (report.length > 180_000) return NextResponse.json({ ok: false, error: "O relatório excede o limite preventivo de 180 000 caracteres." }, { status: 413 });
+    if (!structure?.complete || structure.classificacoes?.length !== 4) return NextResponse.json({ ok: false, error: "As classificações, os pontos fortes e as áreas de melhoria não foram validados no documento Word." }, { status: 400 });
 
     const shared = `REGRAS DE RIGOR OBRIGATÓRIAS:
 - Considere exclusivamente os pontos 2, 3, 4 e 5 do relatório técnico.
@@ -61,6 +64,11 @@ export async function POST(request: NextRequest) {
 - Não copie períodos completos do original; reformule.
 - Extraia as classificações apenas se estiverem explicitamente indicadas no ponto 2.
 - Escreva em português europeu.`;
+
+    const lockedStructure = `ESTRUTURA BLOQUEADA DO RELATÓRIO VALIDADO:
+${JSON.stringify({ classificacoes: structure.classificacoes, pontosFortes: structure.pontosFortes, areasMelhoria: structure.areasMelhoria })}
+
+Reformule cada item dentro do domínio em que se encontra, preservando exatamente a quantidade e a ordem. Não transfira, una, divida ou omita itens. As classificações são decisões da equipa e não podem ser alteradas.`;
 
     const students = `DESTINATÁRIOS: alunos entre os 10 e os 15 anos.
 Use frases curtas, diretas e voz ativa. Empregue vocabulário simples, mas não infantilizado. Explique em linguagem comum qualquer conceito técnico indispensável.
@@ -79,6 +87,8 @@ PAPEL DAS FAMÍLIAS: recolha apenas referências explícitas à participação d
     const prompt = `Transforme o relatório técnico de Avaliação Externa das Escolas numa versão simplificada.
 
 ${shared}
+
+${lockedStructure}
 
 ${audience === "alunos" ? students : families}
 
@@ -105,6 +115,9 @@ ${report}
     const raw = outputText(data);
     if (!raw) return NextResponse.json({ ok: false, error: "A resposta da IA não contém um relatório utilizável." }, { status: 502 });
     const content = JSON.parse(raw);
+    const validationErrors = validateGeneratedReport(content, structure);
+    if (validationErrors.length) return NextResponse.json({ ok: false, error: `A resposta foi rejeitada antes da exportação por alterar a estrutura validada: ${validationErrors.join(" ")}` }, { status: 422 });
+    content.classificacoes = structure.classificacoes;
     return NextResponse.json({ ok: true, audience, content });
   } catch (error) {
     return NextResponse.json({ ok: false, error: error instanceof Error ? error.message : "Erro interno na redação do relatório simplificado." }, { status: 500 });

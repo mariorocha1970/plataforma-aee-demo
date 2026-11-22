@@ -145,6 +145,14 @@ function clearListMarker(block: string) {
   return block.replace(/<w:numPr>[\s\S]*?<\/w:numPr>/g, "");
 }
 
+function alignListParagraph(block: string) {
+  const indentation = '<w:ind w:left="720" w:hanging="360"/>';
+  if (/<w:pPr>/.test(block)) {
+    return block.replace(/<w:pPr>([\s\S]*?)<\/w:pPr>/, (_match, inner) => `<w:pPr>${/<w:ind\b[^>]*\/>/.test(inner) ? inner.replace(/<w:ind\b[^>]*\/>/, indentation) : `${inner}${indentation}`}</w:pPr>`);
+  }
+  return block.replace(/(<w:p(?:\s[^>]*)?>)/, `$1<w:pPr>${indentation}</w:pPr>`);
+}
+
 function insertPageBreakBefore(block: string) {
   return `<w:p><w:r><w:br w:type="page"/></w:r></w:p>${block}`;
 }
@@ -191,8 +199,13 @@ function patchDocumentXml(xml: string, audience: Audience, school: string, conte
     targets.forEach((target, index) => {
       replacements.set(target.index, index < clean.length ? clean[index] : "");
       if (index >= clean.length) custom.set(target.index, clearListMarker);
+      else custom.set(target.index, alignListParagraph);
     });
-    if (clean.length > targets.length && targets.length) replacements.set(targets.at(-1)!.index, clean.slice(targets.length - 1).join(" • "));
+    if (clean.length > targets.length && targets.length) {
+      const last = targets.at(-1)!;
+      replacements.set(last.index, clean[targets.length - 1]);
+      custom.set(last.index, (block) => clean.slice(targets.length - 1).map((value) => alignListParagraph(replaceParagraphText(block, value))).join(""));
+    }
   };
   const findAfterAny = (variants: string[], after: number) => {
     const candidates = variants.map((variant) => find(variant, after)).filter((index) => index >= 0);
@@ -216,6 +229,8 @@ function patchDocumentXml(xml: string, audience: Audience, school: string, conte
   items.filter((item) => item.normalized === normalize("RELATÓRIO para pais")).forEach((item) => replacements.set(item.index, "RELATÓRIO"));
 
   const greeting = audience === "alunos" ? find("Caros alunos") : find("Caros Pais e Encarregados de Educação");
+  const brokenStrengthHeading = find("os fortes", greeting);
+  if (brokenStrengthHeading >= 0) replacements.set(brokenStrengthHeading, "");
   const strengthIntro = audience === "alunos" ? findIncludes("A equipa de avaliação identificou os seguintes aspetos", greeting) : findIncludes("A equipa de avaliação identificou os seguintes pontos fortes", greeting);
   const introductionTargets = nonEmptyBetween(greeting, strengthIntro);
   const introduction = fixedIntroduction(audience, school, sourceReport, validatedMeta);
@@ -289,13 +304,14 @@ function patchChartXml(xml: string, items: Array<{ item: string; total: number }
   return xml
     .replace(/(<c:cat>[\s\S]*?<c:strCache>)[\s\S]*?(<\/c:strCache>[\s\S]*?<\/c:cat>)/, `$1${categories}$2`)
     .replace(/(<c:val>[\s\S]*?<c:numCache>)[\s\S]*?(<\/c:numCache>[\s\S]*?<\/c:val>)/, `$1${values}$2`)
+    .replace(/<c:f>[\s\S]*?<\/c:f>/g, "")
     .replace(/<c:externalData\b[\s\S]*?<\/c:externalData>/g, "");
 }
 
 async function exactCoverImage(file: File) {
   const source = Buffer.from(await file.arrayBuffer());
-  // Mantém a fotografia completa, sem recortes, repetições ou montagem artificial.
-  return sharp(source).rotate().resize(720, 720, { fit: "contain", background: { r: 255, g: 255, b: 255, alpha: 1 } }).jpeg({ quality: 96 }).toBuffer();
+  // Mantém a fotografia original, a sua proporção e todo o enquadramento.
+  return sharp(source).rotate().jpeg({ quality: 96 }).toBuffer();
 }
 
 function groupCode(value: string) {
@@ -329,7 +345,15 @@ export async function buildTemplateReport(args: { audience: Audience; school: st
     const group: any = groups.get(code);
     const chartPath = `word/charts/chart${chartNumber}.xml`;
     const chart = zip.file(chartPath);
-    if (chart && Array.isArray(group?.[field])) zip.file(chartPath, patchChartXml(await chart.async("string"), group[field]));
+    if (chart && Array.isArray(group?.[field])) {
+      zip.file(chartPath, patchChartXml(await chart.async("string"), group[field]));
+      const chartRelsPath = `word/charts/_rels/chart${chartNumber}.xml.rels`;
+      const chartRels = zip.file(chartRelsPath);
+      if (chartRels) {
+        const relationships = await chartRels.async("string");
+        zip.file(chartRelsPath, relationships.replace(/<Relationship\b(?=[^>]*Type="[^"]*\/oleObject")(?=[^>]*TargetMode="External")[^>]*\/>/g, ""));
+      }
+    }
   }
 
   if (args.cover && /^image\/(?:png|jpeg)$/.test(args.cover.type)) {

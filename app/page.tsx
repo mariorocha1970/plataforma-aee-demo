@@ -2,8 +2,9 @@
 
 import { ChangeEvent, useEffect, useMemo, useState } from "react";
 import { normalizeAcronyms } from "./text-normalization";
+import { parseValidatedReportTables, SIMPLIFIED_DOMAINS, type ValidatedReportStructure } from "./validated-report-structure";
 
-const APP_BUILD = "2026.11.12-v31";
+const APP_BUILD = "2026.11.22-v32";
 const ANALYSIS_ENGINE_VERSION = 19;
 const MAIN_STORAGE_KEY = "aee-piloto-v2";
 const RECOVERY_DB_NAME = "plataforma-aee-recovery";
@@ -1116,6 +1117,28 @@ async function extractFile(file: File): Promise<TextChunk[]> {
   throw new Error("Formato não suportado para leitura local");
 }
 
+async function extractValidatedReportStructure(file: File): Promise<ValidatedReportStructure> {
+  if (!file.name.toLowerCase().endsWith(".docx")) {
+    return { classificacoes: [], pontosFortes: {}, areasMelhoria: {}, complete: false, warnings: ["A verificação estrutural rigorosa exige o relatório validado em formato Word (.docx)."] };
+  }
+  const JSZip = (await import("jszip")).default;
+  const zip = await JSZip.loadAsync(await file.arrayBuffer());
+  const xml = await zip.file("word/document.xml")?.async("string");
+  if (!xml) return { classificacoes: [], pontosFortes: {}, areasMelhoria: {}, complete: false, warnings: ["Não foi possível ler a estrutura interna do documento Word."] };
+  const documentXml = new DOMParser().parseFromString(xml, "application/xml");
+  const tables = Array.from(documentXml.getElementsByTagNameNS("*", "tbl")).map((table) =>
+    Array.from(table.children).filter((node) => node.localName === "tr").map((row) =>
+      Array.from(row.children).filter((node) => node.localName === "tc").flatMap((cell) => {
+        const paragraphs = Array.from(cell.getElementsByTagNameNS("*", "p")).map((paragraph) =>
+          Array.from(paragraph.getElementsByTagNameNS("*", "t")).map((node) => node.textContent || "").join("").replace(/\s+/g, " ").trim()
+        ).filter(Boolean);
+        return paragraphs.length ? paragraphs : [""];
+      })
+    )
+  );
+  return parseValidatedReportTables(tables);
+}
+
 const privacyPatterns: Array<{ kind: PrivacyFinding["kind"]; pattern: RegExp; replacement?: string }> = [
   { kind: "Contacto", pattern: /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, replacement: "[EMAIL REMOVIDO]" },
   { kind: "Contacto", pattern: /(?<!\d)(?:\+351[ .-]?)?(?:2\d{8}|9[1236]\d{7})(?!\d)/g, replacement: "[TELEFONE REMOVIDO]" },
@@ -2109,6 +2132,7 @@ export default function Home() {
   const [validatedReportName, setValidatedReportName] = useState("");
   const [validatedReportText, setValidatedReportText] = useState("");
   const [validatedReportConfirmed, setValidatedReportConfirmed] = useState(false);
+  const [validatedReportStructure, setValidatedReportStructure] = useState<ValidatedReportStructure | null>(null);
   const [validatedReportCover, setValidatedReportCover] = useState<{ file: File; width: number; height: number } | null>(null);
   const [simplifiedGraphs, setSimplifiedGraphs] = useState<SimplifiedGraph[]>([]);
   const [simplifiedQuestionnaireFiles, setSimplifiedQuestionnaireFiles] = useState<string[]>([]);
@@ -2148,6 +2172,7 @@ export default function Home() {
         if (typeof data.validatedReportName === "string") setValidatedReportName(data.validatedReportName);
         if (typeof data.validatedReportText === "string") setValidatedReportText(data.validatedReportText);
         if (typeof data.validatedReportConfirmed === "boolean") setValidatedReportConfirmed(data.validatedReportConfirmed);
+        if (data.validatedReportStructure && typeof data.validatedReportStructure === "object") setValidatedReportStructure(data.validatedReportStructure);
         if (data.simplifiedQuestionnaireAnalysis && typeof data.simplifiedQuestionnaireAnalysis === "object") setSimplifiedQuestionnaireAnalysis(data.simplifiedQuestionnaireAnalysis);
         if (Array.isArray(data.files)) setFiles(data.files);
         if (data.fileAnalysis && typeof data.fileAnalysis === "object") setFileAnalysis(data.fileAnalysis);
@@ -2228,7 +2253,7 @@ export default function Home() {
     }
     try {
       await createAutomaticRecoveryPoint("Antes de guardar manualmente");
-      window.localStorage.setItem(MAIN_STORAGE_KEY, JSON.stringify({ analysisEngineVersion: ANALYSIS_ENGINE_VERSION, schoolName, evidence, documentCandidates, statisticalRecords, statisticalTreatments, questionnaireComments, questionnaireReport, interviews, interviewCandidates, interviewQuestionDrafts, files, fileAnalysis, narratives, triangulationRevisions, report, conclusions, indicatorApplicability, lastUpdated, simplifiedReports, validatedReportName, validatedReportText, validatedReportConfirmed, simplifiedQuestionnaireAnalysis }));
+      window.localStorage.setItem(MAIN_STORAGE_KEY, JSON.stringify({ analysisEngineVersion: ANALYSIS_ENGINE_VERSION, schoolName, evidence, documentCandidates, statisticalRecords, statisticalTreatments, questionnaireComments, questionnaireReport, interviews, interviewCandidates, interviewQuestionDrafts, files, fileAnalysis, narratives, triangulationRevisions, report, conclusions, indicatorApplicability, lastUpdated, simplifiedReports, validatedReportName, validatedReportText, validatedReportConfirmed, validatedReportStructure, simplifiedQuestionnaireAnalysis }));
       setSaved(true);
       window.setTimeout(() => setSaved(false), 1800);
     } catch {
@@ -2237,7 +2262,7 @@ export default function Home() {
   }
 
   function exportBackup() {
-    const payload = { analysisEngineVersion: ANALYSIS_ENGINE_VERSION, schoolName, evidence, documentCandidates, statisticalRecords, statisticalTreatments, questionnaireComments, questionnaireReport, interviews, interviewCandidates, interviewQuestionDrafts, files, fileAnalysis, narratives, triangulationRevisions, report, conclusions, indicatorApplicability, lastUpdated, simplifiedReports, validatedReportName, validatedReportText, validatedReportConfirmed, simplifiedQuestionnaireAnalysis };
+    const payload = { analysisEngineVersion: ANALYSIS_ENGINE_VERSION, schoolName, evidence, documentCandidates, statisticalRecords, statisticalTreatments, questionnaireComments, questionnaireReport, interviews, interviewCandidates, interviewQuestionDrafts, files, fileAnalysis, narratives, triangulationRevisions, report, conclusions, indicatorApplicability, lastUpdated, simplifiedReports, validatedReportName, validatedReportText, validatedReportConfirmed, validatedReportStructure, simplifiedQuestionnaireAnalysis };
     const backup = {
       format: "plataforma-aee-backup",
       version: 1,
@@ -2290,6 +2315,7 @@ export default function Home() {
       setValidatedReportName(typeof data.validatedReportName === "string" ? data.validatedReportName : "");
       setValidatedReportText(typeof data.validatedReportText === "string" ? data.validatedReportText : "");
       setValidatedReportConfirmed(Boolean(data.validatedReportConfirmed));
+      setValidatedReportStructure(data.validatedReportStructure && typeof data.validatedReportStructure === "object" ? data.validatedReportStructure : null);
       setSimplifiedQuestionnaireAnalysis(data.simplifiedQuestionnaireAnalysis && typeof data.simplifiedQuestionnaireAnalysis === "object" ? data.simplifiedQuestionnaireAnalysis : { grupos: [] });
       setInterviews(data.interviews);
       setInterviewCandidates(Array.isArray(data.interviewCandidates) ? data.interviewCandidates : []);
@@ -2347,7 +2373,7 @@ export default function Home() {
       minute: "2-digit",
     }).format(new Date());
     try {
-      window.localStorage.setItem(MAIN_STORAGE_KEY, JSON.stringify({ analysisEngineVersion: ANALYSIS_ENGINE_VERSION, schoolName, evidence, documentCandidates, statisticalRecords, statisticalTreatments, questionnaireComments, questionnaireReport, interviews, interviewCandidates, interviewQuestionDrafts, files, fileAnalysis, narratives: refreshedNarratives, triangulationRevisions, report: refreshedReport, conclusions, indicatorApplicability, lastUpdated: timestamp, simplifiedReports, validatedReportName, validatedReportText, validatedReportConfirmed, simplifiedQuestionnaireAnalysis }));
+      window.localStorage.setItem(MAIN_STORAGE_KEY, JSON.stringify({ analysisEngineVersion: ANALYSIS_ENGINE_VERSION, schoolName, evidence, documentCandidates, statisticalRecords, statisticalTreatments, questionnaireComments, questionnaireReport, interviews, interviewCandidates, interviewQuestionDrafts, files, fileAnalysis, narratives: refreshedNarratives, triangulationRevisions, report: refreshedReport, conclusions, indicatorApplicability, lastUpdated: timestamp, simplifiedReports, validatedReportName, validatedReportText, validatedReportConfirmed, validatedReportStructure, simplifiedQuestionnaireAnalysis }));
       setReport(refreshedReport);
       setNarratives(refreshedNarratives);
       setLastUpdated(timestamp);
@@ -2419,6 +2445,7 @@ export default function Home() {
     setValidatedReportName("");
     setValidatedReportText("");
     setValidatedReportConfirmed(false);
+    setValidatedReportStructure(null);
     setValidatedReportCover(null);
     simplifiedGraphs.forEach((item) => URL.revokeObjectURL(item.preview));
     setSimplifiedGraphs([]);
@@ -3753,6 +3780,7 @@ export default function Home() {
       const chunks = await extractFile(file);
       const text = chunks.map((item) => item.text).join("\n\n").trim();
       if (text.length < 500) throw new Error("O documento não contém texto suficiente ou necessita de OCR.");
+      const structure = await extractValidatedReportStructure(file);
       let cover: { file: File; width: number; height: number } | null = null;
       if (file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")) {
         const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
@@ -3794,10 +3822,11 @@ export default function Home() {
       }
       setValidatedReportName(file.name);
       setValidatedReportText(text);
+      setValidatedReportStructure(structure);
       setValidatedReportCover(cover);
       setValidatedReportConfirmed(false);
       setSimplifiedReports({});
-      setSimplifiedStatus(`${file.name}: ${text.length.toLocaleString("pt-PT")} caracteres extraídos.${cover ? " A imagem da escola foi recolhida para a capa dos templates." : " Não foi possível identificar uma imagem; confirme a capa antes da exportação."} Confirme que esta é a versão validada.`);
+      setSimplifiedStatus(`${file.name}: ${text.length.toLocaleString("pt-PT")} caracteres extraídos. ${structure.complete ? "As classificações, os pontos fortes e as áreas de melhoria foram verificados nas tabelas do relatório." : `A geração ficou bloqueada: ${structure.warnings.join(" ")}`}${cover ? " A imagem da escola foi recolhida para a capa dos templates." : " Não foi possível identificar uma imagem; confirme a capa antes da exportação."}`);
       setChangesPending(true);
     } catch (error) {
       setSimplifiedStatus(error instanceof Error ? error.message : "Não foi possível ler o relatório.");
@@ -3865,15 +3894,15 @@ export default function Home() {
   }
 
   async function generateSimplifiedReport(audience: SimplifiedAudience) {
-    if (!validatedReportText || !validatedReportConfirmed || simplifiedWorking) {
-      setSimplifiedStatus(!validatedReportText ? "Carregue primeiro o relatório técnico validado." : "Confirme primeiro que o documento carregado corresponde à versão validada.");
+    if (!validatedReportText || !validatedReportConfirmed || !validatedReportStructure?.complete || simplifiedWorking) {
+      setSimplifiedStatus(!validatedReportText ? "Carregue primeiro o relatório técnico validado." : !validatedReportStructure?.complete ? "A estrutura do relatório não foi validada. Carregue a versão Word final, com os quadros 2, 3 e 4 completos." : "Confirme primeiro que o documento carregado corresponde à versão validada.");
       return;
     }
     if (!window.confirm(`Gerar o Relatório — ${audience === "alunos" ? "Alunos" : "Famílias"} numa chamada à IA?`)) return;
     setSimplifiedWorking(true);
     setSimplifiedStatus(`A redigir a versão para ${audience === "alunos" ? "alunos" : "famílias"}…`);
     try {
-      const response = await fetch("/api/write-simplified-report", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ audience, report: validatedReportText }) });
+      const response = await fetch("/api/write-simplified-report", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ audience, report: validatedReportText, structure: validatedReportStructure }) });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok || payload?.ok === false) throw new Error(payload?.error || `O servidor devolveu o estado ${response.status}.`);
       setSimplifiedReports((current) => ({ ...current, [audience]: payload.content }));
@@ -3888,11 +3917,14 @@ export default function Home() {
   }
 
   function generateSimplifiedReportLocally(audience: SimplifiedAudience) {
-    if (!validatedReportText || !validatedReportConfirmed) {
-      setSimplifiedStatus(!validatedReportText ? "Carregue primeiro o relatório técnico validado." : "Confirme primeiro que o documento carregado corresponde à versão validada.");
+    if (!validatedReportText || !validatedReportConfirmed || !validatedReportStructure?.complete) {
+      setSimplifiedStatus(!validatedReportText ? "Carregue primeiro o relatório técnico validado." : !validatedReportStructure?.complete ? "A estrutura do relatório não foi validada. Carregue a versão Word final." : "Confirme primeiro que o documento carregado corresponde à versão validada.");
       return;
     }
     const content = localSimplifiedReport(validatedReportText, audience);
+    content.classificacoes = validatedReportStructure.classificacoes;
+    content.pontosFortes = Object.fromEntries(SIMPLIFIED_DOMAINS.map((domain) => [domain, validatedReportStructure.pontosFortes[domain].map((item) => audience === "alunos" ? simplifyForStudents(item) : item)]));
+    content.areasMelhoria = Object.fromEntries(SIMPLIFIED_DOMAINS.map((domain) => [domain, validatedReportStructure.areasMelhoria[domain].map((item) => audience === "alunos" ? simplifyForStudents(item) : nominalizeImprovement(item))]));
     setSimplifiedReports((current) => ({ ...current, [audience]: content }));
     setSimplifiedAudience(audience);
     setSimplifiedStatus(`Rascunho local para ${audience === "alunos" ? "alunos" : "famílias"} criado sem chamada à IA. Reveja sobretudo a simplificação das frases e a seleção dos projetos.`);
@@ -3900,8 +3932,8 @@ export default function Home() {
   }
 
   async function buildCompleteSimplifiedPackage() {
-    if (!validatedReportText || !validatedReportConfirmed || !simplifiedQuestionnaireText || simplifiedWorking) {
-      setSimplifiedStatus(!validatedReportText ? "Carregue o relatório técnico validado." : !validatedReportConfirmed ? "Confirme que o relatório corresponde à versão final validada." : "Carregue os PDF com as respostas aos questionários.");
+    if (!validatedReportText || !validatedReportConfirmed || !validatedReportStructure?.complete || !simplifiedQuestionnaireText || simplifiedWorking) {
+      setSimplifiedStatus(!validatedReportText ? "Carregue o relatório técnico validado." : !validatedReportStructure?.complete ? "A estrutura do relatório não foi validada. Carregue a versão Word final." : !validatedReportConfirmed ? "Confirme que o relatório corresponde à versão final validada." : "Carregue os PDF com as respostas aos questionários.");
       return;
     }
     const totalCharacters = validatedReportText.length + simplifiedQuestionnaireText.length;
@@ -3913,7 +3945,7 @@ export default function Home() {
     setSimplifiedWorking(true);
     setSimplifiedStatus("Operação única em curso: a analisar questionários e a redigir as duas versões…");
     try {
-      const response = await fetch("/api/build-simplified-package", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ report: validatedReportText, questionnaires: simplifiedQuestionnaireText }) });
+      const response = await fetch("/api/build-simplified-package", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ report: validatedReportText, questionnaires: simplifiedQuestionnaireText, structure: validatedReportStructure }) });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok || payload?.ok === false) throw new Error(payload?.error || `O servidor devolveu o estado ${response.status}.`);
       const packageData = payload?.package;
@@ -4446,7 +4478,9 @@ export default function Home() {
             <div className="narrative-guidance"><strong>Condição de utilização</strong><span>O documento carregado deve ser a versão final validada pela equipa. A IA simplifica a linguagem; não reabre a avaliação nem pode alterar o sentido dos juízos.</span></div>
             <section className="simplified-source-card">
               <div className="section-heading"><div><p className="eyebrow">1 · Fonte obrigatória</p><h3>Relatório técnico validado</h3><p>Formatos aceites: Word, PDF e texto. O conteúdo substitui qualquer minuta ainda existente na plataforma.</p></div><label className="button secondary file-button">Carregar relatório<input type="file" accept=".docx,.pdf,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain" onChange={loadValidatedReport} hidden /></label></div>
-              {validatedReportName ? <div className="uploaded-source"><div><strong>{validatedReportName}</strong><small>{validatedReportText.length.toLocaleString("pt-PT")} caracteres extraídos</small></div><label className="checkbox-line"><input type="checkbox" checked={validatedReportConfirmed} onChange={(event) => setValidatedReportConfirmed(event.target.checked)} /> Confirmo que corresponde ao relatório final validado</label></div> : <div className="empty-analysis"><strong>Nenhum relatório validado carregado.</strong><p>A geração das versões simplificadas permanece bloqueada.</p></div>}
+              {validatedReportName ? <><div className="uploaded-source"><div><strong>{validatedReportName}</strong><small>{validatedReportText.length.toLocaleString("pt-PT")} caracteres extraídos</small></div><label className="checkbox-line"><input type="checkbox" disabled={!validatedReportStructure?.complete} checked={validatedReportConfirmed} onChange={(event) => setValidatedReportConfirmed(event.target.checked)} /> Confirmo que corresponde ao relatório final validado</label></div>
+                {validatedReportStructure && <div className={`validated-structure ${validatedReportStructure.complete ? "complete" : "incomplete"}`}><strong>{validatedReportStructure.complete ? "Estrutura probatória confirmada" : "Estrutura incompleta — geração bloqueada"}</strong>{validatedReportStructure.complete ? <div className="structure-grid">{validatedReportStructure.classificacoes.map((item) => <article key={item.dominio}><span>{item.dominio}</span><b>{item.classificacao}</b><small>{validatedReportStructure.pontosFortes[item.dominio]?.length || 0} pontos fortes · {validatedReportStructure.areasMelhoria[item.dominio]?.length || 0} áreas de melhoria</small></article>)}</div> : <ul>{validatedReportStructure.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul>}</div>}
+              </> : <div className="empty-analysis"><strong>Nenhum relatório validado carregado.</strong><p>A geração das versões simplificadas permanece bloqueada.</p></div>}
             </section>
             <section className="simplified-source-card">
               <div className="section-heading"><div><p className="eyebrow">2 · Questionários e elementos gráficos</p><h3>Resultados a integrar nas duas versões</h3><p>Carregue Q1 e Q2 para o relatório dos alunos e Q5 e Q6 para o relatório das famílias. A plataforma lê as tabelas, valida as percentagens e atualiza diretamente os gráficos dos templates, sem usar IA nos cálculos.</p></div><div className="action-row"><label className="button secondary file-button">Inserir gráficos manualmente<input type="file" multiple accept="image/png,image/jpeg" onChange={loadSimplifiedGraphs} hidden /></label><label className="button secondary file-button">Inserir PDF dos questionários<input type="file" multiple accept=".pdf,application/pdf" onChange={loadSimplifiedQuestionnaires} hidden /></label><button className="button secondary" disabled={!simplifiedQuestionnaireText || simplifiedWorking} onClick={analyzeSimplifiedQuestionnaires}>Validar Q1, Q2, Q5 e Q6 · sem IA</button></div></div>
@@ -4456,12 +4490,12 @@ export default function Home() {
             </section>
             <section className="simplified-one-click">
               <div><p className="eyebrow">Percurso recomendado</p><h3>Gerar tudo com um clique</h3><p>Analisa todos os questionários, constrói automaticamente os gráficos com cores próprias para cada público, redige os dois relatórios, aplica os templates e descarrega os dois ficheiros Word.</p></div>
-              <button className="button primary" disabled={!validatedReportConfirmed || !simplifiedQuestionnaireText || simplifiedWorking} onClick={buildCompleteSimplifiedPackage}>{simplifiedWorking ? "A produzir o pacote completo…" : "Gerar os 2 relatórios e gráficos · 1 clique · 1 chamada"}</button>
+              <button className="button primary" disabled={!validatedReportConfirmed || !validatedReportStructure?.complete || !simplifiedQuestionnaireText || simplifiedWorking} onClick={buildCompleteSimplifiedPackage}>{simplifiedWorking ? "A produzir o pacote completo…" : "Gerar os 2 relatórios e gráficos · 1 clique · 1 chamada"}</button>
             </section>
             {simplifiedStatus && <div className="statistics-status" role="status">{simplifiedStatus}</div>}
             <section className="simplified-editor-card">
               <div className="simplified-tabs"><button className={simplifiedAudience === "alunos" ? "selected" : ""} onClick={() => setSimplifiedAudience("alunos")}>Relatório — Alunos</button><button className={simplifiedAudience === "familias" ? "selected family" : "family"} onClick={() => setSimplifiedAudience("familias")}>Relatório — Famílias</button></div>
-              <div className="section-heading"><div><p className="eyebrow">3 · Redação e validação</p><h3>{simplifiedAudience === "alunos" ? "Versão para alunos dos 10 aos 15 anos" : "Versão para pais e encarregados de educação"}</h3><p>{simplifiedAudience === "alunos" ? "Linguagem clara, não infantilizada, com o que está a correr bem, o que pode melhorar e projetos interessantes." : "Linguagem acessível, com pontos fortes, áreas de melhoria, projetos e valorização do papel das famílias."}</p></div><div className="action-row"><button className="button primary" disabled={!validatedReportConfirmed || simplifiedWorking} onClick={() => generateSimplifiedReportLocally(simplifiedAudience)}>Gerar rascunho local · sem API</button><button className="button secondary" disabled={!validatedReportConfirmed || simplifiedWorking} onClick={() => generateSimplifiedReport(simplifiedAudience)}>{simplifiedWorking ? "A processar…" : content ? "Aprimorar com IA · 1 chamada" : "Gerar diretamente com IA · 1 chamada"}</button><button className="button secondary" disabled={!content || simplifiedWorking} onClick={() => exportSimplifiedReport(simplifiedAudience)}>Guardar Word com template</button></div></div>
+              <div className="section-heading"><div><p className="eyebrow">3 · Redação e validação</p><h3>{simplifiedAudience === "alunos" ? "Versão para alunos dos 10 aos 15 anos" : "Versão para pais e encarregados de educação"}</h3><p>{simplifiedAudience === "alunos" ? "Linguagem clara, não infantilizada, com o que está a correr bem, o que pode melhorar e projetos interessantes." : "Linguagem acessível, com pontos fortes, áreas de melhoria, projetos e valorização do papel das famílias."}</p></div><div className="action-row"><button className="button primary" disabled={!validatedReportConfirmed || !validatedReportStructure?.complete || simplifiedWorking} onClick={() => generateSimplifiedReportLocally(simplifiedAudience)}>Gerar rascunho local · sem API</button><button className="button secondary" disabled={!validatedReportConfirmed || !validatedReportStructure?.complete || simplifiedWorking} onClick={() => generateSimplifiedReport(simplifiedAudience)}>{simplifiedWorking ? "A processar…" : content ? "Aprimorar com IA · 1 chamada" : "Gerar diretamente com IA · 1 chamada"}</button><button className="button secondary" disabled={!content || simplifiedWorking} onClick={() => exportSimplifiedReport(simplifiedAudience)}>Guardar Word com template</button></div></div>
               {simplifiedStatus && <div className="statistics-status" role="status">{simplifiedStatus}</div>}
               {!content ? <div className="empty-analysis"><strong>Esta versão ainda não foi produzida.</strong><p>O relatório para alunos e o relatório para famílias são gerados e validados separadamente.</p></div> : <div className="simplified-content-editor">
                 <label>Introdução<textarea value={content.introducao} onChange={(event) => setSimplifiedReports((current) => ({ ...current, [simplifiedAudience]: { ...content, introducao: event.target.value } }))} /></label>
@@ -4479,6 +4513,12 @@ export default function Home() {
               .simplified-one-click h3, .simplified-one-click p { margin: .15rem 0; }
               .uploaded-source { display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding: .9rem; border-radius: 12px; background: #f1f8f5; }
               .uploaded-source > div { display: grid; gap: .2rem; }
+              .validated-structure { margin-top: .75rem; padding: .85rem; border: 1px solid #d8e4df; border-radius: 12px; }
+              .validated-structure.complete { background: #f1f8f5; border-color: #77a996; }
+              .validated-structure.incomplete { background: #fff5f3; border-color: #cf7c6c; }
+              .structure-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .55rem; margin-top: .65rem; }
+              .structure-grid article { display: grid; gap: .2rem; padding: .65rem; background: white; border-radius: 9px; }
+              .structure-grid span, .structure-grid small { color: #52645e; }
               .file-button { cursor: pointer; }
               .file-chips { display: flex; flex-wrap: wrap; gap: .5rem; margin: .8rem 0; }
               .questionnaire-analysis-preview { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .6rem; margin: .8rem 0; }
@@ -4496,7 +4536,7 @@ export default function Home() {
               .simplified-domain-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .8rem; }
               .simplified-domain-grid label { font-weight: 750; }
               .simplified-domain-grid textarea { min-height: 9rem; }
-              @media (max-width: 900px) { .simplified-graph-grid, .questionnaire-analysis-preview, .simplified-domain-grid { grid-template-columns: 1fr; } .uploaded-source, .simplified-one-click { align-items: flex-start; flex-direction: column; } }
+              @media (max-width: 900px) { .simplified-graph-grid, .questionnaire-analysis-preview, .simplified-domain-grid, .structure-grid { grid-template-columns: 1fr; } .uploaded-source, .simplified-one-click { align-items: flex-start; flex-direction: column; } }
             `}</style>
           </section>;
         })()}

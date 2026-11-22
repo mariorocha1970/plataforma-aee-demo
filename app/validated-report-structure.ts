@@ -6,6 +6,7 @@ export type ValidatedReportStructure = {
   areasMelhoria: Record<string, string[]>;
   complete: boolean;
   warnings: string[];
+  metadata?: { school: string; observationDates: string; visitDates: string; schools: string[] };
 };
 
 function normalized(value: string) {

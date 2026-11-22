@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { parseQuestionnaires } from "../../questionnaire-parser";
+import { SIMPLIFIED_DOMAINS, validateGeneratedReport, type ValidatedReportStructure } from "../../validated-report-structure";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
 
-const DOMAINS = ["Autoavaliação", "Liderança e Gestão", "Prestação do Serviço Educativo", "Resultados"] as const;
-const domainMap = { type: "object", additionalProperties: false, properties: Object.fromEntries(DOMAINS.map((domain) => [domain, { type: "array", maxItems: 4, items: { type: "string", maxLength: 280 } }])), required: DOMAINS };
+const DOMAINS = SIMPLIFIED_DOMAINS;
+const domainMap = { type: "object", additionalProperties: false, properties: Object.fromEntries(DOMAINS.map((domain) => [domain, { type: "array", items: { type: "string", maxLength: 360 } }])), required: DOMAINS };
 const reportSchema = {
   type: "object", additionalProperties: false,
   properties: {
@@ -37,9 +38,11 @@ export async function POST(request: NextRequest) {
     const body = await request.json().catch(() => null) as any;
     const report = typeof body?.report === "string" ? body.report.trim() : "";
     const questionnaires = typeof body?.questionnaires === "string" ? body.questionnaires.trim() : "";
+    const structure = body?.structure as ValidatedReportStructure | undefined;
     if (report.length < 500) return NextResponse.json({ ok: false, error: "O relatório validado não contém texto suficiente." }, { status: 400 });
     if (questionnaires.length < 100) return NextResponse.json({ ok: false, error: "Os PDF dos questionários não contêm texto suficiente." }, { status: 400 });
     if (report.length + questionnaires.length > 300_000) return NextResponse.json({ ok: false, error: "O conjunto excede o limite preventivo de 300 000 caracteres. Reduza ficheiros repetidos ou digitalizações redundantes." }, { status: 413 });
+    if (!structure?.complete || structure.classificacoes?.length !== 4) return NextResponse.json({ ok: false, error: "As classificações, os pontos fortes e as áreas de melhoria não foram validados no documento Word." }, { status: 400 });
     const questionnaireAnalysis = parseQuestionnaires(questionnaires);
 
     const prompt = `Produza, numa única operação, duas versões simplificadas do relatório técnico validado da Avaliação Externa das Escolas: uma para alunos e outra para famílias.
@@ -55,6 +58,11 @@ REGRAS COMUNS DOS DOIS RELATÓRIOS:
 - Reformule; não copie períodos completos.
 - Extraia as classificações apenas quando constem explicitamente do ponto 2.
 - Escreva em português europeu.
+
+ESTRUTURA BLOQUEADA DO RELATÓRIO VALIDADO:
+${JSON.stringify({ classificacoes: structure.classificacoes, pontosFortes: structure.pontosFortes, areasMelhoria: structure.areasMelhoria })}
+
+Nos dois relatórios, reformule cada item dentro do domínio em que se encontra, preservando exatamente a quantidade e a ordem. Não transfira, una, divida ou omita itens. As classificações são decisões da equipa e não podem ser alteradas.
 
 RELATÓRIO PARA ALUNOS:
 - Destinatários entre 10 e 15 anos. Frases curtas, diretas, voz ativa e vocabulário simples, sem infantilizar.
@@ -88,6 +96,13 @@ ${report}
     const raw = outputText(data);
     if (!raw) return NextResponse.json({ ok: false, error: "A resposta da IA não contém um pacote utilizável." }, { status: 502 });
     const generated = JSON.parse(raw);
+    const validationErrors = [
+      ...validateGeneratedReport(generated?.alunos, structure).map((error) => `Alunos — ${error}`),
+      ...validateGeneratedReport(generated?.familias, structure).map((error) => `Famílias — ${error}`),
+    ];
+    if (validationErrors.length) return NextResponse.json({ ok: false, error: `A resposta foi rejeitada antes da exportação por alterar a estrutura validada: ${validationErrors.join(" ")}` }, { status: 422 });
+    generated.alunos.classificacoes = structure.classificacoes;
+    generated.familias.classificacoes = structure.classificacoes;
     return NextResponse.json({ ok: true, package: { ...generated, questionarios: questionnaireAnalysis }, questionnaireMode: "deterministic" });
   } catch (error) {
     return NextResponse.json({ ok: false, error: error instanceof Error ? error.message : "Erro interno na produção do pacote simplificado." }, { status: 500 });

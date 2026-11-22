@@ -128,6 +128,8 @@ function fixedIntroduction(audience: Audience, school: string, sourceReport: str
     { text: establishments, color: "31849B" },
     { text: ". Também observámos algumas atividades e aulas para conhecer melhor a dinâmica educativa, em " },
     { text: "todos os estabelecimentos que integram o Agrupamento", color: "31849B" }, { text: "." },
+  ], [
+    { text: "A avaliação do Agrupamento incidiu em quatro grandes áreas: Autoavaliação (o que é que a escola faz para melhorar), Liderança e gestão (como é liderado e gerido o Agrupamento), Prestação do serviço educativo (como se ensina, aprende e avalia) e Resultados (que resultados académicos e outros têm os alunos)." },
   ]];
 }
 
@@ -172,6 +174,13 @@ function addSpacingBefore(block: string, twips: number) {
     });
   }
   return block.replace(/(<w:p(?:\s[^>]*)?>)/, `$1<w:pPr><w:spacing w:before="${twips}"/></w:pPr>`);
+}
+
+function separateTextAndCharts(block: string) {
+  if (!/<c:chart\b/.test(block) || !paragraphText(block).trim()) return block;
+  const withoutCharts = block.replace(/<w:r(?:\s[^>]*)?>[\s\S]*?<\/w:r>/g, (run) => /<c:chart\b/.test(run) ? "" : run);
+  const chartOnly = block.replace(/<w:r(?:\s[^>]*)?>[\s\S]*?<\/w:r>/g, (run) => /<c:chart\b/.test(run) ? run : "");
+  return `${withoutCharts}${chartOnly}`;
 }
 
 
@@ -243,11 +252,7 @@ function patchDocumentXml(xml: string, audience: Audience, school: string, conte
   patchDomains(audience === "alunos" ? "O que pode melhorar?" : "Áreas de melhoria", audience === "alunos" ? "O Agrupamento dinamiza diversos projetos" : "O Agrupamento dinamiza uma variedade", content.areasMelhoria);
 
   const questionnaireIntro = audience === "alunos" ? findIncludes("Através dos questionários respondidos pelos alunos") : findIncludes("Através dos questionários aplicados aos pais");
-  if (questionnaireIntro >= 0) custom.set(questionnaireIntro, insertPageBreakBefore);
-  if (audience === "alunos") {
-    const chartParagraphs = items.filter((item) => /<c:chart\b/.test(item.block));
-    if (chartParagraphs[1]) custom.set(chartParagraphs[1].index, compactStudentSecondChartPage);
-  }
+  if (questionnaireIntro >= 0) custom.set(questionnaireIntro, separateTextAndCharts);
 
   const projectsHeading = find(audience === "alunos" ? "Projetos interessantes" : "Projetos");
   const projectsEnd = audience === "alunos" ? findIncludes("Através dos questionários respondidos pelos alunos", projectsHeading) : findIncludes("O Agrupamento reconhece e valoriza", projectsHeading);
@@ -301,11 +306,18 @@ function cachePoints(values: Array<string | number>, numeric: boolean) {
 function patchChartXml(xml: string, items: Array<{ item: string; total: number }>) {
   const categories = cachePoints(items.map((item) => item.item), false);
   const values = `<c:formatCode>0.0</c:formatCode>${cachePoints(items.map((item) => item.total), true)}`;
-  return xml
+  let patched = xml
     .replace(/(<c:cat>[\s\S]*?<c:strCache>)[\s\S]*?(<\/c:strCache>[\s\S]*?<\/c:cat>)/, `$1${categories}$2`)
     .replace(/(<c:val>[\s\S]*?<c:numCache>)[\s\S]*?(<\/c:numCache>[\s\S]*?<\/c:val>)/, `$1${values}$2`)
     .replace(/<c:f>[\s\S]*?<\/c:f>/g, "")
     .replace(/<c:externalData\b[\s\S]*?<\/c:externalData>/g, "");
+  if (/<c:barDir val="bar"\/>/.test(patched)) {
+    const maximum = Math.min(100, Math.max(10, Math.ceil(Math.max(...items.map((item) => Number(item.total) || 0)) / 10) * 10));
+    patched = patched.replace(/<c:max val="[^"]+"\/>/, `<c:max val="${maximum}"/>`);
+    if (!/<c:max val=/.test(patched)) patched = patched.replace(/<c:scaling>/, `<c:scaling><c:max val="${maximum}"/>`);
+    if (!/<c:min val=/.test(patched)) patched = patched.replace(/<c:scaling>/, '<c:scaling><c:min val="0"/>');
+  }
+  return patched;
 }
 
 async function exactCoverImage(file: File) {

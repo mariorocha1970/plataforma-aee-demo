@@ -3,7 +3,7 @@ import path from "node:path";
 import JSZip from "jszip";
 import sharp from "sharp";
 
-const SIMPLIFIED_REPORT_VERSION = "2026.11.23-v38";
+const SIMPLIFIED_REPORT_VERSION = "2026.11.23-v38.1";
 
 type Audience = "alunos" | "familias";
 type ReportContent = {
@@ -46,7 +46,7 @@ function replaceParagraphText(block: string, value: string) {
     if (!first) return tag.replace(/>[^<]*<\/w:t>$/, "></w:t>");
     first = false;
     return tag.replace(/>[^<]*<\/w:t>$/, ` xml:space="preserve">${escapeXml(value)}</w:t>`).replace(/<w:t([^>]*)\s+xml:space="preserve"([^>]*)\s+xml:space="preserve">/, '<w:t$1 xml:space="preserve"$2>');
-  });
+  }).replace(/<w:(?:noBreakHyphen|softHyphen)\s*\/>/g, "");
 }
 
 function paragraphWithFragments(block: string, fragments: Array<{ text: string; color?: string }>) {
@@ -166,6 +166,20 @@ function setListSpacing(block: string, after: number) {
   return block.replace(/(<w:p(?:\s[^>]*)?>)/, `$1<w:pPr>${spacing}</w:pPr>`);
 }
 
+function setContentSpacing(block: string, before = 0, after = 120) {
+  const spacing = `<w:spacing w:before="${before}" w:after="${after}" w:line="276" w:lineRule="auto"/>`;
+  const pageBreakOverride = '<w:pageBreakBefore w:val="0"/>';
+  if (/<w:pPr>/.test(block)) return block.replace(/<w:pPr>([\s\S]*?)<\/w:pPr>/, (_match, inner) => {
+    const withoutAutomaticSpacing = inner.replace(/<w:spacing\b[^>]*\/>/g, "").replace(/<w:pageBreakBefore\b[^>]*\/>/g, "");
+    return `<w:pPr>${withoutAutomaticSpacing}${spacing}${pageBreakOverride}</w:pPr>`;
+  });
+  return block.replace(/(<w:p(?:\s[^>]*)?>)/, `$1<w:pPr>${spacing}${pageBreakOverride}</w:pPr>`);
+}
+
+function setDomainHeadingSpacing(block: string) {
+  return setContentSpacing(block, 160, 80).replace(/<w:pPr>([\s\S]*?)<\/w:pPr>/, (_match, inner) => `<w:pPr>${inner}<w:keepNext/></w:pPr>`);
+}
+
 function explicitBulletParagraph(block: string, value: string, spacingAfter: number) {
   return setListSpacing(alignListParagraph(clearListMarker(replaceParagraphText(block, `• ${value}`))), spacingAfter);
 }
@@ -220,9 +234,10 @@ function patchDocumentXml(xml: string, audience: Audience, school: string, conte
   const fillRange = (start: number, end: number, values: string[]) => {
     const targets = nonEmptyBetween(start, end);
     const clean = values.map((value) => String(value || "").replace(/^\s*[•·▪-]\s*/, "").trim()).filter(Boolean);
-    const totalCharacters = clean.reduce((sum, value) => sum + value.length, 0);
-    const averageCharacters = clean.length ? totalCharacters / clean.length : 0;
-    const spacingAfter = Math.max(70, Math.min(300, Math.round(300 - clean.length * 24 - averageCharacters * 0.55)));
+    // Um único padrão para todos os itens: 1,15 linhas e 6 pt depois.
+    // A paginação deve resultar do fluxo do texto, não de espaçamentos
+    // diferentes calculados a partir do tamanho de cada lista.
+    const spacingAfter = 120;
     targets.forEach((target, index) => {
       replacements.set(target.index, index < clean.length ? clean[index] : "");
       if (index >= clean.length) custom.set(target.index, clearListMarker);
@@ -246,6 +261,7 @@ function patchDocumentXml(xml: string, audience: Audience, school: string, conte
     const headings = DOMAINS.map((domain, index) => ({ domain, index: findAfterAny(index === 1 ? ["Liderança e gestão", "Liderança e Gestão"] : index === 2 ? ["Prestação do serviço educativo", "Prestação do Serviço Educativo"] : [domain], section) }));
     headings.forEach((heading, index) => {
       if (heading.index < 0 || heading.index >= end) return;
+      custom.set(heading.index, setDomainHeadingSpacing);
       const next = headings.slice(index + 1).find((candidate) => candidate.index > heading.index && candidate.index < end)?.index ?? end;
       fillRange(heading.index, next, domainValues(source, heading.domain));
     });
@@ -259,16 +275,19 @@ function patchDocumentXml(xml: string, audience: Audience, school: string, conte
   // As formas da capa são flutuantes. Sem uma quebra explícita, o Word pode
   // colocar a saudação por baixo dessas formas na primeira página, sobretudo
   // quando o documento é gerado noutro computador ou aberto noutra versão.
-  if (greeting >= 0) custom.set(greeting, insertPageBreakBefore);
+  // O template das famílias já contém a quebra depois da capa. Acrescentar
+  // outra cria uma página 2 vazia. O template dos alunos precisa dela.
+  if (greeting >= 0) custom.set(greeting, audience === "alunos" ? insertPageBreakBefore : (block) => setContentSpacing(block, 0, 180));
   const brokenStrengthHeading = find("os fortes", greeting);
   if (brokenStrengthHeading >= 0) replacements.set(brokenStrengthHeading, "");
   const strengthIntro = audience === "alunos" ? findIncludes("A equipa de avaliação identificou os seguintes aspetos", greeting) : findIncludes("A equipa de avaliação identificou os seguintes pontos fortes", greeting);
   const introductionTargets = nonEmptyBetween(greeting, strengthIntro);
   const introduction = fixedIntroduction(audience, school, sourceReport, validatedMeta);
   introductionTargets.forEach((target, index) => {
-    if (introduction[index]) custom.set(target.index, (block) => paragraphWithFragments(block, introduction[index]));
+    if (introduction[index]) custom.set(target.index, (block) => setContentSpacing(paragraphWithFragments(block, introduction[index]), 0, 120));
     else replacements.set(target.index, "");
   });
+  if (strengthIntro >= 0) custom.set(strengthIntro, (block) => setContentSpacing(block, 0, 120));
 
   patchDomains(audience === "alunos" ? "O que está a correr bem?" : "Pontos fortes", audience === "alunos" ? "Os avaliadores identificaram também" : "Foram identificadas as seguintes áreas", content.pontosFortes);
   patchDomains(audience === "alunos" ? "O que pode melhorar?" : "Áreas de melhoria", audience === "alunos" ? "O Agrupamento dinamiza diversos projetos" : "O Agrupamento dinamiza uma variedade", content.areasMelhoria);

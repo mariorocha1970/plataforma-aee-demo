@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { parseQuestionnaires } from "../../questionnaire-parser";
 import { SIMPLIFIED_DOMAINS, validateGeneratedReport, type ValidatedReportStructure } from "../../validated-report-structure";
 
+const SIMPLIFIED_REPORT_VERSION = "2026.11.23-v37.1";
+
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
@@ -109,6 +111,8 @@ ${report}
     if (validationErrors.length) return NextResponse.json({ ok: false, error: `A resposta foi rejeitada antes da exportação por alterar a estrutura validada: ${validationErrors.join(" ")}` }, { status: 422 });
     generated.alunos.classificacoes = structure.classificacoes;
     generated.familias.classificacoes = structure.classificacoes;
+    generated.alunos.generation = { version: SIMPLIFIED_REPORT_VERSION, mode: "ai-validated" };
+    generated.familias.generation = { version: SIMPLIFIED_REPORT_VERSION, mode: "ai-validated" };
     return NextResponse.json({ ok: true, package: { ...generated, questionarios: questionnaireAnalysis }, questionnaireMode: "deterministic" });
   } catch (error) {
     return NextResponse.json({ ok: false, error: error instanceof Error ? error.message : "Erro interno na produção do pacote simplificado." }, { status: 500 });

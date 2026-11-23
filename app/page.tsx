@@ -5,7 +5,7 @@ import { normalizeAcronyms } from "./text-normalization";
 import { parseValidatedReportTables, SIMPLIFIED_DOMAINS, type ValidatedReportStructure } from "./validated-report-structure";
 
 const APP_BUILD = "2026.11.23-v38.4";
-const SIMPLIFIED_REPORT_VERSION = "2026.11.23-v39.2";
+const SIMPLIFIED_REPORT_VERSION = "2026.11.23-v39.3";
 const ANALYSIS_ENGINE_VERSION = 19;
 const MAIN_STORAGE_KEY = "aee-piloto-v2";
 const RECOVERY_DB_NAME = "plataforma-aee-recovery";
@@ -1965,7 +1965,7 @@ function localSimplifiedReport(text: string, audience: SimplifiedAudience): Simp
   const transform = (value: string, improvement = false) => audience === "alunos" ? simplifyForStudents(value) : improvement ? nominalizeImprovement(value) : value;
   const points = (source: Record<string, string[]>, improvement = false) => Object.fromEntries(simplifiedDomainNames.map((domain) => [domain, source[domain].length ? source[domain].map((item) => transform(item, improvement)) : [improvement ? "Não foram identificados aspetos específicos a melhorar neste domínio." : "Não foram identificados aspetos específicos a destacar neste domínio."]]));
   const body = reportSection(text, 5);
-  const projects = body.split(/\r?\n/).map(cleanSimplifiedItem).filter((line) => line.length > 15 && /\b(projeto|programa|clube|iniciativa|parceria|atividade|mentoria|assembleia|intercambio|voluntariado)\b/i.test(line)).filter((line, index, values) => values.findIndex((item) => normalizeText(item) === normalizeText(line)) === index).slice(0, 14).map((item) => transform(item));
+  const projects = body.split(/\r?\n/).map(cleanSimplifiedItem).filter((line) => line.length > 15 && /\b(projeto|programa|clube|iniciativa|parceria|atividade|mentoria|assembleia|intercambio|voluntariado|curso profissional|dupla certificacao|formacao pratica)\b/i.test(normalizeText(line))).filter((line, index, values) => values.findIndex((item) => normalizeText(item) === normalizeText(line)) === index).slice(0, 40).map((item) => transform(item));
   const familyRole = audience === "familias" ? body.split(/\r?\n/).map(cleanSimplifiedItem).filter((line) => line.length > 15 && /\b(familias?|pais|encarregados? de educacao|associacao de pais|escola-familia)\b/i.test(normalizeText(line))).filter((line, index, values) => values.findIndex((item) => normalizeText(item) === normalizeText(line)) === index).slice(0, 12) : [];
   const ratingsSection = reportSection(text, 2, 3);
   const ratingValues = ["Excelente", "Muito bom", "Bom", "Suficiente", "Insuficiente"];

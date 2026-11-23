@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { SIMPLIFIED_DOMAINS, validateGeneratedReport, type ValidatedReportStructure } from "../../validated-report-structure";
 
-const SIMPLIFIED_REPORT_VERSION = "2026.11.23-v38.7";
+const SIMPLIFIED_REPORT_VERSION = "2026.11.23-v38.8";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -11,7 +11,7 @@ const DOMAINS = SIMPLIFIED_DOMAINS;
 const domainMap = {
   type: "object",
   additionalProperties: false,
-  properties: Object.fromEntries(DOMAINS.map((domain) => [domain, { type: "array", items: { type: "string", maxLength: 220 } }])),
+  properties: Object.fromEntries(DOMAINS.map((domain) => [domain, { type: "array", items: { type: "string", maxLength: 170 } }])),
   required: DOMAINS,
 };
 const SCHEMA = {
@@ -21,8 +21,8 @@ const SCHEMA = {
     introducao: { type: "string" },
     pontosFortes: domainMap,
     areasMelhoria: domainMap,
-    projetosInteressantes: { type: "array", items: { type: "string", maxLength: 200 } },
-    papelFamilias: { type: "array", items: { type: "string", maxLength: 200 } },
+    projetosInteressantes: { type: "array", items: { type: "string", maxLength: 170 } },
+    papelFamilias: { type: "array", items: { type: "string", maxLength: 170 } },
     classificacoes: {
       type: "array",
       maxItems: 4,
@@ -65,7 +65,7 @@ export async function POST(request: NextRequest) {
 - Cada item de origem corresponde obrigatoriamente a um único bullet de destino, no mesmo domínio e na mesma posição.
 - Preserve todas as componentes essenciais do juízo de origem, incluindo práticas, destinatários, efeitos, reservas e dimensões como equidade, autonomia ou avaliação formativa. Simplificar a linguagem não autoriza reduzir o alcance do juízo.
 - Um bullet contém o juízo completo em uma ou, quando indispensável, duas frases curtas.
-- Redija bullets fortes e precisos. Como regra, cada bullet deve ter no máximo 180 caracteres para alunos e 210 para famílias; só ultrapasse ligeiramente quando isso for indispensável para não alterar o sentido.
+- Redija bullets fortes e precisos. Cada bullet deve ter no máximo 160 caracteres para alunos e 170 para famílias. Preserve a ideia central, a prática e o efeito essencial.
 - Elimine enumerações secundárias, explicações redundantes e fórmulas introdutórias. Preserve a ideia avaliativa central, a prática e o efeito essencial.
 - Não copie períodos completos do original; reformule.
 - Extraia as classificações apenas se estiverem explicitamente indicadas no ponto 2.

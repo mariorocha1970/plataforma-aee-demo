@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { SIMPLIFIED_DOMAINS, validateGeneratedReport, type ValidatedReportStructure } from "../../validated-report-structure";
 
-const SIMPLIFIED_REPORT_VERSION = "2026.11.23-v39.2";
+const SIMPLIFIED_REPORT_VERSION = "2026.11.23-v39.3";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -63,6 +63,7 @@ export async function POST(request: NextRequest) {
 - Inclua todos os pontos fortes do ponto 3 e todas as áreas de melhoria do ponto 4, sem os fundir de modo a perder ideias.
 - Use os quatro domínios, mesmo quando não existam elementos específicos; nesse caso declare expressamente a ausência.
 - Cada item de origem corresponde obrigatoriamente a um único bullet de destino, no mesmo domínio e na mesma posição.
+- Cada projeto, iniciativa, clube, parceria, atividade ou oferta formativa explicitamente referido nos pontos 2, 3, 4 ou 5 corresponde a um bullet de destino. Não selecione apenas uma amostra, não funda projetos distintos e não omita projetos por razões de síntese.
 - Preserve todas as componentes essenciais do juízo de origem, incluindo práticas, destinatários, efeitos, reservas e dimensões como equidade, autonomia ou avaliação formativa. Simplificar a linguagem não autoriza reduzir o alcance do juízo.
 - Um bullet contém o juízo completo em uma ou, quando indispensável, duas frases curtas.
 - Redija bullets fortes e precisos. Cada bullet deve ter no máximo 160 caracteres para alunos e 170 para famílias. Preserve a ideia central, a prática e o efeito essencial.
@@ -83,7 +84,7 @@ Cada bullet deve ser compreensível isoladamente por um aluno de 10 anos e não 
 Não use, sem explicação imediata em palavras comuns, expressões como «contratualização interna», «referenciais», «ecossistema digital», «monitorização sistemática», «mecanismos integrados», «paradigma de ensino», «supervisão pedagógica», «observação de pares», «metodologias ativas», «intencionalidade estratégica», «cocriação», «validação externa», «assimetrias» ou «resiliência».
 PONTOS FORTES: apresente como «O que está a correr bem», por domínio. Diga diretamente o que a escola faz bem e qual o efeito para os alunos.
 ÁREAS DE MELHORIA: apresente como «O que pode melhorar», por domínio. Diga claramente o que ainda não funciona bem ou precisa de ser reforçado, sem converter fragilidades em elogios nem escrever recomendações formais.
-PROJETOS INTERESSANTES: selecione apenas projetos, clubes, atividades, parcerias ou iniciativas referidos no relatório que envolvam alunos ou contribuam para aprendizagem, cidadania, inclusão ou bem-estar.
+PROJETOS INTERESSANTES: inclua todos os projetos, clubes, atividades, parcerias, iniciativas e ofertas formativas referidos no relatório que envolvam alunos ou contribuam para aprendizagem, cidadania, inclusão, bem-estar ou preparação para o mundo do trabalho. Um elemento de origem corresponde a um bullet; não selecione apenas alguns.
 Não trate o Projeto Educativo, relatórios, matrizes, órgãos, cargos ou procedimentos administrativos como projetos interessantes. Não inclua referências ao chefe da equipa de avaliação.
 PAPEL DAS FAMÍLIAS: devolva uma lista vazia, porque esta secção não integra a versão para alunos.`;
 
@@ -91,7 +92,7 @@ PAPEL DAS FAMÍLIAS: devolva uma lista vazia, porque esta secção não integra 
 Use frases curtas, vocabulário acessível e listas claras. Elimine linguagem técnica ou explique-a de forma simples.
 PONTOS FORTES: inclua os do ponto 3 e outros elementos positivos relevantes explicitamente referidos no ponto 5, organizados pelos quatro domínios.
 ÁREAS DE MELHORIA: inclua as do ponto 4 e outros elementos a melhorar explicitamente referidos no ponto 5. As frases não podem começar por verbos no infinitivo, para não assumirem a forma de recomendação.
-PROJETOS INTERESSANTES: identifique projetos, clubes, programas, iniciativas, parcerias e atividades mencionados no relatório.
+PROJETOS INTERESSANTES: identifique todos os projetos, clubes, programas, iniciativas, parcerias, atividades e ofertas formativas mencionados no relatório. Um elemento de origem corresponde a um bullet; não selecione apenas alguns nem funda elementos distintos.
 Não trate o Projeto Educativo, relatórios, matrizes, órgãos, cargos ou procedimentos administrativos como projetos interessantes. Não inclua referências ao chefe da equipa de avaliação.
 PAPEL DAS FAMÍLIAS: recolha apenas referências explícitas à participação das famílias, comunicação escola-família, associação de pais, acompanhamento dos alunos, reuniões, órgãos de participação ou iniciativas dirigidas aos pais.`;
 

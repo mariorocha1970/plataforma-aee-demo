@@ -3,7 +3,7 @@ import path from "node:path";
 import JSZip from "jszip";
 import sharp from "sharp";
 
-const SIMPLIFIED_REPORT_VERSION = "2026.11.23-v38.3";
+const SIMPLIFIED_REPORT_VERSION = "2026.11.23-v38.4";
 
 type Audience = "alunos" | "familias";
 type ReportContent = {
@@ -169,7 +169,7 @@ function setListSpacing(block: string, after: number) {
       .replace(/<w:pStyle\b[^>]*\/>/g, "")
       .replace(/<w:spacing\b[^>]*\/>/g, "")
       .replace(/<w:tabs>[\s\S]*?<\/w:tabs>/g, "")
-      .replace(/<w:(?:contextualSpacing|pageBreakBefore|keepLines)\b[^>]*\/>/g, "");
+      .replace(/<w:(?:contextualSpacing|pageBreakBefore|keepLines|keepNext)\b[^>]*\/>/g, "");
     return `<w:pPr>${clean}${spacing}</w:pPr>`;
   });
   return block.replace(/(<w:p(?:\s[^>]*)?>)/, `$1<w:pPr>${spacing}</w:pPr>`);
@@ -239,6 +239,64 @@ function separateTextAndCharts(block: string) {
   const withoutCharts = block.replace(/<w:r(?:\s[^>]*)?>[\s\S]*?<\/w:r>/g, (run) => /<c:chart\b/.test(run) ? "" : run);
   const chartOnly = block.replace(/<w:r(?:\s[^>]*)?>[\s\S]*?<\/w:r>/g, (run) => /<c:chart\b/.test(run) ? run : "");
   return `${withoutCharts}${chartOnly}`;
+}
+
+function chartsInDocumentFlow(xml: string, audience: Audience) {
+  // Os templates antigos podiam guardar texto e gráficos no mesmo parágrafo,
+  // usando coordenadas para os mostrar por outra ordem. Separe-os antes de
+  // normalizar o fluxo, para que o texto introdutório fique sempre primeiro.
+  xml = xml.replace(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g, separateTextAndCharts);
+  const inlineAnchor = (anchor: string) => {
+    if (!/<c:chart\b/.test(anchor)) return anchor;
+    // Preserve integralmente o desenho e a relação do gráfico. Alterar apenas
+    // o contentor evita perder o <a:graphic> quando o Word acrescenta atributos
+    // ou namespaces próprios ao template.
+    return anchor
+      .replace(/^<wp:anchor\b[^>]*>/, '<wp:inline distT="0" distB="0" distL="0" distR="0">')
+      .replace(/<wp:simplePos\b[^>]*\/>/g, "")
+      .replace(/<wp:positionH\b[\s\S]*?<\/wp:positionH>/g, "")
+      .replace(/<wp:positionV\b[\s\S]*?<\/wp:positionV>/g, "")
+      .replace(/<wp:wrap(?:None|Square|Tight|Through|TopAndBottom)\b[^>]*\/>/g, "")
+      .replace(/<wp:wrap(?:Square|Tight|Through|TopAndBottom)\b[\s\S]*?<\/wp:wrap(?:Square|Tight|Through|TopAndBottom)>/g, "")
+      .replace(/<wp:relativeHeight\b[^>]*\/>/g, "")
+      .replace(/<wp:behindDoc\b[^>]*\/>/g, "")
+      .replace(/<wp:layoutInCell\b[^>]*\/>/g, "")
+      .replace(/<wp:allowOverlap\b[^>]*\/>/g, "")
+      .replace(/<wp:lockedCanvas\b[^>]*\/>/g, "")
+      .replace(/<\/wp:anchor>$/, "</wp:inline>");
+  };
+  let converted = xml.replace(/<wp:anchor\b[\s\S]*?<\/wp:anchor>/g, inlineAnchor);
+  // No template dos alunos, o texto explicativo estava visualmente colocado
+  // antes dos gráficos através de coordenadas flutuantes, apesar de surgir
+  // depois deles na ordem XML. Em fluxo normal, a ordem tem de ser explícita.
+  if (audience === "alunos") {
+    const blocks = converted.match(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g) || [];
+    const introIndex = blocks.findIndex((block) => normalize(paragraphText(block)).includes(normalize("Através dos questionários respondidos pelos alunos")));
+    const firstChartIndex = blocks.findIndex((block) => /<c:chart\b/.test(block));
+    if (introIndex > firstChartIndex && firstChartIndex >= 0) {
+      const [intro] = blocks.splice(introIndex, 1);
+      blocks.splice(firstChartIndex, 0, intro);
+      let cursor = 0;
+      converted = converted.replace(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g, () => blocks[cursor++]);
+    }
+  }
+  let chartsSeen = 0;
+  return converted.replace(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g, (block) => {
+    if (!/<c:chart\b/.test(block)) return block;
+    const chartsInBlock = (block.match(/<c:chart\b/g) || []).length;
+    const startsSecondChartPage = chartsSeen === 2;
+    if (audience === "familias" && chartsSeen >= 2) {
+      block = block.replace(/(<(?:wp|a):extent\b[^>]*\bcy=")(\d+)(")/g, (_match, start, value, end) => `${start}${Math.round(Number(value) * 0.52)}${end}`);
+    }
+    chartsSeen += chartsInBlock;
+    const spacing = `<w:spacing w:before="80" w:after="120" w:line="240" w:lineRule="auto"/><w:jc w:val="center"/>${startsSecondChartPage ? '<w:pageBreakBefore/>' : ''}`;
+    if (/<w:pPr>/.test(block)) return block.replace(/<w:pPr>([\s\S]*?)<\/w:pPr>/, (_match, inner) => `<w:pPr>${inner
+      .replace(/<w:spacing\b[^>]*\/>/g, "")
+      .replace(/<w:tabs>[\s\S]*?<\/w:tabs>/g, "")
+      .replace(/<w:jc\b[^>]*\/>/g, "")
+      .replace(/<w:(?:pageBreakBefore|keepNext|keepLines|contextualSpacing)\b[^>]*\/>/g, "")}${spacing}</w:pPr>`);
+    return block.replace(/(<w:p(?:\s[^>]*)?>)/, `$1<w:pPr>${spacing}</w:pPr>`);
+  });
 }
 
 
@@ -335,14 +393,16 @@ function patchDocumentXml(xml: string, audience: Audience, school: string, conte
   const projectsHeading = find(audience === "alunos" ? "Projetos interessantes" : "Projetos");
   const projectsEnd = audience === "alunos" ? findIncludes("Através dos questionários respondidos pelos alunos", projectsHeading) : findIncludes("O Agrupamento reconhece e valoriza", projectsHeading);
   if (projectsHeading >= 0 && projectsEnd > projectsHeading) fillRange(projectsHeading, projectsEnd, content.projetosInteressantes || []);
+  if (projectsEnd >= 0) custom.set(projectsEnd, (block) => setPageBreakBefore(setContentSpacing(block, 120, 120)));
   if (audience === "familias") {
     const familyHeading = find("Valorização do papel dos pais na vida escolar");
     const familyEnd = findIncludes("Através dos questionários aplicados aos pais", familyHeading);
     if (familyHeading >= 0 && familyEnd > familyHeading) fillRange(familyHeading, familyEnd, content.papelFamilias || []);
+    if (familyEnd >= 0) custom.set(familyEnd, (block) => setPageBreakBefore(setContentSpacing(block, 120, 120)));
   }
 
   const ratingIntro = findIncludes("Considerando uma escala de avaliação de cinco níveis");
-  if (ratingIntro >= 0 && audience === "alunos") custom.set(ratingIntro, (block) => addSpacingBefore(block, 900));
+  if (ratingIntro >= 0) custom.set(ratingIntro, (block) => setContentSpacing(block, 120, 120));
   if (ratingIntro >= 0) {
     for (const rating of content.classificacoes || []) {
       const domainIndex = findAfterAny([rating.dominio, rating.dominio.replace("Gestão", "gestão").replace("Serviço", "serviço")], ratingIntro);
@@ -430,7 +490,7 @@ export async function buildTemplateReport(args: { audience: Audience; school: st
     documentRels = documentRels.replace("</Relationships>", `<Relationship Id="${igecRelationshipId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="${escapeXml(igecUrl)}" TargetMode="External"/></Relationships>`);
     zip.file(relPath, documentRels);
   }
-  zip.file(documentPath, patchDocumentXml(documentXml, args.audience, args.school, args.content, args.sourceReport || "", igecRelationshipId, args.metadata));
+  zip.file(documentPath, chartsInDocumentFlow(patchDocumentXml(documentXml, args.audience, args.school, args.content, args.sourceReport || "", igecRelationshipId, args.metadata), args.audience));
   for (const name of Object.keys(zip.files).filter((value) => /^word\/(?:header|footer)\d+\.xml$/i.test(value))) {
     const file = zip.file(name);
     if (file) zip.file(name, patchSchoolReferences(await file.async("string"), args.school));

@@ -3,7 +3,7 @@ import path from "node:path";
 import JSZip from "jszip";
 import sharp from "sharp";
 
-const SIMPLIFIED_REPORT_VERSION = "2026.11.23-v38.1";
+const SIMPLIFIED_REPORT_VERSION = "2026.11.23-v38.2";
 
 type Audience = "alunos" | "familias";
 type ReportContent = {
@@ -177,7 +177,17 @@ function setContentSpacing(block: string, before = 0, after = 120) {
 }
 
 function setDomainHeadingSpacing(block: string) {
-  return setContentSpacing(block, 160, 80).replace(/<w:pPr>([\s\S]*?)<\/w:pPr>/, (_match, inner) => `<w:pPr>${inner}<w:keepNext/></w:pPr>`);
+  // O estilo Título 2 dos templates inclui "quebra de página antes".
+  // Retira-se a associação ao estilo e preserva-se a formatação direta do
+  // próprio parágrafo, evitando que o primeiro domínio salte para outra página.
+  return setContentSpacing(block, 160, 80)
+    .replace(/<w:pStyle\b[^>]*\/>/g, "")
+    .replace(/<w:pPr>([\s\S]*?)<\/w:pPr>/, (_match, inner) => `<w:pPr>${inner}<w:keepNext/></w:pPr>`);
+}
+
+function isStructurallyEmptyParagraph(block: string) {
+  return !paragraphText(block).trim()
+    && !/<(?:w:drawing|w:pict|w:object|c:chart|v:shape|wp:anchor|wp:inline)\b/.test(block);
 }
 
 function explicitBulletParagraph(block: string, value: string, spacingAfter: number) {
@@ -233,6 +243,12 @@ function patchDocumentXml(xml: string, audience: Audience, school: string, conte
   const nonEmptyBetween = (start: number, end: number) => items.filter((item) => item.index > start && item.index < end && item.text.trim());
   const fillRange = (start: number, end: number, values: string[]) => {
     const targets = nonEmptyBetween(start, end);
+    // Os templates contêm parágrafos vazios usados como espaçadores manuais.
+    // Depois de preencher listas com dimensão variável, esses parágrafos criam
+    // grandes áreas brancas. Eliminam-se apenas os que não contêm desenhos,
+    // tabelas, gráficos ou outros objetos.
+    items.filter((item) => item.index > start && item.index < end && isStructurallyEmptyParagraph(item.block))
+      .forEach((item) => custom.set(item.index, () => ""));
     const clean = values.map((value) => String(value || "").replace(/^\s*[•·▪-]\s*/, "").trim()).filter(Boolean);
     // Um único padrão para todos os itens: 1,15 linhas e 6 pt depois.
     // A paginação deve resultar do fluxo do texto, não de espaçamentos

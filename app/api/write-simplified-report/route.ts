@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { SIMPLIFIED_DOMAINS, validateGeneratedReport, type ValidatedReportStructure } from "../../validated-report-structure";
 
-const SIMPLIFIED_REPORT_VERSION = "2026.11.23-v38.4";
+const SIMPLIFIED_REPORT_VERSION = "2026.11.23-v38.5";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -65,6 +65,8 @@ export async function POST(request: NextRequest) {
 - Cada item de origem corresponde obrigatoriamente a um único bullet de destino, no mesmo domínio e na mesma posição.
 - Preserve todas as componentes essenciais do juízo de origem, incluindo práticas, destinatários, efeitos, reservas e dimensões como equidade, autonomia ou avaliação formativa. Simplificar a linguagem não autoriza reduzir o alcance do juízo.
 - Um bullet contém o juízo completo em uma ou, quando indispensável, duas frases curtas.
+- Redija bullets fortes e precisos. Como regra, cada bullet deve ter no máximo 180 caracteres para alunos e 210 para famílias; só ultrapasse ligeiramente quando isso for indispensável para não alterar o sentido.
+- Elimine enumerações secundárias, explicações redundantes e fórmulas introdutórias. Preserve a ideia avaliativa central, a prática e o efeito essencial.
 - Não copie períodos completos do original; reformule.
 - Extraia as classificações apenas se estiverem explicitamente indicadas no ponto 2.
 - Escreva em português europeu.`;

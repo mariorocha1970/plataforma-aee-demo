@@ -3,7 +3,7 @@ import path from "node:path";
 import JSZip from "jszip";
 import sharp from "sharp";
 
-const SIMPLIFIED_REPORT_VERSION = "2026.11.23-v38.5";
+const SIMPLIFIED_REPORT_VERSION = "2026.11.23-v38.6";
 
 type Audience = "alunos" | "familias";
 type ReportContent = {
@@ -78,6 +78,21 @@ function paragraphWithIgecLink(block: string, relationshipId: string) {
   const hyperlink = `<w:hyperlink r:id="${relationshipId}" w:history="1"><w:r>${linkRPr}<w:t>página da IGEC</w:t></w:r></w:hyperlink>`;
   const period = `<w:r>${staticRPr}<w:t>.</w:t></w:r>`;
   return block.replace(/(<w:p(?:\s[^>]*)?>)[\s\S]*?(<\/w:p>)/, `$1${pPr}${staticRun}${hyperlink}${period}$2`);
+}
+
+function closingParagraphWithIgecLink(block: string, relationshipId: string) {
+  const pPr = block.match(/<w:pPr>[\s\S]*?<\/w:pPr>/)?.[0] || "";
+  const firstRPr = block.match(/<w:rPr>[\s\S]*?<\/w:rPr>/)?.[0] || "<w:rPr/>";
+  const value = paragraphText(block).trim();
+  const marker = /página da IGEC/i.exec(value);
+  if (!marker) return block;
+  const before = value.slice(0, marker.index);
+  const label = value.slice(marker.index, marker.index + marker[0].length);
+  const after = value.slice(marker.index + marker[0].length);
+  const linkRPr = firstRPr.replace(/<w:color\b[^>]*\/>/g, "").replace(/<\/w:rPr>/, '<w:color w:val="FFFFFF"/><w:u w:val="single"/></w:rPr>').replace("<w:rPr/>", '<w:rPr><w:color w:val="FFFFFF"/><w:u w:val="single"/></w:rPr>');
+  const run = (text: string) => `<w:r>${firstRPr}<w:t xml:space="preserve">${escapeXml(text)}</w:t></w:r>`;
+  const hyperlink = `<w:hyperlink r:id="${relationshipId}" w:history="1"><w:r>${linkRPr}<w:t>${escapeXml(label)}</w:t></w:r></w:hyperlink>`;
+  return block.replace(/(<w:p(?:\s[^>]*)?>)[\s\S]*?(<\/w:p>)/, `$1${pPr}${run(before)}${hyperlink}${run(after)}$2`);
 }
 
 function extractSchoolMeta(sourceReport: string): SchoolMeta {
@@ -303,13 +318,24 @@ function chartsInDocumentFlow(xml: string, audience: Audience) {
       block = block.replace(/(<(?:wp|a):extent\b[^>]*\bcy=")(\d+)(")/g, (_match, start, value, end) => `${start}${Math.round(Number(value) * 0.68)}${end}`);
     }
     chartsSeen += chartsInBlock;
-    const spacing = `<w:spacing w:before="160" w:after="200" w:line="240" w:lineRule="auto"/><w:jc w:val="center"/>${startsSecondChartPage ? '<w:pageBreakBefore/>' : ''}`;
+    const before = chartsSeen > 2 ? 40 : 160;
+    const after = chartsSeen > 2 ? 60 : 200;
+    const spacing = `<w:spacing w:before="${before}" w:after="${after}" w:line="240" w:lineRule="auto"/><w:jc w:val="center"/>${startsSecondChartPage ? '<w:pageBreakBefore/>' : ''}`;
     if (/<w:pPr>/.test(block)) return block.replace(/<w:pPr>([\s\S]*?)<\/w:pPr>/, (_match, inner) => `<w:pPr>${inner
       .replace(/<w:spacing\b[^>]*\/>/g, "")
       .replace(/<w:tabs>[\s\S]*?<\/w:tabs>/g, "")
       .replace(/<w:jc\b[^>]*\/>/g, "")
       .replace(/<w:(?:pageBreakBefore|keepNext|keepLines|contextualSpacing)\b[^>]*\/>/g, "")}${spacing}</w:pPr>`);
     return block.replace(/(<w:p(?:\s[^>]*)?>)/, `$1<w:pPr>${spacing}</w:pPr>`);
+  });
+}
+
+function compactRatingTable(xml: string) {
+  return xml.replace(/<w:tbl>[\s\S]*?<\/w:tbl>/g, (table) => {
+    const plain = normalize(paragraphText(table));
+    if (!plain.includes(normalize("Autoavaliação")) || !plain.includes(normalize("Prestação do serviço educativo")) || !plain.includes(normalize("Resultados"))) return table;
+    let row = 0;
+    return table.replace(/<w:trHeight\b[^>]*\/>/g, () => `<w:trHeight w:val="${row++ === 0 ? 360 : 420}"/>`);
   });
 }
 
@@ -407,16 +433,17 @@ function patchDocumentXml(xml: string, audience: Audience, school: string, conte
   const projectsHeading = find(audience === "alunos" ? "Projetos interessantes" : "Projetos");
   const projectsEnd = audience === "alunos" ? findIncludes("Através dos questionários respondidos pelos alunos", projectsHeading) : findIncludes("O Agrupamento reconhece e valoriza", projectsHeading);
   if (projectsHeading >= 0 && projectsEnd > projectsHeading) fillRange(projectsHeading, projectsEnd, content.projetosInteressantes || []);
-  if (projectsEnd >= 0) custom.set(projectsEnd, (block) => setContentSpacing(block, 160, 120));
+  if (projectsEnd >= 0) custom.set(projectsEnd, (block) => setPageBreakBefore(setContentSpacing(block, 160, 120)));
   if (audience === "familias") {
     const familyHeading = find("Valorização do papel dos pais na vida escolar");
     const familyEnd = findIncludes("Através dos questionários aplicados aos pais", familyHeading);
     if (familyHeading >= 0 && familyEnd > familyHeading) fillRange(familyHeading, familyEnd, content.papelFamilias || []);
-    if (familyEnd >= 0) custom.set(familyEnd, (block) => setContentSpacing(block, 160, 120));
+    if (familyHeading >= 0) custom.set(familyHeading, (block) => setContentSpacing(block, 160, 80));
+    if (familyEnd >= 0) custom.set(familyEnd, (block) => setPageBreakBefore(setContentSpacing(block, 160, 120)));
   }
 
   const ratingIntro = findIncludes("Considerando uma escala de avaliação de cinco níveis");
-  if (ratingIntro >= 0) custom.set(ratingIntro, (block) => setContentSpacing(block, 120, 120));
+  if (ratingIntro >= 0) custom.set(ratingIntro, (block) => setContentSpacing(block, 40, 60));
   if (ratingIntro >= 0) {
     for (const rating of content.classificacoes || []) {
       const domainIndex = findAfterAny([rating.dominio, rating.dominio.replace("Gestão", "gestão").replace("Serviço", "serviço")], ratingIntro);
@@ -425,8 +452,11 @@ function patchDocumentXml(xml: string, audience: Audience, school: string, conte
     }
   }
 
-  const igecReference = items.find((item) => /igec\.mec\.pt\/content_01\.asp/i.test(item.text));
-  if (igecReference) custom.set(igecReference.index, (block) => setContentSpacing(paragraphWithIgecLink(block, igecRelationshipId), 160, 0));
+  const igecReference = items.find((item) => /(?:relatório detalhado|podes consultar o relatório)/i.test(item.text))
+    || items.find((item) => /igec\.mec\.pt\/content_01\.asp/i.test(item.text));
+  if (igecReference) custom.set(igecReference.index, (block) => setContentSpacing(closingParagraphWithIgecLink(block, igecRelationshipId), 40, 0).replace(/<w:pStyle\b[^>]*\/>/g, ""));
+  const igecExplanation = items.find((item) => /^Recolhemos evidências para nos permitir avaliar/i.test(item.text));
+  if (igecExplanation) custom.set(igecExplanation.index, (block) => setContentSpacing(paragraphWithIgecLink(block, igecRelationshipId), 40, 60));
 
   // Referências textuais à escola no fecho e na avaliação.
   items.forEach((item) => {
@@ -455,7 +485,7 @@ function cachePoints(values: Array<string | number>, numeric: boolean) {
   return `<c:ptCount val="${values.length}"/>${values.map((value, index) => `<c:pt idx="${index}"><c:v>${numeric ? Number(value) : escapeXml(String(value))}</c:v></c:pt>`).join("")}`;
 }
 
-function patchChartXml(xml: string, items: Array<{ item: string; total: number }>) {
+function patchChartXml(xml: string, items: Array<{ item: string; total: number }>, chartNumber: number) {
   const categories = cachePoints(items.map((item) => item.item), false);
   const values = `<c:formatCode>0.0</c:formatCode>${cachePoints(items.map((item) => item.total), true)}`;
   let patched = xml
@@ -468,6 +498,7 @@ function patchChartXml(xml: string, items: Array<{ item: string; total: number }
     patched = patched.replace(/<c:max val="[^"]+"\/>/, `<c:max val="${maximum}"/>`);
     if (!/<c:max val=/.test(patched)) patched = patched.replace(/<c:scaling>/, `<c:scaling><c:max val="${maximum}"/>`);
     if (!/<c:min val=/.test(patched)) patched = patched.replace(/<c:scaling>/, '<c:scaling><c:min val="0"/>');
+    if (chartNumber === 4) patched = patched.replace(/<c:gapWidth val="[^"]+"\/>/, '<c:gapWidth val="92"/>');
   }
   return patched;
 }
@@ -504,7 +535,7 @@ export async function buildTemplateReport(args: { audience: Audience; school: st
     documentRels = documentRels.replace("</Relationships>", `<Relationship Id="${igecRelationshipId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="${escapeXml(igecUrl)}" TargetMode="External"/></Relationships>`);
     zip.file(relPath, documentRels);
   }
-  zip.file(documentPath, chartsInDocumentFlow(patchDocumentXml(documentXml, args.audience, args.school, args.content, args.sourceReport || "", igecRelationshipId, args.metadata), args.audience));
+  zip.file(documentPath, compactRatingTable(chartsInDocumentFlow(patchDocumentXml(documentXml, args.audience, args.school, args.content, args.sourceReport || "", igecRelationshipId, args.metadata), args.audience)));
   for (const name of Object.keys(zip.files).filter((value) => /^word\/(?:header|footer)\d+\.xml$/i.test(value))) {
     const file = zip.file(name);
     if (file) zip.file(name, patchSchoolReferences(await file.async("string"), args.school));
@@ -519,7 +550,7 @@ export async function buildTemplateReport(args: { audience: Audience; school: st
     const chartPath = `word/charts/chart${chartNumber}.xml`;
     const chart = zip.file(chartPath);
     if (chart && Array.isArray(group?.[field])) {
-      zip.file(chartPath, patchChartXml(await chart.async("string"), group[field]));
+      zip.file(chartPath, patchChartXml(await chart.async("string"), group[field], chartNumber));
       const chartRelsPath = `word/charts/_rels/chart${chartNumber}.xml.rels`;
       const chartRels = zip.file(chartRelsPath);
       if (chartRels) {

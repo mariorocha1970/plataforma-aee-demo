@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { SIMPLIFIED_DOMAINS, validateGeneratedReport, type ValidatedReportStructure } from "../../validated-report-structure";
 
+const SIMPLIFIED_REPORT_VERSION = "2026.11.23-v37.1";
+
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -123,6 +125,7 @@ ${report}
     const validationErrors = validateGeneratedReport(content, structure);
     if (validationErrors.length) return NextResponse.json({ ok: false, error: `A resposta foi rejeitada antes da exportação por alterar a estrutura validada: ${validationErrors.join(" ")}` }, { status: 422 });
     content.classificacoes = structure.classificacoes;
+    content.generation = { version: SIMPLIFIED_REPORT_VERSION, mode: "ai-validated" };
     return NextResponse.json({ ok: true, audience, content });
   } catch (error) {
     return NextResponse.json({ ok: false, error: error instanceof Error ? error.message : "Erro interno na redação do relatório simplificado." }, { status: 500 });

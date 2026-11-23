@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { SIMPLIFIED_DOMAINS, validateGeneratedReport, type ValidatedReportStructure } from "../../validated-report-structure";
 
-const SIMPLIFIED_REPORT_VERSION = "2026.11.23-v37.1";
+const SIMPLIFIED_REPORT_VERSION = "2026.11.23-v38";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";

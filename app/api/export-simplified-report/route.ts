@@ -1,5 +1,7 @@
 import { buildTemplateReport } from "../../template-docx";
 
+const SIMPLIFIED_REPORT_VERSION = "2026.11.23-v37.1";
+
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
@@ -12,6 +14,9 @@ export async function POST(request: Request) {
   try {
     const form = await request.formData();
     const content = JSON.parse(String(form.get("content") || "{}"));
+    if (content?.generation?.version !== SIMPLIFIED_REPORT_VERSION || content?.generation?.mode !== "ai-validated") {
+      return new Response("Exportação bloqueada: gere novamente o relatório simplificado com o motor institucional atual.", { status: 409 });
+    }
     const analysis = JSON.parse(String(form.get("questionnaireAnalysis") || "{}"));
     const sourceReport = String(form.get("sourceReport") || "");
     const metadata = JSON.parse(String(form.get("reportMetadata") || "{}"));

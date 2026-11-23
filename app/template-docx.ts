@@ -3,7 +3,7 @@ import path from "node:path";
 import JSZip from "jszip";
 import sharp from "sharp";
 
-const SIMPLIFIED_REPORT_VERSION = "2026.11.23-v39.2";
+const SIMPLIFIED_REPORT_VERSION = "2026.11.23-v39.3";
 const BODY_FONT_HALF_POINTS = 20;
 const BODY_LINE_TWIPS = 276;
 const BODY_PARAGRAPH_AFTER_TWIPS = 60;
@@ -363,18 +363,18 @@ function chartsInDocumentFlow(xml: string, audience: Audience) {
     // A quebra fixa antes do terceiro gráfico impedia esse ajuste e, com as
     // linhas de 1 cm na tabela final, originava uma sétima página. Nos alunos,
     // o quarto gráfico inicia a página final para equilibrar a composição.
-    const startsSecondChartPage = (audience === "familias" && chartsSeen === 2)
+    const startsSecondChartPage = (audience === "familias" && (chartsSeen === 1 || chartsSeen === 3))
       || (audience === "alunos" && chartsSeen === 3);
-    if (audience === "familias" && chartsSeen >= 2) {
-      // Compactação moderada apenas nos dois gráficos finais: preserva a
-      // leitura e evita que o quadro de classificações seja dividido.
-      // A tabela final passou a ter cinco linhas de 1 cm. Para conservar as
-      // seis páginas das famílias sem dividir a tabela, o gráfico vertical é
-      // mais compacto; o gráfico horizontal mantém maior altura para garantir
-      // a leitura das afirmações.
-      const heightFactor = chartsSeen === 3 ? 0.86 : 0.62;
+    if (audience === "familias") {
+      // Os três primeiros gráficos ocupam a página 5. O penúltimo conserva
+      // altura suficiente para leitura e o último inicia a página 6, onde fica
+      // acompanhado da síntese e da tabela de classificações.
+      const heightFactor = chartsSeen === 0 ? 0.72 : 0.90;
       block = block.replace(/(<(?:wp|a):extent\b[^>]*\bcy=")(\d+)(")/g, (_match, start, value, end) => `${start}${Math.round(Number(value) * heightFactor)}${end}`);
     }
+    // Gráficos, tabela de classificações e faixa final partilham a mesma
+    // largura útil (9638 twips = 6 120 130 EMU), garantindo alinhamento.
+    block = block.replace(/(<(?:wp|a):extent\b[^>]*\bcx=")(\d+)(")/g, (_match, start, _value, end) => `${start}6120130${end}`);
     chartsSeen += chartsInBlock;
     const before = chartsSeen > 2 ? 20 : 160;
     const after = chartsSeen > 2 ? 20 : 200;
@@ -413,7 +413,10 @@ function closingBannerInDocumentFlow(xml: string) {
     // Em documentos mais densos o Word empurrava-a isoladamente para uma nova
     // página. Em fluxo normal ocupa apenas o espaço real imediatamente após o
     // quadro de classificações.
-    closingTable = table.replace(/<w:tblpPr\b[^>]*\/>/g, "");
+    closingTable = table.replace(/<w:tblpPr\b[^>]*\/>/g, "")
+      .replace(/<w:tblW\b[^>]*\/>/, '<w:tblW w:w="9638" w:type="dxa"/>')
+      .replace(/<w:gridCol\b[^>]*\/>/g, '<w:gridCol w:w="9638"/>')
+      .replace(/<w:tcW\b[^>]*\/>/g, '<w:tcW w:w="9638" w:type="dxa"/>');
     return closingTable;
   });
   if (!closingTable) return converted;
@@ -431,7 +434,7 @@ function closingBannerInDocumentFlow(xml: string) {
   // Separação curta e explícita entre a tabela de classificações e a faixa
   // final. Não se usa um parágrafo vazio do template, porque a sua altura
   // varia entre Word e LibreOffice e pode originar uma página adicional.
-  const separator = '<w:p><w:pPr><w:spacing w:before="0" w:after="20" w:line="20" w:lineRule="exact"/><w:rPr><w:sz w:val="2"/><w:szCs w:val="2"/></w:rPr></w:pPr></w:p>';
+  const separator = '<w:p><w:pPr><w:spacing w:before="0" w:after="100" w:line="20" w:lineRule="exact"/><w:rPr><w:sz w:val="2"/><w:szCs w:val="2"/></w:rPr></w:pPr></w:p>';
   return prefix + separator + suffix;
 }
 
@@ -548,7 +551,11 @@ function patchDocumentXml(xml: string, audience: Audience, school: string, conte
   const projectsHeading = find(audience === "alunos" ? "Projetos interessantes" : "Projetos");
   const projectsEnd = audience === "alunos" ? findIncludes("Através dos questionários respondidos pelos alunos", projectsHeading) : findIncludes("O Agrupamento reconhece e valoriza", projectsHeading);
   if (projectsHeading >= 0 && projectsEnd > projectsHeading) fillRange(projectsHeading, projectsEnd, content.projetosInteressantes || []);
-  if (audience === "familias" && projectsHeading >= 0) custom.set(projectsHeading, setPageBreakBefore);
+  if (audience === "familias" && projectsHeading >= 0) {
+    custom.set(projectsHeading, clearPageBreakBefore);
+    const projectsIntroduction = items.filter((item) => item.index < projectsHeading && item.text.trim()).at(-1);
+    if (projectsIntroduction) custom.set(projectsIntroduction.index, (block) => setPageBreakBefore(setKeepNext(setBodyParagraph(block))));
+  }
   // O template dos alunos já contém uma quebra estrutural antes dos gráficos.
   // Acrescentar outra ao parágrafo introdutório criava uma página totalmente
   // vazia depois de este parágrafo ser reposicionado no fluxo documental.
@@ -558,7 +565,11 @@ function patchDocumentXml(xml: string, audience: Audience, school: string, conte
     const familyEnd = findIncludes("Através dos questionários aplicados aos pais", familyHeading);
     if (familyHeading >= 0 && familyEnd > familyHeading) fillRange(familyHeading, familyEnd, content.papelFamilias || []);
     if (familyHeading >= 0) custom.set(familyHeading, (block) => setContentSpacing(block, 160, 80));
-    if (familyEnd >= 0) custom.set(familyEnd, (block) => setPageBreakBefore(setKeepNext(setBodyParagraph(block, 120))));
+    // Aproveita o espaço livre depois dos projetos e da participação das
+    // famílias. Assim, a introdução e o primeiro gráfico podem começar nesta
+    // página, deixando apenas dois gráficos na página seguinte e evitando que
+    // o penúltimo seja comprimido até perder legibilidade.
+    if (familyEnd >= 0) custom.set(familyEnd, (block) => clearPageBreakBefore(setKeepNext(setBodyParagraph(block, 120))));
   }
 
   const ratingIntro = findIncludes("Considerando uma escala de avaliação de cinco níveis");
@@ -577,7 +588,7 @@ function patchDocumentXml(xml: string, audience: Audience, school: string, conte
     setContentSpacing(closingParagraphWithIgecLink(block, igecRelationshipId), 0, 0)
       .replace(/<w:pStyle\b[^>]*\/>/g, "")
       .replace(/<w:(?:keepNext|keepLines|pageBreakBefore)\b[^>]*\/>/g, ""),
-    17,
+    BODY_FONT_HALF_POINTS,
   ));
   const igecExplanation = items.find((item) => /^Recolhemos evidências para nos permitir avaliar/i.test(item.text));
   if (igecExplanation) custom.set(igecExplanation.index, (block) => setBodyParagraph(paragraphWithIgecLink(block, igecRelationshipId), 20, 20));

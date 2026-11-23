@@ -3,7 +3,7 @@ import path from "node:path";
 import JSZip from "jszip";
 import sharp from "sharp";
 
-const SIMPLIFIED_REPORT_VERSION = "2026.11.23-v38.7";
+const SIMPLIFIED_REPORT_VERSION = "2026.11.23-v38.8";
 
 type Audience = "alunos" | "familias";
 type ReportContent = {
@@ -170,15 +170,25 @@ function clearListMarker(block: string) {
 }
 
 function alignListParagraph(block: string) {
-  const indentation = '<w:ind w:left="540" w:hanging="300"/>';
+  const indentation = '<w:ind w:left="420" w:hanging="260"/>';
   if (/<w:pPr>/.test(block)) {
-    return block.replace(/<w:pPr>([\s\S]*?)<\/w:pPr>/, (_match, inner) => `<w:pPr>${/<w:ind\b[^>]*\/>/.test(inner) ? inner.replace(/<w:ind\b[^>]*\/>/, indentation) : `${inner}${indentation}`}</w:pPr>`);
+    return block.replace(/<w:pPr>([\s\S]*?)<\/w:pPr>/, (_match, inner) => {
+      const aligned = inner.replace(/<w:jc\b[^>]*\/>/g, "");
+      return `<w:pPr>${/<w:ind\b[^>]*\/>/.test(aligned) ? aligned.replace(/<w:ind\b[^>]*\/>/, indentation) : `${aligned}${indentation}`}<w:jc w:val="left"/></w:pPr>`;
+    });
   }
-  return block.replace(/(<w:p(?:\s[^>]*)?>)/, `$1<w:pPr>${indentation}</w:pPr>`);
+  return block.replace(/(<w:p(?:\s[^>]*)?>)/, `$1<w:pPr>${indentation}<w:jc w:val="left"/></w:pPr>`);
+}
+
+function setParagraphFontSize(block: string, halfPoints: number) {
+  return block.replace(/<w:rPr>([\s\S]*?)<\/w:rPr>/g, (_match, inner) => {
+    const clean = inner.replace(/<w:sz(?:Cs)?\b[^>]*\/>/g, "");
+    return `<w:rPr>${clean}<w:sz w:val="${halfPoints}"/><w:szCs w:val="${halfPoints}"/></w:rPr>`;
+  });
 }
 
 function setListSpacing(block: string, after: number) {
-  const spacing = `<w:spacing w:before="0" w:after="${after}" w:line="276" w:lineRule="auto"/>`;
+  const spacing = `<w:spacing w:before="0" w:after="${after}" w:line="220" w:lineRule="auto"/>`;
   if (/<w:pPr>/.test(block)) return block.replace(/<w:pPr>([\s\S]*?)<\/w:pPr>/, (_match, inner) => {
     const clean = inner
       .replace(/<w:pStyle\b[^>]*\/>/g, "")
@@ -214,7 +224,7 @@ function setDomainHeadingSpacing(block: string) {
   // O estilo Título 2 dos templates inclui "quebra de página antes".
   // Retira-se a associação ao estilo e preserva-se a formatação direta do
   // próprio parágrafo, evitando que o primeiro domínio salte para outra página.
-  return setContentSpacing(block, 100, 40)
+  return setContentSpacing(block, 60, 20)
     .replace(/<w:pStyle\b[^>]*\/>/g, "")
     .replace(/<w:pPr>([\s\S]*?)<\/w:pPr>/, (_match, inner) => `<w:pPr>${inner}<w:keepNext/></w:pPr>`);
 }
@@ -225,7 +235,7 @@ function isStructurallyEmptyParagraph(block: string) {
 }
 
 function explicitBulletParagraph(block: string, value: string, spacingAfter: number) {
-  return setListSpacing(alignListParagraph(clearListMarker(replaceParagraphText(block, `• ${value}`))), spacingAfter);
+  return setParagraphFontSize(setListSpacing(alignListParagraph(clearListMarker(replaceParagraphText(block, `• ${value}`))), spacingAfter), 19);
 }
 
 function insertPageBreakBefore(block: string) {
@@ -315,7 +325,7 @@ function chartsInDocumentFlow(xml: string, audience: Audience) {
     if (audience === "familias" && chartsSeen >= 2) {
       // Compactação moderada apenas nos dois gráficos finais: preserva a
       // leitura e evita que o quadro de classificações seja dividido.
-      block = block.replace(/(<(?:wp|a):extent\b[^>]*\bcy=")(\d+)(")/g, (_match, start, value, end) => `${start}${Math.round(Number(value) * 0.76)}${end}`);
+      block = block.replace(/(<(?:wp|a):extent\b[^>]*\bcy=")(\d+)(")/g, (_match, start, value, end) => `${start}${Math.round(Number(value) * 0.84)}${end}`);
     }
     chartsSeen += chartsInBlock;
     const before = chartsSeen > 2 ? 40 : 160;
@@ -335,7 +345,8 @@ function compactRatingTable(xml: string) {
     const plain = normalize(paragraphText(table));
     if (!plain.includes(normalize("Autoavaliação")) || !plain.includes(normalize("Prestação do serviço educativo")) || !plain.includes(normalize("Resultados"))) return table;
     let row = 0;
-    return table.replace(/<w:trHeight\b[^>]*\/>/g, () => `<w:trHeight w:val="${row++ === 0 ? 320 : 380}"/>`);
+    const compacted = table.replace(/<w:trHeight\b[^>]*\/>/g, () => `<w:trHeight w:val="${row++ === 0 ? 280 : 320}"/>`);
+    return setParagraphFontSize(compacted, 18);
   });
 }
 
@@ -370,10 +381,13 @@ function patchDocumentXml(xml: string, audience: Audience, school: string, conte
     // Um único padrão para todos os itens: 1,15 linhas e 6 pt depois.
     // A paginação deve resultar do fluxo do texto, não de espaçamentos
     // diferentes calculados a partir do tamanho de cada lista.
-    const spacingAfter = 80;
+    const spacingAfter = 20;
     targets.forEach((target, index) => {
       replacements.set(target.index, index < clean.length ? clean[index] : "");
-      if (index >= clean.length) custom.set(target.index, clearListMarker);
+      // Se o template tiver mais linhas do que o conteúdo real, elimine o
+      // parágrafo inteiro. Deixar um parágrafo sem texto conserva a altura e
+      // produz os espaçamentos irregulares observados entre domínios.
+      if (index >= clean.length) custom.set(target.index, () => "");
       else custom.set(target.index, (block) => explicitBulletParagraph(block, clean[index], spacingAfter));
     });
     if (clean.length > targets.length && targets.length) {
@@ -433,7 +447,10 @@ function patchDocumentXml(xml: string, audience: Audience, school: string, conte
   const projectsHeading = find(audience === "alunos" ? "Projetos interessantes" : "Projetos");
   const projectsEnd = audience === "alunos" ? findIncludes("Através dos questionários respondidos pelos alunos", projectsHeading) : findIncludes("O Agrupamento reconhece e valoriza", projectsHeading);
   if (projectsHeading >= 0 && projectsEnd > projectsHeading) fillRange(projectsHeading, projectsEnd, content.projetosInteressantes || []);
-  if (projectsEnd >= 0) custom.set(projectsEnd, (block) => setPageBreakBefore(setContentSpacing(block, 160, 120)));
+  // O template dos alunos já contém uma quebra estrutural antes dos gráficos.
+  // Acrescentar outra ao parágrafo introdutório criava uma página totalmente
+  // vazia depois de este parágrafo ser reposicionado no fluxo documental.
+  if (projectsEnd >= 0) custom.set(projectsEnd, (block) => setContentSpacing(block, audience === "alunos" ? 160 : 80, audience === "alunos" ? 120 : 80));
   if (audience === "familias") {
     const familyHeading = find("Valorização do papel dos pais na vida escolar");
     const familyEnd = findIncludes("Através dos questionários aplicados aos pais", familyHeading);
@@ -443,7 +460,7 @@ function patchDocumentXml(xml: string, audience: Audience, school: string, conte
   }
 
   const ratingIntro = findIncludes("Considerando uma escala de avaliação de cinco níveis");
-  if (ratingIntro >= 0) custom.set(ratingIntro, (block) => setContentSpacing(block, 40, 60));
+  if (ratingIntro >= 0) custom.set(ratingIntro, (block) => setParagraphFontSize(setContentSpacing(block, 20, 40), 18));
   if (ratingIntro >= 0) {
     for (const rating of content.classificacoes || []) {
       const domainIndex = findAfterAny([rating.dominio, rating.dominio.replace("Gestão", "gestão").replace("Serviço", "serviço")], ratingIntro);
@@ -454,9 +471,14 @@ function patchDocumentXml(xml: string, audience: Audience, school: string, conte
 
   const igecReference = items.find((item) => /(?:relatório detalhado|podes consultar o relatório)/i.test(item.text))
     || items.find((item) => /igec\.mec\.pt\/content_01\.asp/i.test(item.text));
-  if (igecReference) custom.set(igecReference.index, (block) => setContentSpacing(closingParagraphWithIgecLink(block, igecRelationshipId), 40, 0).replace(/<w:pStyle\b[^>]*\/>/g, ""));
+  if (igecReference) custom.set(igecReference.index, (block) => setParagraphFontSize(
+    setContentSpacing(closingParagraphWithIgecLink(block, igecRelationshipId), 0, 0)
+      .replace(/<w:pStyle\b[^>]*\/>/g, "")
+      .replace(/<w:(?:keepNext|keepLines|pageBreakBefore)\b[^>]*\/>/g, ""),
+    17,
+  ));
   const igecExplanation = items.find((item) => /^Recolhemos evidências para nos permitir avaliar/i.test(item.text));
-  if (igecExplanation) custom.set(igecExplanation.index, (block) => setContentSpacing(paragraphWithIgecLink(block, igecRelationshipId), 40, 60));
+  if (igecExplanation) custom.set(igecExplanation.index, (block) => setParagraphFontSize(setContentSpacing(paragraphWithIgecLink(block, igecRelationshipId), 20, 40), 18));
 
   // Referências textuais à escola no fecho e na avaliação.
   items.forEach((item) => {

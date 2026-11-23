@@ -2,9 +2,9 @@
 
 import { ChangeEvent, useEffect, useMemo, useState } from "react";
 import { normalizeAcronyms } from "./text-normalization";
-import { parseValidatedReportTables, SIMPLIFIED_DOMAINS, type ValidatedReportStructure } from "./validated-report-structure";
+import { parseValidatedReportTables, SIMPLIFIED_DOMAINS, SIMPLIFIED_REPORT_VERSION, type ValidatedReportStructure } from "./validated-report-structure";
 
-const APP_BUILD = "2026.11.22-v36";
+const APP_BUILD = "2026.11.23-v37";
 const ANALYSIS_ENGINE_VERSION = 19;
 const MAIN_STORAGE_KEY = "aee-piloto-v2";
 const RECOVERY_DB_NAME = "plataforma-aee-recovery";
@@ -83,6 +83,7 @@ type SimplifiedReportContent = {
   projetosInteressantes: string[];
   papelFamilias: string[];
   classificacoes: Array<{ dominio: string; classificacao: string }>;
+  generation?: { version: string; mode: "ai-validated" };
 };
 type SimplifiedGraph = { id: string; name: string; file: File; preview: string; width: number; height: number; audience?: SimplifiedAudience };
 
@@ -2191,7 +2192,8 @@ export default function Home() {
         if (Array.isArray(data.statisticalTreatments)) setStatisticalTreatments(deduplicateStatisticalTreatments(data.statisticalTreatments.filter((item: StatisticalTreatment) => Array.isArray(item.points) && Array.isArray(item.strengths) && Array.isArray(item.improvements)), restoredStatisticalRecords));
         if (Array.isArray(data.questionnaireComments)) setQuestionnaireComments(data.questionnaireComments);
         if (typeof data.questionnaireReport === "string") setQuestionnaireReport(data.questionnaireReport);
-        if (data.simplifiedReports && typeof data.simplifiedReports === "object") setSimplifiedReports(data.simplifiedReports);
+        if (data.simplifiedReportVersion === SIMPLIFIED_REPORT_VERSION && data.simplifiedReports && typeof data.simplifiedReports === "object") setSimplifiedReports(data.simplifiedReports);
+        else setSimplifiedReports({});
         if (typeof data.validatedReportName === "string") setValidatedReportName(data.validatedReportName);
         if (typeof data.validatedReportText === "string") setValidatedReportText(data.validatedReportText);
         if (typeof data.validatedReportConfirmed === "boolean") setValidatedReportConfirmed(data.validatedReportConfirmed);
@@ -2211,7 +2213,7 @@ export default function Home() {
           setConclusions([]);
           setChangesPending(true);
           setBackupStatus(`Motor de análise atualizado para ${APP_BUILD.replace(/^.*-/, "")}. As evidências foram preservadas; refaça a triangulação, o relatório e as menções.`);
-          window.localStorage.setItem(MAIN_STORAGE_KEY, JSON.stringify({ ...data, analysisEngineVersion: ANALYSIS_ENGINE_VERSION, report: "", narratives: {}, triangulationRevisions: {}, conclusions: [] }));
+          window.localStorage.setItem(MAIN_STORAGE_KEY, JSON.stringify({ ...data, analysisEngineVersion: ANALYSIS_ENGINE_VERSION, simplifiedReportVersion: SIMPLIFIED_REPORT_VERSION, simplifiedReports: {}, report: "", narratives: {}, triangulationRevisions: {}, conclusions: [] }));
         }
         if (data.indicatorApplicability && typeof data.indicatorApplicability === "object") setIndicatorApplicability(data.indicatorApplicability);
         if (typeof data.lastUpdated === "string") setLastUpdated(data.lastUpdated);
@@ -2276,7 +2278,7 @@ export default function Home() {
     }
     try {
       await createAutomaticRecoveryPoint("Antes de guardar manualmente");
-      window.localStorage.setItem(MAIN_STORAGE_KEY, JSON.stringify({ analysisEngineVersion: ANALYSIS_ENGINE_VERSION, schoolName, evidence, documentCandidates, statisticalRecords, statisticalTreatments, questionnaireComments, questionnaireReport, interviews, interviewCandidates, interviewQuestionDrafts, files, fileAnalysis, narratives, triangulationRevisions, report, conclusions, indicatorApplicability, lastUpdated, simplifiedReports, validatedReportName, validatedReportText, validatedReportConfirmed, validatedReportStructure, simplifiedQuestionnaireAnalysis }));
+      window.localStorage.setItem(MAIN_STORAGE_KEY, JSON.stringify({ analysisEngineVersion: ANALYSIS_ENGINE_VERSION, simplifiedReportVersion: SIMPLIFIED_REPORT_VERSION, schoolName, evidence, documentCandidates, statisticalRecords, statisticalTreatments, questionnaireComments, questionnaireReport, interviews, interviewCandidates, interviewQuestionDrafts, files, fileAnalysis, narratives, triangulationRevisions, report, conclusions, indicatorApplicability, lastUpdated, simplifiedReports, validatedReportName, validatedReportText, validatedReportConfirmed, validatedReportStructure, simplifiedQuestionnaireAnalysis }));
       setSaved(true);
       window.setTimeout(() => setSaved(false), 1800);
     } catch {
@@ -2285,7 +2287,7 @@ export default function Home() {
   }
 
   function exportBackup() {
-    const payload = { analysisEngineVersion: ANALYSIS_ENGINE_VERSION, schoolName, evidence, documentCandidates, statisticalRecords, statisticalTreatments, questionnaireComments, questionnaireReport, interviews, interviewCandidates, interviewQuestionDrafts, files, fileAnalysis, narratives, triangulationRevisions, report, conclusions, indicatorApplicability, lastUpdated, simplifiedReports, validatedReportName, validatedReportText, validatedReportConfirmed, validatedReportStructure, simplifiedQuestionnaireAnalysis };
+    const payload = { analysisEngineVersion: ANALYSIS_ENGINE_VERSION, simplifiedReportVersion: SIMPLIFIED_REPORT_VERSION, schoolName, evidence, documentCandidates, statisticalRecords, statisticalTreatments, questionnaireComments, questionnaireReport, interviews, interviewCandidates, interviewQuestionDrafts, files, fileAnalysis, narratives, triangulationRevisions, report, conclusions, indicatorApplicability, lastUpdated, simplifiedReports, validatedReportName, validatedReportText, validatedReportConfirmed, validatedReportStructure, simplifiedQuestionnaireAnalysis };
     const backup = {
       format: "plataforma-aee-backup",
       version: 1,
@@ -2334,7 +2336,7 @@ export default function Home() {
       setSelectedTreatmentIds([]);
       setQuestionnaireComments(Array.isArray(data.questionnaireComments) ? data.questionnaireComments : []);
       setQuestionnaireReport(typeof data.questionnaireReport === "string" ? data.questionnaireReport : "");
-      setSimplifiedReports(data.simplifiedReports && typeof data.simplifiedReports === "object" ? data.simplifiedReports : {});
+      setSimplifiedReports(data.simplifiedReportVersion === SIMPLIFIED_REPORT_VERSION && data.simplifiedReports && typeof data.simplifiedReports === "object" ? data.simplifiedReports : {});
       setValidatedReportName(typeof data.validatedReportName === "string" ? data.validatedReportName : "");
       setValidatedReportText(typeof data.validatedReportText === "string" ? data.validatedReportText : "");
       setValidatedReportConfirmed(Boolean(data.validatedReportConfirmed));
@@ -2356,7 +2358,7 @@ export default function Home() {
       setPrivacyConfirmed([]);
       setPreparedDocuments([]);
       setChangesPending(false);
-      window.localStorage.setItem(MAIN_STORAGE_KEY, JSON.stringify({ ...data, analysisEngineVersion: ANALYSIS_ENGINE_VERSION, narratives: generatedContentIsCurrent ? data.narratives : {}, triangulationRevisions: generatedContentIsCurrent ? data.triangulationRevisions : {}, report: generatedContentIsCurrent ? data.report : "", conclusions: generatedContentIsCurrent ? data.conclusions : [] }));
+      window.localStorage.setItem(MAIN_STORAGE_KEY, JSON.stringify({ ...data, analysisEngineVersion: ANALYSIS_ENGINE_VERSION, simplifiedReportVersion: SIMPLIFIED_REPORT_VERSION, simplifiedReports: data.simplifiedReportVersion === SIMPLIFIED_REPORT_VERSION ? data.simplifiedReports : {}, narratives: generatedContentIsCurrent ? data.narratives : {}, triangulationRevisions: generatedContentIsCurrent ? data.triangulationRevisions : {}, report: generatedContentIsCurrent ? data.report : "", conclusions: generatedContentIsCurrent ? data.conclusions : [] }));
       setBackupStatus(generatedContentIsCurrent ? "Cópia importada e guardada neste navegador." : "Cópia anterior importada. As evidências foram preservadas; triangulação, relatório e menções devem ser recalculados na v10.");
       window.setTimeout(() => setBackupStatus(""), 4000);
     } catch {
@@ -2396,7 +2398,7 @@ export default function Home() {
       minute: "2-digit",
     }).format(new Date());
     try {
-      window.localStorage.setItem(MAIN_STORAGE_KEY, JSON.stringify({ analysisEngineVersion: ANALYSIS_ENGINE_VERSION, schoolName, evidence, documentCandidates, statisticalRecords, statisticalTreatments, questionnaireComments, questionnaireReport, interviews, interviewCandidates, interviewQuestionDrafts, files, fileAnalysis, narratives: refreshedNarratives, triangulationRevisions, report: refreshedReport, conclusions, indicatorApplicability, lastUpdated: timestamp, simplifiedReports, validatedReportName, validatedReportText, validatedReportConfirmed, validatedReportStructure, simplifiedQuestionnaireAnalysis }));
+      window.localStorage.setItem(MAIN_STORAGE_KEY, JSON.stringify({ analysisEngineVersion: ANALYSIS_ENGINE_VERSION, simplifiedReportVersion: SIMPLIFIED_REPORT_VERSION, schoolName, evidence, documentCandidates, statisticalRecords, statisticalTreatments, questionnaireComments, questionnaireReport, interviews, interviewCandidates, interviewQuestionDrafts, files, fileAnalysis, narratives: refreshedNarratives, triangulationRevisions, report: refreshedReport, conclusions, indicatorApplicability, lastUpdated: timestamp, simplifiedReports, validatedReportName, validatedReportText, validatedReportConfirmed, validatedReportStructure, simplifiedQuestionnaireAnalysis }));
       setReport(refreshedReport);
       setNarratives(refreshedNarratives);
       setLastUpdated(timestamp);
@@ -2453,6 +2455,7 @@ export default function Home() {
       indicatorApplicability: {} as Record<string, IndicatorApplicability>,
       lastUpdated: "",
       analysisEngineVersion: ANALYSIS_ENGINE_VERSION,
+      simplifiedReportVersion: SIMPLIFIED_REPORT_VERSION,
     };
     setSchoolName(emptyProcess.schoolName);
     setEvidence(emptyProcess.evidence);
@@ -4528,7 +4531,7 @@ export default function Home() {
           const content = simplifiedReports[simplifiedAudience];
           const simplifiedDomains = ["Autoavaliação", "Liderança e Gestão", "Prestação do Serviço Educativo", "Resultados"];
           return <section className="view simplified-reports-view">
-            <div className="page-heading"><div><p className="eyebrow">Agente 9 · Comunicação dos resultados</p><h2>Relatórios simplificados</h2><p>Produza, valide e exporte separadamente as versões destinadas aos alunos e às famílias. Comece pelo rascunho local sem custos; a revisão por IA é opcional.</p></div><span className="badge">Pode funcionar sem API</span></div>
+            <div className="page-heading"><div><p className="eyebrow">Agente 9 · Comunicação dos resultados</p><h2>Relatórios simplificados</h2><p>Produza, valide e exporte as versões destinadas aos alunos e às famílias. A exportação exige redação validada pelo motor institucional atual.</p></div><span className="badge">Motor {SIMPLIFIED_REPORT_VERSION}</span></div>
             <div className="narrative-guidance"><strong>Condição de utilização</strong><span>O documento carregado deve ser a versão final validada pela equipa. A IA simplifica a linguagem; não reabre a avaliação nem pode alterar o sentido dos juízos.</span></div>
             <section className="simplified-source-card">
               <div className="section-heading"><div><p className="eyebrow">1 · Fonte obrigatória</p><h3>Relatório técnico validado</h3><p>Formatos aceites: Word, PDF e texto. O conteúdo substitui qualquer minuta ainda existente na plataforma.</p></div><label className="button secondary file-button">Carregar relatório<input type="file" accept=".docx,.pdf,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain" onChange={loadValidatedReport} hidden /></label></div>
@@ -4549,7 +4552,8 @@ export default function Home() {
             {simplifiedStatus && <div className="statistics-status" role="status">{simplifiedStatus}</div>}
             <section className="simplified-editor-card">
               <div className="simplified-tabs"><button className={simplifiedAudience === "alunos" ? "selected" : ""} onClick={() => setSimplifiedAudience("alunos")}>Relatório — Alunos</button><button className={simplifiedAudience === "familias" ? "selected family" : "family"} onClick={() => setSimplifiedAudience("familias")}>Relatório — Famílias</button></div>
-              <div className="section-heading"><div><p className="eyebrow">3 · Redação e validação</p><h3>{simplifiedAudience === "alunos" ? "Versão para alunos dos 10 aos 15 anos" : "Versão para pais e encarregados de educação"}</h3><p>{simplifiedAudience === "alunos" ? "Linguagem clara, não infantilizada, com o que está a correr bem, o que pode melhorar e projetos interessantes." : "Linguagem acessível, com pontos fortes, áreas de melhoria, projetos e valorização do papel das famílias."}</p></div><div className="action-row"><button className="button primary" disabled={!validatedReportConfirmed || !validatedReportStructure?.complete || simplifiedWorking} onClick={() => generateSimplifiedReportLocally(simplifiedAudience)}>Gerar rascunho local · sem API</button><button className="button secondary" disabled={!validatedReportConfirmed || !validatedReportStructure?.complete || simplifiedWorking} onClick={() => generateSimplifiedReport(simplifiedAudience)}>{simplifiedWorking ? "A processar…" : content ? "Aprimorar com IA · 1 chamada" : "Gerar diretamente com IA · 1 chamada"}</button><button className="button secondary" disabled={!content || simplifiedWorking} onClick={() => exportSimplifiedReport(simplifiedAudience)}>Guardar Word com template</button></div></div>
+              <div className="section-heading"><div><p className="eyebrow">3 · Redação e validação</p><h3>{simplifiedAudience === "alunos" ? "Versão para alunos dos 10 aos 15 anos" : "Versão para pais e encarregados de educação"}</h3><p>{simplifiedAudience === "alunos" ? "Linguagem clara, não infantilizada, com o que está a correr bem, o que pode melhorar e projetos interessantes." : "Linguagem acessível, com pontos fortes, áreas de melhoria, projetos e valorização do papel das famílias."}</p></div><div className="action-row"><button className="button primary" disabled={!validatedReportConfirmed || !validatedReportStructure?.complete || simplifiedWorking} onClick={() => generateSimplifiedReport(simplifiedAudience)}>{simplifiedWorking ? "A processar…" : content ? "Rever novamente com IA · 1 chamada" : "Gerar com validação institucional · 1 chamada"}</button><button className="button secondary" disabled={!content || content.generation?.version !== SIMPLIFIED_REPORT_VERSION || simplifiedWorking} onClick={() => exportSimplifiedReport(simplifiedAudience)}>Guardar Word com template</button></div></div>
+              {content && content.generation?.version !== SIMPLIFIED_REPORT_VERSION && <div className="statistics-status"><strong>Exportação bloqueada:</strong> este conteúdo foi criado por um motor anterior ou pelo antigo rascunho local. Gere novamente com a versão atual.</div>}
               {simplifiedStatus && <div className="statistics-status" role="status">{simplifiedStatus}</div>}
               {!content ? <div className="empty-analysis"><strong>Esta versão ainda não foi produzida.</strong><p>O relatório para alunos e o relatório para famílias são gerados e validados separadamente.</p></div> : <div className="simplified-content-editor">
                 <label>Introdução<textarea value={content.introducao} onChange={(event) => setSimplifiedReports((current) => ({ ...current, [simplifiedAudience]: { ...content, introducao: event.target.value } }))} /></label>

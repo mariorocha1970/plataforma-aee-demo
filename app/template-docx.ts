@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import JSZip from "jszip";
 import sharp from "sharp";
+import { SIMPLIFIED_REPORT_VERSION } from "./validated-report-structure";
 
 type Audience = "alunos" | "familias";
 type ReportContent = {
@@ -104,30 +105,33 @@ function naturalList(values: string[]) {
 
 function fixedIntroduction(audience: Audience, school: string, sourceReport: string, validatedMeta?: ValidatedMeta) {
   const extracted = extractSchoolMeta(sourceReport);
-  const meta = { dates: validatedMeta?.visitDates || extracted.dates, schools: validatedMeta?.schools?.length ? validatedMeta.schools : extracted.schools };
+  const meta = {
+    visitDates: validatedMeta?.visitDates || extracted.dates,
+    observationDates: validatedMeta?.observationDates || "",
+    schools: validatedMeta?.schools?.length ? validatedMeta.schools : extracted.schools,
+  };
   const establishments = naturalList(meta.schools);
   const count = meta.schools.length;
   if (audience === "alunos") {
     return [
       [
-        { text: "Entre os dias " }, { text: meta.dates, color: "42AFB6" },
+        { text: "Entre os dias " }, { text: meta.visitDates, color: "42AFB6" },
         { text: ", uma equipa coordenada pela Inspeção‑Geral da Educação e Ciência visitou o " }, { text: school, color: "42AFB6" },
         { text: " para realizar a avaliação externa do " }, { text: "Agrupamento", color: "42AFB6" }, { text: "." },
       ],
       [
         { text: "Durante a visita, os avaliadores falaram com vários membros da comunidade educativa, incluindo alunos e encarregados de educação, e estiveram nas " },
         { text: `${count || "várias"} escolas do Agrupamento: ${establishments}`, color: "42AFB6" },
-        { text: ". Também assistiram a algumas aulas e atividades, para conhecer melhor a forma como se trabalha e aprende em cada escola." },
+        { text: meta.observationDates ? `. Nos dias ${meta.observationDates}, também assistiram a algumas aulas e atividades, para conhecer melhor a forma como se trabalha e aprende nas escolas observadas.` : ". Também assistiram a algumas aulas e atividades, para conhecer melhor a forma como se trabalha e aprende nas escolas observadas." },
       ],
     ];
   }
   return [[
-    { text: "Entre os dias " }, { text: meta.dates, color: "31849B" },
+    { text: "Entre os dias " }, { text: meta.visitDates, color: "31849B" },
     { text: ", uma equipa coordenada pela Inspeção-Geral da Educação e Ciência visitou o " }, { text: school, color: "31849B" },
     { text: ", com o objetivo de proceder à respetiva avaliação externa. Durante a visita, conversámos com representantes da comunidade educativa, incluindo encarregados de educação e alunos e estivemos nas " },
     { text: establishments, color: "31849B" },
-    { text: ". Também observámos algumas atividades e aulas para conhecer melhor a dinâmica educativa, em " },
-    { text: "todos os estabelecimentos que integram o Agrupamento", color: "31849B" }, { text: "." },
+    { text: meta.observationDates ? `. Nos dias ${meta.observationDates}, também observámos algumas atividades e aulas para conhecer melhor a dinâmica educativa nas escolas observadas.` : ". Também observámos algumas atividades e aulas para conhecer melhor a dinâmica educativa nas escolas observadas." },
   ], [
     { text: "A avaliação do Agrupamento incidiu em quatro grandes áreas: Autoavaliação (o que é que a escola faz para melhorar), Liderança e gestão (como é liderado e gerido o Agrupamento), Prestação do serviço educativo (como se ensina, aprende e avalia) e Resultados (que resultados académicos e outros têm os alunos)." },
   ]];
@@ -333,6 +337,15 @@ function groupCode(value: string) {
 export async function buildTemplateReport(args: { audience: Audience; school: string; content: ReportContent; analysis: any; cover?: File | null; sourceReport?: string; metadata?: ValidatedMeta }) {
   const template = path.join(process.cwd(), "templates", args.audience === "alunos" ? "relatorio-alunos.docx" : "relatorio-familias.docx");
   const zip = await JSZip.loadAsync(await fs.readFile(template));
+  const corePath = "docProps/core.xml";
+  const core = zip.file(corePath);
+  if (core) {
+    let coreXml = await core.async("string");
+    const provenance = escapeXml(`Plataforma AEE · Relatórios simplificados · ${SIMPLIFIED_REPORT_VERSION}`);
+    if (/<dc:description\b[^>]*>[\s\S]*?<\/dc:description>/i.test(coreXml)) coreXml = coreXml.replace(/<dc:description\b[^>]*>[\s\S]*?<\/dc:description>/i, `<dc:description>${provenance}</dc:description>`);
+    else coreXml = coreXml.replace("</cp:coreProperties>", `<dc:description>${provenance}</dc:description></cp:coreProperties>`);
+    zip.file(corePath, coreXml);
+  }
   const documentPath = "word/document.xml";
   const documentXml = await zip.file(documentPath)!.async("string");
   const relPath = "word/_rels/document.xml.rels";

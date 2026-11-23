@@ -2,9 +2,10 @@
 
 import { ChangeEvent, useEffect, useMemo, useState } from "react";
 import { normalizeAcronyms } from "./text-normalization";
-import { parseValidatedReportTables, SIMPLIFIED_DOMAINS, SIMPLIFIED_REPORT_VERSION, type ValidatedReportStructure } from "./validated-report-structure";
+import { parseValidatedReportTables, SIMPLIFIED_DOMAINS, type ValidatedReportStructure } from "./validated-report-structure";
 
-const APP_BUILD = "2026.11.23-v37";
+const APP_BUILD = "2026.11.23-v37.1";
+const SIMPLIFIED_REPORT_VERSION = "2026.11.23-v37.1";
 const ANALYSIS_ENGINE_VERSION = 19;
 const MAIN_STORAGE_KEY = "aee-piloto-v2";
 const RECOVERY_DB_NAME = "plataforma-aee-recovery";

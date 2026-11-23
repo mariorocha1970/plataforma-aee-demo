@@ -2,7 +2,8 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import JSZip from "jszip";
 import sharp from "sharp";
-import { SIMPLIFIED_REPORT_VERSION } from "./validated-report-structure";
+
+const SIMPLIFIED_REPORT_VERSION = "2026.11.23-v37.1";
 
 type Audience = "alunos" | "familias";
 type ReportContent = {

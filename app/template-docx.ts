@@ -3,7 +3,7 @@ import path from "node:path";
 import JSZip from "jszip";
 import sharp from "sharp";
 
-const SIMPLIFIED_REPORT_VERSION = "2026.11.23-v37.1";
+const SIMPLIFIED_REPORT_VERSION = "2026.11.23-v38";
 
 type Audience = "alunos" | "familias";
 type ReportContent = {
@@ -153,11 +153,21 @@ function clearListMarker(block: string) {
 }
 
 function alignListParagraph(block: string) {
-  const indentation = '<w:ind w:left="720" w:hanging="360"/>';
+  const indentation = '<w:ind w:left="540" w:hanging="300"/>';
   if (/<w:pPr>/.test(block)) {
     return block.replace(/<w:pPr>([\s\S]*?)<\/w:pPr>/, (_match, inner) => `<w:pPr>${/<w:ind\b[^>]*\/>/.test(inner) ? inner.replace(/<w:ind\b[^>]*\/>/, indentation) : `${inner}${indentation}`}</w:pPr>`);
   }
   return block.replace(/(<w:p(?:\s[^>]*)?>)/, `$1<w:pPr>${indentation}</w:pPr>`);
+}
+
+function setListSpacing(block: string, after: number) {
+  const spacing = `<w:spacing w:before="0" w:after="${after}" w:line="276" w:lineRule="auto"/>`;
+  if (/<w:pPr>/.test(block)) return block.replace(/<w:pPr>([\s\S]*?)<\/w:pPr>/, (_match, inner) => `<w:pPr>${/<w:spacing\b[^>]*\/>/.test(inner) ? inner.replace(/<w:spacing\b[^>]*\/>/, spacing) : `${inner}${spacing}`}</w:pPr>`);
+  return block.replace(/(<w:p(?:\s[^>]*)?>)/, `$1<w:pPr>${spacing}</w:pPr>`);
+}
+
+function explicitBulletParagraph(block: string, value: string, spacingAfter: number) {
+  return setListSpacing(alignListParagraph(clearListMarker(replaceParagraphText(block, `• ${value}`))), spacingAfter);
 }
 
 function insertPageBreakBefore(block: string) {
@@ -210,15 +220,18 @@ function patchDocumentXml(xml: string, audience: Audience, school: string, conte
   const fillRange = (start: number, end: number, values: string[]) => {
     const targets = nonEmptyBetween(start, end);
     const clean = values.map((value) => String(value || "").replace(/^\s*[•·▪-]\s*/, "").trim()).filter(Boolean);
+    const totalCharacters = clean.reduce((sum, value) => sum + value.length, 0);
+    const averageCharacters = clean.length ? totalCharacters / clean.length : 0;
+    const spacingAfter = Math.max(70, Math.min(300, Math.round(300 - clean.length * 24 - averageCharacters * 0.55)));
     targets.forEach((target, index) => {
       replacements.set(target.index, index < clean.length ? clean[index] : "");
       if (index >= clean.length) custom.set(target.index, clearListMarker);
-      else custom.set(target.index, alignListParagraph);
+      else custom.set(target.index, (block) => explicitBulletParagraph(block, clean[index], spacingAfter));
     });
     if (clean.length > targets.length && targets.length) {
       const last = targets.at(-1)!;
       replacements.set(last.index, clean[targets.length - 1]);
-      custom.set(last.index, (block) => clean.slice(targets.length - 1).map((value) => alignListParagraph(replaceParagraphText(block, value))).join(""));
+      custom.set(last.index, (block) => clean.slice(targets.length - 1).map((value) => explicitBulletParagraph(block, value, spacingAfter)).join(""));
     }
   };
   const findAfterAny = (variants: string[], after: number) => {
@@ -243,6 +256,10 @@ function patchDocumentXml(xml: string, audience: Audience, school: string, conte
   items.filter((item) => item.normalized === normalize("RELATÓRIO para pais")).forEach((item) => replacements.set(item.index, "RELATÓRIO"));
 
   const greeting = audience === "alunos" ? find("Caros alunos") : find("Caros Pais e Encarregados de Educação");
+  // As formas da capa são flutuantes. Sem uma quebra explícita, o Word pode
+  // colocar a saudação por baixo dessas formas na primeira página, sobretudo
+  // quando o documento é gerado noutro computador ou aberto noutra versão.
+  if (greeting >= 0) custom.set(greeting, insertPageBreakBefore);
   const brokenStrengthHeading = find("os fortes", greeting);
   if (brokenStrengthHeading >= 0) replacements.set(brokenStrengthHeading, "");
   const strengthIntro = audience === "alunos" ? findIncludes("A equipa de avaliação identificou os seguintes aspetos", greeting) : findIncludes("A equipa de avaliação identificou os seguintes pontos fortes", greeting);

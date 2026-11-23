@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { SIMPLIFIED_DOMAINS, validateGeneratedReport, type ValidatedReportStructure } from "../../validated-report-structure";
 
-const SIMPLIFIED_REPORT_VERSION = "2026.11.23-v38.6";
+const SIMPLIFIED_REPORT_VERSION = "2026.11.23-v38.7";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -11,7 +11,7 @@ const DOMAINS = SIMPLIFIED_DOMAINS;
 const domainMap = {
   type: "object",
   additionalProperties: false,
-  properties: Object.fromEntries(DOMAINS.map((domain) => [domain, { type: "array", items: { type: "string" } }])),
+  properties: Object.fromEntries(DOMAINS.map((domain) => [domain, { type: "array", items: { type: "string", maxLength: 220 } }])),
   required: DOMAINS,
 };
 const SCHEMA = {
@@ -21,8 +21,8 @@ const SCHEMA = {
     introducao: { type: "string" },
     pontosFortes: domainMap,
     areasMelhoria: domainMap,
-    projetosInteressantes: { type: "array", items: { type: "string" } },
-    papelFamilias: { type: "array", items: { type: "string" } },
+    projetosInteressantes: { type: "array", items: { type: "string", maxLength: 200 } },
+    papelFamilias: { type: "array", items: { type: "string", maxLength: 200 } },
     classificacoes: {
       type: "array",
       maxItems: 4,
@@ -76,11 +76,13 @@ ${JSON.stringify({ classificacoes: structure.classificacoes, pontosFortes: struc
 
 Reformule cada item dentro do domínio em que se encontra, preservando exatamente a quantidade e a ordem. Não transfira, una, divida ou omita itens. As classificações são decisões da equipa e não podem ser alteradas.`;
 
-    const students = `DESTINATÁRIOS: alunos entre os 10 e os 15 anos.
-Use frases curtas, diretas e voz ativa. Empregue vocabulário simples, mas não infantilizado. Explique em linguagem comum qualquer conceito técnico indispensável.
+    const students = `DESTINATÁRIOS: alunos entre os 10 e os 16 anos.
+Use frases curtas, diretas e voz ativa. Empregue vocabulário corrente, adequado a alunos entre os 10 e os 16 anos, sem tom infantil. Explique em linguagem comum qualquer conceito técnico indispensável.
+Comece preferencialmente por sujeitos concretos: «A escola», «Os professores», «Os alunos», «As famílias» ou o nome simples da prática. Evite começar por nomes abstratos como «consolidação», «robustecimento», «aprofundamento», «monitorização» ou «articulação».
+Cada bullet deve ser compreensível isoladamente por um aluno de 10 anos e não deve exceder, em regra, 160 caracteres.
 Não use, sem explicação imediata em palavras comuns, expressões como «contratualização interna», «referenciais», «ecossistema digital», «monitorização sistemática», «mecanismos integrados», «paradigma de ensino», «supervisão pedagógica», «observação de pares», «metodologias ativas», «intencionalidade estratégica», «cocriação», «validação externa», «assimetrias» ou «resiliência».
-PONTOS FORTES: apresente como «O que está a correr bem», por domínio.
-ÁREAS DE MELHORIA: apresente como «O que pode melhorar», por domínio, sem converter fragilidades em elogios.
+PONTOS FORTES: apresente como «O que está a correr bem», por domínio. Diga diretamente o que a escola faz bem e qual o efeito para os alunos.
+ÁREAS DE MELHORIA: apresente como «O que pode melhorar», por domínio. Diga claramente o que ainda não funciona bem ou precisa de ser reforçado, sem converter fragilidades em elogios nem escrever recomendações formais.
 PROJETOS INTERESSANTES: selecione apenas projetos, clubes, atividades, parcerias ou iniciativas referidos no relatório que envolvam alunos ou contribuam para aprendizagem, cidadania, inclusão ou bem-estar.
 Não trate o Projeto Educativo, relatórios, matrizes, órgãos, cargos ou procedimentos administrativos como projetos interessantes. Não inclua referências ao chefe da equipa de avaliação.
 PAPEL DAS FAMÍLIAS: devolva uma lista vazia, porque esta secção não integra a versão para alunos.`;

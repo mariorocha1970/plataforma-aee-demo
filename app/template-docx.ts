@@ -3,7 +3,7 @@ import path from "node:path";
 import JSZip from "jszip";
 import sharp from "sharp";
 
-const SIMPLIFIED_REPORT_VERSION = "2026.11.23-v39.0";
+const SIMPLIFIED_REPORT_VERSION = "2026.11.23-v39.1";
 const BODY_FONT_HALF_POINTS = 20;
 const BODY_LINE_TWIPS = 276;
 const BODY_PARAGRAPH_AFTER_TWIPS = 60;
@@ -184,10 +184,18 @@ function alignListParagraph(block: string) {
 }
 
 function setParagraphFontSize(block: string, halfPoints: number) {
-  return block.replace(/<w:rPr>([\s\S]*?)<\/w:rPr>/g, (_match, inner) => {
-    const clean = inner.replace(/<w:sz(?:Cs)?\b[^>]*\/>/g, "");
-    return `<w:rPr>${clean}<w:sz w:val="${halfPoints}"/><w:szCs w:val="${halfPoints}"/></w:rPr>`;
+  return block.replace(/<w:r(\s[^>]*)?>([\s\S]*?)<\/w:r>/g, (_match, attributes = "", inner) => {
+    const size = `<w:sz w:val="${halfPoints}"/><w:szCs w:val="${halfPoints}"/>`;
+    const patchedInner = /<w:rPr>[\s\S]*?<\/w:rPr>/.test(inner)
+      ? inner.replace(/<w:rPr>([\s\S]*?)<\/w:rPr>/, (_rPr: string, properties: string) => `<w:rPr>${properties.replace(/<w:sz(?:Cs)?\b[^>]*\/>/g, "")}${size}</w:rPr>`)
+      : `<w:rPr>${size}</w:rPr>${inner}`;
+    return `<w:r${attributes}>${patchedInner}</w:r>`;
   });
+}
+
+function setKeepNext(block: string) {
+  if (/<w:pPr>/.test(block)) return block.replace(/<w:pPr>([\s\S]*?)<\/w:pPr>/, (_match, inner) => `<w:pPr>${inner.replace(/<w:keepNext\b[^>]*\/>/g, "")}<w:keepNext/></w:pPr>`);
+  return block.replace(/(<w:p(?:\s[^>]*)?>)/, "$1<w:pPr><w:keepNext/></w:pPr>");
 }
 
 function setListSpacing(block: string, after: number) {
@@ -231,7 +239,7 @@ function setDomainHeadingSpacing(block: string) {
   // O estilo Título 2 dos templates inclui "quebra de página antes".
   // Retira-se a associação ao estilo e preserva-se a formatação direta do
   // próprio parágrafo, evitando que o primeiro domínio salte para outra página.
-  return setContentSpacing(block, 60, 20)
+  return setParagraphFontSize(setContentSpacing(block, 60, 20), BODY_FONT_HALF_POINTS)
     .replace(/<w:pStyle\b[^>]*\/>/g, "")
     .replace(/<w:pPr>([\s\S]*?)<\/w:pPr>/, (_match, inner) => `<w:pPr>${inner}<w:keepNext/></w:pPr>`);
 }
@@ -271,6 +279,14 @@ function separateTextAndCharts(block: string) {
   const withoutCharts = block.replace(/<w:r(?:\s[^>]*)?>[\s\S]*?<\/w:r>/g, (run) => /<c:chart\b/.test(run) ? "" : run);
   const chartOnly = block.replace(/<w:r(?:\s[^>]*)?>[\s\S]*?<\/w:r>/g, (run) => /<c:chart\b/.test(run) ? run : "");
   return `${withoutCharts}${chartOnly}`;
+}
+
+function bodyTextKeptWithFollowingVisual(block: string) {
+  const separated = separateTextAndCharts(block);
+  return separated.replace(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g, (paragraph) => {
+    if (/<c:chart\b/.test(paragraph) || !paragraphText(paragraph).trim()) return paragraph;
+    return setKeepNext(setBodyParagraph(paragraph, 0, 40));
+  });
 }
 
 function separateMultipleCharts(block: string) {
@@ -328,7 +344,12 @@ function chartsInDocumentFlow(xml: string, audience: Audience) {
   return converted.replace(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g, (block) => {
     if (!/<c:chart\b/.test(block)) return block;
     const chartsInBlock = (block.match(/<c:chart\b/g) || []).length;
-    const startsSecondChartPage = chartsSeen === 2;
+    // Nas famílias, os dois últimos gráficos iniciam a página final, como no
+    // modelo original. Nos alunos, a quebra rígida criava uma página quase
+    // vazia quando o texto anterior era um pouco mais extenso; o fluxo normal
+    // distribui os gráficos sem perder a paginação-alvo.
+    const startsSecondChartPage = (audience === "familias" && chartsSeen === 2)
+      || (audience === "alunos" && chartsSeen === 3);
     if (audience === "familias" && chartsSeen >= 2) {
       // Compactação moderada apenas nos dois gráficos finais: preserva a
       // leitura e evita que o quadro de classificações seja dividido.
@@ -354,7 +375,8 @@ function compactRatingTable(xml: string) {
     if (!plain.includes(normalize("Autoavaliação")) || !plain.includes(normalize("Prestação do serviço educativo")) || !plain.includes(normalize("Resultados"))) return table;
     let row = 0;
     const compacted = table.replace(/<w:trHeight\b[^>]*\/>/g, () => `<w:trHeight w:val="${row++ === 0 ? 220 : 260}"/>`);
-    return setParagraphFontSize(compacted, 18);
+    // A tabela de classificações usa exatamente o mesmo corpo do texto.
+    return setParagraphFontSize(compacted, BODY_FONT_HALF_POINTS);
   });
 }
 
@@ -382,7 +404,11 @@ function closingBannerInDocumentFlow(xml: string) {
     if (!match || !isStructurallyEmptyParagraph(match[1]) || /<w:br\b[^>]*w:type="page"/.test(match[1])) break;
     prefix = prefix.slice(0, match.index);
   }
-  return prefix + suffix;
+  // Separação curta e explícita entre a tabela de classificações e a faixa
+  // final. Não se usa um parágrafo vazio do template, porque a sua altura
+  // varia entre Word e LibreOffice e pode originar uma página adicional.
+  const separator = '<w:p><w:pPr><w:spacing w:before="0" w:after="100" w:line="20" w:lineRule="exact"/><w:rPr><w:sz w:val="2"/><w:szCs w:val="2"/></w:rPr></w:pPr></w:p>';
+  return prefix + separator + suffix;
 }
 
 
@@ -481,7 +507,9 @@ function patchDocumentXml(xml: string, audience: Audience, school: string, conte
   patchDomains(audience === "alunos" ? "O que pode melhorar?" : "Áreas de melhoria", audience === "alunos" ? "O Agrupamento dinamiza diversos projetos" : "O Agrupamento dinamiza uma variedade", content.areasMelhoria);
 
   const questionnaireIntro = audience === "alunos" ? findIncludes("Através dos questionários respondidos pelos alunos") : findIncludes("Através dos questionários aplicados aos pais");
-  if (questionnaireIntro >= 0) custom.set(questionnaireIntro, separateTextAndCharts);
+  if (questionnaireIntro >= 0) custom.set(questionnaireIntro, bodyTextKeptWithFollowingVisual);
+  const questionnaireNote = audience === "familias" ? findIncludes("Na apresentação dos gráficos", questionnaireIntro) : -1;
+  if (questionnaireNote >= 0) custom.set(questionnaireNote, (block) => setKeepNext(setBodyParagraph(block, 0, 40)));
 
   const projectsHeading = find(audience === "alunos" ? "Projetos interessantes" : "Projetos");
   const projectsEnd = audience === "alunos" ? findIncludes("Através dos questionários respondidos pelos alunos", projectsHeading) : findIncludes("O Agrupamento reconhece e valoriza", projectsHeading);
@@ -500,7 +528,7 @@ function patchDocumentXml(xml: string, audience: Audience, school: string, conte
   }
 
   const ratingIntro = findIncludes("Considerando uma escala de avaliação de cinco níveis");
-  if (ratingIntro >= 0) custom.set(ratingIntro, (block) => setBodyParagraph(block, 20, 40));
+  if (ratingIntro >= 0) custom.set(ratingIntro, (block) => setKeepNext(setBodyParagraph(block, 20, 20)));
   if (ratingIntro >= 0) {
     for (const rating of content.classificacoes || []) {
       const domainIndex = findAfterAny([rating.dominio, rating.dominio.replace("Gestão", "gestão").replace("Serviço", "serviço")], ratingIntro);
@@ -518,7 +546,7 @@ function patchDocumentXml(xml: string, audience: Audience, school: string, conte
     17,
   ));
   const igecExplanation = items.find((item) => /^Recolhemos evidências para nos permitir avaliar/i.test(item.text));
-  if (igecExplanation) custom.set(igecExplanation.index, (block) => setBodyParagraph(paragraphWithIgecLink(block, igecRelationshipId), 20, 40));
+  if (igecExplanation) custom.set(igecExplanation.index, (block) => setBodyParagraph(paragraphWithIgecLink(block, igecRelationshipId), 20, 20));
 
   // Referências textuais à escola no fecho e na avaliação.
   items.forEach((item) => {

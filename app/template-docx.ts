@@ -3,7 +3,10 @@ import path from "node:path";
 import JSZip from "jszip";
 import sharp from "sharp";
 
-const SIMPLIFIED_REPORT_VERSION = "2026.11.23-v38.8";
+const SIMPLIFIED_REPORT_VERSION = "2026.11.23-v39.0";
+const BODY_FONT_HALF_POINTS = 20;
+const BODY_LINE_TWIPS = 276;
+const BODY_PARAGRAPH_AFTER_TWIPS = 60;
 
 type Audience = "alunos" | "familias";
 type ReportContent = {
@@ -188,7 +191,7 @@ function setParagraphFontSize(block: string, halfPoints: number) {
 }
 
 function setListSpacing(block: string, after: number) {
-  const spacing = `<w:spacing w:before="0" w:after="${after}" w:line="220" w:lineRule="auto"/>`;
+  const spacing = `<w:spacing w:before="0" w:after="${after}" w:line="${BODY_LINE_TWIPS}" w:lineRule="auto"/>`;
   if (/<w:pPr>/.test(block)) return block.replace(/<w:pPr>([\s\S]*?)<\/w:pPr>/, (_match, inner) => {
     const clean = inner
       .replace(/<w:pStyle\b[^>]*\/>/g, "")
@@ -201,7 +204,7 @@ function setListSpacing(block: string, after: number) {
 }
 
 function setContentSpacing(block: string, before = 0, after = 120) {
-  const spacing = `<w:spacing w:before="${before}" w:after="${after}" w:line="276" w:lineRule="auto"/>`;
+  const spacing = `<w:spacing w:before="${before}" w:after="${after}" w:line="${BODY_LINE_TWIPS}" w:lineRule="auto"/>`;
   const pageBreakOverride = '<w:pageBreakBefore w:val="0"/>';
   if (/<w:pPr>/.test(block)) return block.replace(/<w:pPr>([\s\S]*?)<\/w:pPr>/, (_match, inner) => {
     const withoutAutomaticSpacing = inner
@@ -212,6 +215,10 @@ function setContentSpacing(block: string, before = 0, after = 120) {
     return `<w:pPr>${withoutAutomaticSpacing}${spacing}${pageBreakOverride}</w:pPr>`;
   });
   return block.replace(/(<w:p(?:\s[^>]*)?>)/, `$1<w:pPr>${spacing}${pageBreakOverride}</w:pPr>`);
+}
+
+function setBodyParagraph(block: string, before = 0, after = BODY_PARAGRAPH_AFTER_TWIPS) {
+  return setParagraphFontSize(setContentSpacing(block, before, after), BODY_FONT_HALF_POINTS);
 }
 
 function setPageBreakBefore(block: string) {
@@ -235,7 +242,7 @@ function isStructurallyEmptyParagraph(block: string) {
 }
 
 function explicitBulletParagraph(block: string, value: string, spacingAfter: number) {
-  return setParagraphFontSize(setListSpacing(alignListParagraph(clearListMarker(replaceParagraphText(block, `• ${value}`))), spacingAfter), 19);
+  return setParagraphFontSize(setListSpacing(alignListParagraph(clearListMarker(replaceParagraphText(block, `• ${value}`))), spacingAfter), BODY_FONT_HALF_POINTS);
 }
 
 function insertPageBreakBefore(block: string) {
@@ -325,11 +332,12 @@ function chartsInDocumentFlow(xml: string, audience: Audience) {
     if (audience === "familias" && chartsSeen >= 2) {
       // Compactação moderada apenas nos dois gráficos finais: preserva a
       // leitura e evita que o quadro de classificações seja dividido.
-      block = block.replace(/(<(?:wp|a):extent\b[^>]*\bcy=")(\d+)(")/g, (_match, start, value, end) => `${start}${Math.round(Number(value) * 0.84)}${end}`);
+      const heightFactor = chartsSeen === 3 ? 0.98 : 0.86;
+      block = block.replace(/(<(?:wp|a):extent\b[^>]*\bcy=")(\d+)(")/g, (_match, start, value, end) => `${start}${Math.round(Number(value) * heightFactor)}${end}`);
     }
     chartsSeen += chartsInBlock;
-    const before = chartsSeen > 2 ? 40 : 160;
-    const after = chartsSeen > 2 ? 60 : 200;
+    const before = chartsSeen > 2 ? 20 : 160;
+    const after = chartsSeen > 2 ? 20 : 200;
     const spacing = `<w:spacing w:before="${before}" w:after="${after}" w:line="240" w:lineRule="auto"/><w:jc w:val="center"/>${startsSecondChartPage ? '<w:pageBreakBefore/>' : ''}`;
     if (/<w:pPr>/.test(block)) return block.replace(/<w:pPr>([\s\S]*?)<\/w:pPr>/, (_match, inner) => `<w:pPr>${inner
       .replace(/<w:spacing\b[^>]*\/>/g, "")
@@ -345,9 +353,36 @@ function compactRatingTable(xml: string) {
     const plain = normalize(paragraphText(table));
     if (!plain.includes(normalize("Autoavaliação")) || !plain.includes(normalize("Prestação do serviço educativo")) || !plain.includes(normalize("Resultados"))) return table;
     let row = 0;
-    const compacted = table.replace(/<w:trHeight\b[^>]*\/>/g, () => `<w:trHeight w:val="${row++ === 0 ? 280 : 320}"/>`);
+    const compacted = table.replace(/<w:trHeight\b[^>]*\/>/g, () => `<w:trHeight w:val="${row++ === 0 ? 220 : 260}"/>`);
     return setParagraphFontSize(compacted, 18);
   });
+}
+
+function closingBannerInDocumentFlow(xml: string) {
+  let closingTable = "";
+  let converted = xml.replace(/<w:tbl>[\s\S]*?<\/w:tbl>/g, (table) => {
+    const plain = normalize(paragraphText(table));
+    if (!plain.includes(normalize("relatório detalhado")) && !plain.includes(normalize("podes consultar o relatório"))) return table;
+    // A faixa final dos templates estava posicionada como tabela flutuante.
+    // Em documentos mais densos o Word empurrava-a isoladamente para uma nova
+    // página. Em fluxo normal ocupa apenas o espaço real imediatamente após o
+    // quadro de classificações.
+    closingTable = table.replace(/<w:tblpPr\b[^>]*\/>/g, "");
+    return closingTable;
+  });
+  if (!closingTable) return converted;
+  const tableIndex = converted.indexOf(closingTable);
+  let prefix = converted.slice(0, tableIndex);
+  const suffix = converted.slice(tableIndex);
+  // O template inclui dois parágrafos vazios entre o quadro de classificações
+  // e a faixa final. Embora invisíveis, ocupam altura suficiente para criar
+  // uma página adicional quando os gráficos são mais altos.
+  for (;;) {
+    const match = prefix.match(/(<w:p(?:\s[^>]*)?>(?:(?!<w:p\b)[\s\S])*?<\/w:p>)\s*$/);
+    if (!match || !isStructurallyEmptyParagraph(match[1]) || /<w:br\b[^>]*w:type="page"/.test(match[1])) break;
+    prefix = prefix.slice(0, match.index);
+  }
+  return prefix + suffix;
 }
 
 
@@ -381,7 +416,7 @@ function patchDocumentXml(xml: string, audience: Audience, school: string, conte
     // Um único padrão para todos os itens: 1,15 linhas e 6 pt depois.
     // A paginação deve resultar do fluxo do texto, não de espaçamentos
     // diferentes calculados a partir do tamanho de cada lista.
-    const spacingAfter = 20;
+    const spacingAfter = BODY_PARAGRAPH_AFTER_TWIPS;
     targets.forEach((target, index) => {
       replacements.set(target.index, index < clean.length ? clean[index] : "");
       // Se o template tiver mais linhas do que o conteúdo real, elimine o
@@ -405,6 +440,10 @@ function patchDocumentXml(xml: string, audience: Audience, school: string, conte
     const section = find(sectionTitle);
     const end = findIncludes(endMarker, section);
     if (section < 0 || end < 0) return;
+    if (normalize(sectionTitle) === normalize(audience === "alunos" ? "O que pode melhorar?" : "Áreas de melhoria")) {
+      custom.set(section, setPageBreakBefore);
+    }
+    custom.set(end, (block) => setBodyParagraph(block));
     const headings = DOMAINS.map((domain, index) => ({ domain, index: findAfterAny(index === 1 ? ["Liderança e gestão", "Liderança e Gestão"] : index === 2 ? ["Prestação do serviço educativo", "Prestação do Serviço Educativo"] : [domain], section) }));
     headings.forEach((heading, index) => {
       if (heading.index < 0 || heading.index >= end) return;
@@ -433,10 +472,10 @@ function patchDocumentXml(xml: string, audience: Audience, school: string, conte
   const introductionTargets = nonEmptyBetween(greeting, strengthIntro);
   const introduction = fixedIntroduction(audience, school, sourceReport, validatedMeta);
   introductionTargets.forEach((target, index) => {
-    if (introduction[index]) custom.set(target.index, (block) => setContentSpacing(paragraphWithFragments(block, introduction[index]), 0, 120));
+    if (introduction[index]) custom.set(target.index, (block) => setBodyParagraph(paragraphWithFragments(block, introduction[index])));
     else replacements.set(target.index, "");
   });
-  if (strengthIntro >= 0) custom.set(strengthIntro, (block) => setContentSpacing(block, 0, 120));
+  if (strengthIntro >= 0) custom.set(strengthIntro, (block) => setBodyParagraph(block));
 
   patchDomains(audience === "alunos" ? "O que está a correr bem?" : "Pontos fortes", audience === "alunos" ? "Os avaliadores identificaram também" : "Foram identificadas as seguintes áreas", content.pontosFortes);
   patchDomains(audience === "alunos" ? "O que pode melhorar?" : "Áreas de melhoria", audience === "alunos" ? "O Agrupamento dinamiza diversos projetos" : "O Agrupamento dinamiza uma variedade", content.areasMelhoria);
@@ -447,20 +486,21 @@ function patchDocumentXml(xml: string, audience: Audience, school: string, conte
   const projectsHeading = find(audience === "alunos" ? "Projetos interessantes" : "Projetos");
   const projectsEnd = audience === "alunos" ? findIncludes("Através dos questionários respondidos pelos alunos", projectsHeading) : findIncludes("O Agrupamento reconhece e valoriza", projectsHeading);
   if (projectsHeading >= 0 && projectsEnd > projectsHeading) fillRange(projectsHeading, projectsEnd, content.projetosInteressantes || []);
+  if (audience === "familias" && projectsHeading >= 0) custom.set(projectsHeading, setPageBreakBefore);
   // O template dos alunos já contém uma quebra estrutural antes dos gráficos.
   // Acrescentar outra ao parágrafo introdutório criava uma página totalmente
   // vazia depois de este parágrafo ser reposicionado no fluxo documental.
-  if (projectsEnd >= 0) custom.set(projectsEnd, (block) => setContentSpacing(block, audience === "alunos" ? 160 : 80, audience === "alunos" ? 120 : 80));
+  if (projectsEnd >= 0) custom.set(projectsEnd, (block) => setBodyParagraph(block, audience === "alunos" ? 120 : 60));
   if (audience === "familias") {
     const familyHeading = find("Valorização do papel dos pais na vida escolar");
     const familyEnd = findIncludes("Através dos questionários aplicados aos pais", familyHeading);
     if (familyHeading >= 0 && familyEnd > familyHeading) fillRange(familyHeading, familyEnd, content.papelFamilias || []);
     if (familyHeading >= 0) custom.set(familyHeading, (block) => setContentSpacing(block, 160, 80));
-    if (familyEnd >= 0) custom.set(familyEnd, (block) => setPageBreakBefore(setContentSpacing(block, 160, 120)));
+    if (familyEnd >= 0) custom.set(familyEnd, (block) => setPageBreakBefore(setBodyParagraph(block, 120)));
   }
 
   const ratingIntro = findIncludes("Considerando uma escala de avaliação de cinco níveis");
-  if (ratingIntro >= 0) custom.set(ratingIntro, (block) => setParagraphFontSize(setContentSpacing(block, 20, 40), 18));
+  if (ratingIntro >= 0) custom.set(ratingIntro, (block) => setBodyParagraph(block, 20, 40));
   if (ratingIntro >= 0) {
     for (const rating of content.classificacoes || []) {
       const domainIndex = findAfterAny([rating.dominio, rating.dominio.replace("Gestão", "gestão").replace("Serviço", "serviço")], ratingIntro);
@@ -478,7 +518,7 @@ function patchDocumentXml(xml: string, audience: Audience, school: string, conte
     17,
   ));
   const igecExplanation = items.find((item) => /^Recolhemos evidências para nos permitir avaliar/i.test(item.text));
-  if (igecExplanation) custom.set(igecExplanation.index, (block) => setParagraphFontSize(setContentSpacing(paragraphWithIgecLink(block, igecRelationshipId), 20, 40), 18));
+  if (igecExplanation) custom.set(igecExplanation.index, (block) => setBodyParagraph(paragraphWithIgecLink(block, igecRelationshipId), 20, 40));
 
   // Referências textuais à escola no fecho e na avaliação.
   items.forEach((item) => {
@@ -557,7 +597,7 @@ export async function buildTemplateReport(args: { audience: Audience; school: st
     documentRels = documentRels.replace("</Relationships>", `<Relationship Id="${igecRelationshipId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="${escapeXml(igecUrl)}" TargetMode="External"/></Relationships>`);
     zip.file(relPath, documentRels);
   }
-  zip.file(documentPath, compactRatingTable(chartsInDocumentFlow(patchDocumentXml(documentXml, args.audience, args.school, args.content, args.sourceReport || "", igecRelationshipId, args.metadata), args.audience)));
+  zip.file(documentPath, closingBannerInDocumentFlow(compactRatingTable(chartsInDocumentFlow(patchDocumentXml(documentXml, args.audience, args.school, args.content, args.sourceReport || "", igecRelationshipId, args.metadata), args.audience))));
   for (const name of Object.keys(zip.files).filter((value) => /^word\/(?:header|footer)\d+\.xml$/i.test(value))) {
     const file = zip.file(name);
     if (file) zip.file(name, patchSchoolReferences(await file.async("string"), args.school));

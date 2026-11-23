@@ -4,8 +4,8 @@ import { ChangeEvent, useEffect, useMemo, useState } from "react";
 import { normalizeAcronyms } from "./text-normalization";
 import { parseValidatedReportTables, SIMPLIFIED_DOMAINS, type ValidatedReportStructure } from "./validated-report-structure";
 
-const APP_BUILD = "2026.11.23-v37.1";
-const SIMPLIFIED_REPORT_VERSION = "2026.11.23-v37.1";
+const APP_BUILD = "2026.11.23-v38";
+const SIMPLIFIED_REPORT_VERSION = "2026.11.23-v38";
 const ANALYSIS_ENGINE_VERSION = 19;
 const MAIN_STORAGE_KEY = "aee-piloto-v2";
 const RECOVERY_DB_NAME = "plataforma-aee-recovery";
@@ -3847,14 +3847,41 @@ export default function Home() {
           const type = /\.png$/i.test(largest.name) ? "image/png" : "image/jpeg";
           const imageBytes = largest.bytes.slice().buffer as ArrayBuffer;
           const imageFile = new File([imageBytes], `imagem-capa-${largest.name.split("/").at(-1)}`, { type });
-          const dimensions = await new Promise<{ width: number; height: number }>((resolve, reject) => {
+          const dimensions = await new Promise<{ width: number; height: number; cropped?: File }>((resolve, reject) => {
             const url = URL.createObjectURL(imageFile);
             const image = new Image();
-            image.onload = () => { URL.revokeObjectURL(url); resolve({ width: image.naturalWidth, height: image.naturalHeight }); };
+            image.onload = async () => {
+              URL.revokeObjectURL(url);
+              const relationshipId = [...firstPageTargets].find((target) => target === largest?.name)
+                ? [...relationships.matchAll(/<Relationship\b[^>]*Id="([^"]+)"[^>]*Target="media\/([^"]+)"[^>]*\/?>(?:<\/Relationship>)?/g)]
+                  .find((match) => `word/media/${match[2]}` === largest?.name)?.[1]
+                : undefined;
+              const drawing = relationshipId
+                ? [...firstPageXml.matchAll(/<(?:wp:inline|wp:anchor)\b[\s\S]*?<\/(?:wp:inline|wp:anchor)>/g)].find((match) => match[0].includes(`r:embed="${relationshipId}"`))?.[0]
+                : undefined;
+              const srcRect = drawing?.match(/<a:srcRect\b([^>]*)\/?\s*>/i)?.[1] || "";
+              const cropValue = (side: string) => Number(srcRect.match(new RegExp(`\\b${side}="(\\d+)"`, "i"))?.[1] || 0) / 100000;
+              const left = cropValue("l"); const top = cropValue("t"); const right = cropValue("r"); const bottom = cropValue("b");
+              if (left || top || right || bottom) {
+                const sourceX = Math.round(image.naturalWidth * left);
+                const sourceY = Math.round(image.naturalHeight * top);
+                const sourceWidth = Math.max(1, Math.round(image.naturalWidth * (1 - left - right)));
+                const sourceHeight = Math.max(1, Math.round(image.naturalHeight * (1 - top - bottom)));
+                const canvas = document.createElement("canvas");
+                canvas.width = sourceWidth; canvas.height = sourceHeight;
+                const context = canvas.getContext("2d");
+                if (context) {
+                  context.drawImage(image, sourceX, sourceY, sourceWidth, sourceHeight, 0, 0, sourceWidth, sourceHeight);
+                  const blob = await new Promise<Blob | null>((done) => canvas.toBlob(done, "image/png"));
+                  if (blob) return resolve({ width: sourceWidth, height: sourceHeight, cropped: new File([blob], "fotografia-capa-recortada.png", { type: "image/png" }) });
+                }
+              }
+              resolve({ width: image.naturalWidth, height: image.naturalHeight });
+            };
             image.onerror = () => { URL.revokeObjectURL(url); reject(new Error("A imagem da capa não pôde ser lida.")); };
             image.src = url;
           });
-          cover = { file: imageFile, ...dimensions };
+          cover = { file: dimensions.cropped || imageFile, width: dimensions.width, height: dimensions.height };
         }
       }
       setValidatedReportName(file.name);

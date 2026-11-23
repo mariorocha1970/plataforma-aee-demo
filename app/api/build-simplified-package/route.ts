@@ -2,20 +2,20 @@ import { NextRequest, NextResponse } from "next/server";
 import { parseQuestionnaires } from "../../questionnaire-parser";
 import { SIMPLIFIED_DOMAINS, validateGeneratedReport, type ValidatedReportStructure } from "../../validated-report-structure";
 
-const SIMPLIFIED_REPORT_VERSION = "2026.11.23-v38.7";
+const SIMPLIFIED_REPORT_VERSION = "2026.11.23-v38.8";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
 
 const DOMAINS = SIMPLIFIED_DOMAINS;
-const domainMap = { type: "object", additionalProperties: false, properties: Object.fromEntries(DOMAINS.map((domain) => [domain, { type: "array", items: { type: "string", maxLength: 360 } }])), required: DOMAINS };
+const domainMap = { type: "object", additionalProperties: false, properties: Object.fromEntries(DOMAINS.map((domain) => [domain, { type: "array", items: { type: "string", maxLength: 170 } }])), required: DOMAINS };
 const reportSchema = {
   type: "object", additionalProperties: false,
   properties: {
     introducao: { type: "string", maxLength: 1800 }, pontosFortes: domainMap, areasMelhoria: domainMap,
-    projetosInteressantes: { type: "array", maxItems: 14, items: { type: "string", maxLength: 240 } },
-    papelFamilias: { type: "array", maxItems: 6, items: { type: "string", maxLength: 260 } },
+    projetosInteressantes: { type: "array", maxItems: 14, items: { type: "string", maxLength: 170 } },
+    papelFamilias: { type: "array", maxItems: 6, items: { type: "string", maxLength: 170 } },
     classificacoes: { type: "array", maxItems: 4, items: { type: "object", additionalProperties: false, properties: { dominio: { type: "string", enum: DOMAINS }, classificacao: { type: "string" } }, required: ["dominio", "classificacao"] } },
   }, required: ["introducao", "pontosFortes", "areasMelhoria", "projetosInteressantes", "papelFamilias", "classificacoes"],
 };
@@ -57,7 +57,7 @@ REGRAS COMUNS DOS DOIS RELATÓRIOS:
 - Organize sempre pelos quatro domínios. Se não houver elementos, declare a ausência.
 - Cada item de origem corresponde obrigatoriamente a um único bullet de destino, no mesmo domínio e na mesma posição.
 - Preserve todas as componentes essenciais do juízo de origem, incluindo práticas, destinatários, efeitos, reservas e dimensões como equidade, autonomia ou avaliação formativa. Simplificar a linguagem não autoriza reduzir o alcance do juízo.
-- Um bullet contém o juízo completo em uma ou, quando indispensável, duas frases curtas. Procure concisão, sem impor um limite que obrigue a omitir conteúdo.
+- Um bullet contém o juízo completo numa frase curta e não ultrapassa 160 caracteres para alunos ou 170 para famílias. Preserve a prática e o efeito essenciais, eliminando explicações secundárias.
 - Reformule; não copie períodos completos.
 - Extraia as classificações apenas quando constem explicitamente do ponto 2.
 - Escreva em português europeu.
@@ -68,7 +68,8 @@ ${JSON.stringify({ classificacoes: structure.classificacoes, pontosFortes: struc
 Nos dois relatórios, reformule cada item dentro do domínio em que se encontra, preservando exatamente a quantidade e a ordem. Não transfira, una, divida ou omita itens. As classificações são decisões da equipa e não podem ser alteradas.
 
 RELATÓRIO PARA ALUNOS:
-- Destinatários entre 10 e 15 anos. Frases curtas, diretas, voz ativa e vocabulário simples, sem infantilizar.
+- Destinatários entre 10 e 16 anos. Frases curtas, diretas, voz ativa e vocabulário simples, sem infantilizar.
+- Comece preferencialmente por sujeitos concretos como «A escola», «Os professores», «Os alunos» ou «As famílias». Evite nomes abstratos e linguagem administrativa.
 - Explique em linguagem comum conceitos técnicos indispensáveis.
 - Não use, sem explicação imediata em palavras comuns, expressões como «contratualização interna», «referenciais», «ecossistema digital», «monitorização sistemática», «mecanismos integrados», «paradigma de ensino», «supervisão pedagógica», «observação de pares», «metodologias ativas», «intencionalidade estratégica», «cocriação», «validação externa», «assimetrias» ou «resiliência».
 - Prefira, respetivamente, ideias como metas acordadas dentro da escola, orientações, sistema digital, acompanhamento regular, formas articuladas de trabalho, aulas sobretudo expositivas, acompanhamento do trabalho dos professores, professores observarem aulas uns dos outros, aprendizagem com participação, objetivo planeado, construção conjunta, reconhecimento externo, diferenças e capacidade de lidar com dificuldades.

@@ -3,7 +3,7 @@ import path from "node:path";
 import JSZip from "jszip";
 import sharp from "sharp";
 
-const SIMPLIFIED_REPORT_VERSION = "2026.11.23-v38.4";
+const SIMPLIFIED_REPORT_VERSION = "2026.11.23-v38.5";
 
 type Audience = "alunos" | "familias";
 type ReportContent = {
@@ -241,11 +241,23 @@ function separateTextAndCharts(block: string) {
   return `${withoutCharts}${chartOnly}`;
 }
 
+function separateMultipleCharts(block: string) {
+  const chartRuns = [...block.matchAll(/<w:r(?:\s[^>]*)?>[\s\S]*?<\/w:r>/g)]
+    .map((match) => match[0])
+    .filter((run) => /<c:chart\b/.test(run));
+  if (chartRuns.length < 2) return block;
+  const pPr = block.match(/<w:pPr>[\s\S]*?<\/w:pPr>/)?.[0] || "";
+  return chartRuns.map((run) => `<w:p>${pPr}${run}</w:p>`).join("");
+}
+
 function chartsInDocumentFlow(xml: string, audience: Audience) {
   // Os templates antigos podiam guardar texto e gráficos no mesmo parágrafo,
   // usando coordenadas para os mostrar por outra ordem. Separe-os antes de
   // normalizar o fluxo, para que o texto introdutório fique sempre primeiro.
   xml = xml.replace(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g, separateTextAndCharts);
+  // Cada gráfico ocupa o seu próprio parágrafo. Isto cria uma separação real
+  // entre figuras e impede que duas delas fiquem visualmente coladas.
+  xml = xml.replace(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g, separateMultipleCharts);
   const inlineAnchor = (anchor: string) => {
     if (!/<c:chart\b/.test(anchor)) return anchor;
     // Preserve integralmente o desenho e a relação do gráfico. Alterar apenas
@@ -286,10 +298,12 @@ function chartsInDocumentFlow(xml: string, audience: Audience) {
     const chartsInBlock = (block.match(/<c:chart\b/g) || []).length;
     const startsSecondChartPage = chartsSeen === 2;
     if (audience === "familias" && chartsSeen >= 2) {
-      block = block.replace(/(<(?:wp|a):extent\b[^>]*\bcy=")(\d+)(")/g, (_match, start, value, end) => `${start}${Math.round(Number(value) * 0.52)}${end}`);
+      // Compactação moderada apenas nos dois gráficos finais: preserva a
+      // leitura e evita que o quadro de classificações seja dividido.
+      block = block.replace(/(<(?:wp|a):extent\b[^>]*\bcy=")(\d+)(")/g, (_match, start, value, end) => `${start}${Math.round(Number(value) * 0.68)}${end}`);
     }
     chartsSeen += chartsInBlock;
-    const spacing = `<w:spacing w:before="80" w:after="120" w:line="240" w:lineRule="auto"/><w:jc w:val="center"/>${startsSecondChartPage ? '<w:pageBreakBefore/>' : ''}`;
+    const spacing = `<w:spacing w:before="160" w:after="200" w:line="240" w:lineRule="auto"/><w:jc w:val="center"/>${startsSecondChartPage ? '<w:pageBreakBefore/>' : ''}`;
     if (/<w:pPr>/.test(block)) return block.replace(/<w:pPr>([\s\S]*?)<\/w:pPr>/, (_match, inner) => `<w:pPr>${inner
       .replace(/<w:spacing\b[^>]*\/>/g, "")
       .replace(/<w:tabs>[\s\S]*?<\/w:tabs>/g, "")
@@ -393,12 +407,12 @@ function patchDocumentXml(xml: string, audience: Audience, school: string, conte
   const projectsHeading = find(audience === "alunos" ? "Projetos interessantes" : "Projetos");
   const projectsEnd = audience === "alunos" ? findIncludes("Através dos questionários respondidos pelos alunos", projectsHeading) : findIncludes("O Agrupamento reconhece e valoriza", projectsHeading);
   if (projectsHeading >= 0 && projectsEnd > projectsHeading) fillRange(projectsHeading, projectsEnd, content.projetosInteressantes || []);
-  if (projectsEnd >= 0) custom.set(projectsEnd, (block) => setPageBreakBefore(setContentSpacing(block, 120, 120)));
+  if (projectsEnd >= 0) custom.set(projectsEnd, (block) => setContentSpacing(block, 160, 120));
   if (audience === "familias") {
     const familyHeading = find("Valorização do papel dos pais na vida escolar");
     const familyEnd = findIncludes("Através dos questionários aplicados aos pais", familyHeading);
     if (familyHeading >= 0 && familyEnd > familyHeading) fillRange(familyHeading, familyEnd, content.papelFamilias || []);
-    if (familyEnd >= 0) custom.set(familyEnd, (block) => setPageBreakBefore(setContentSpacing(block, 120, 120)));
+    if (familyEnd >= 0) custom.set(familyEnd, (block) => setContentSpacing(block, 160, 120));
   }
 
   const ratingIntro = findIncludes("Considerando uma escala de avaliação de cinco níveis");
@@ -412,7 +426,7 @@ function patchDocumentXml(xml: string, audience: Audience, school: string, conte
   }
 
   const igecReference = items.find((item) => /igec\.mec\.pt\/content_01\.asp/i.test(item.text));
-  if (igecReference) custom.set(igecReference.index, (block) => paragraphWithIgecLink(block, igecRelationshipId));
+  if (igecReference) custom.set(igecReference.index, (block) => setContentSpacing(paragraphWithIgecLink(block, igecRelationshipId), 160, 0));
 
   // Referências textuais à escola no fecho e na avaliação.
   items.forEach((item) => {

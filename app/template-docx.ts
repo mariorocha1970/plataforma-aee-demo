@@ -3,7 +3,7 @@ import path from "node:path";
 import JSZip from "jszip";
 import sharp from "sharp";
 
-const SIMPLIFIED_REPORT_VERSION = "2026.11.23-v39.1";
+const SIMPLIFIED_REPORT_VERSION = "2026.11.23-v39.2";
 const BODY_FONT_HALF_POINTS = 20;
 const BODY_LINE_TWIPS = 276;
 const BODY_PARAGRAPH_AFTER_TWIPS = 60;
@@ -235,6 +235,10 @@ function setPageBreakBefore(block: string) {
   return block.replace(/(<w:p(?:\s[^>]*)?>)/, `$1<w:pPr>${marker}</w:pPr>`);
 }
 
+function clearPageBreakBefore(block: string) {
+  return block.replace(/<w:pageBreakBefore\b[^>]*\/>/g, "");
+}
+
 function setDomainHeadingSpacing(block: string) {
   // O estilo Título 2 dos templates inclui "quebra de página antes".
   // Retira-se a associação ao estilo e preserva-se a formatação direta do
@@ -250,7 +254,14 @@ function isStructurallyEmptyParagraph(block: string) {
 }
 
 function explicitBulletParagraph(block: string, value: string, spacingAfter: number) {
-  return setParagraphFontSize(setListSpacing(alignListParagraph(clearListMarker(replaceParagraphText(block, `• ${value}`))), spacingAfter), BODY_FONT_HALF_POINTS);
+  // O conteúdo das listas é sempre apresentado em redondo. Alguns itens do
+  // template original tinham itálico por formatação direta e transmitiam essa
+  // formatação, indevidamente, ao texto gerado para outras escolas.
+  return setParagraphFontSize(
+    setListSpacing(alignListParagraph(clearListMarker(replaceParagraphText(block, `• ${value}`))), spacingAfter)
+      .replace(/<w:i(?:Cs)?\b[^>]*\/>/g, ""),
+    BODY_FONT_HALF_POINTS,
+  );
 }
 
 function insertPageBreakBefore(block: string) {
@@ -348,12 +359,20 @@ function chartsInDocumentFlow(xml: string, audience: Audience) {
     // modelo original. Nos alunos, a quebra rígida criava uma página quase
     // vazia quando o texto anterior era um pouco mais extenso; o fluxo normal
     // distribui os gráficos sem perder a paginação-alvo.
+    // Deixa os gráficos das famílias ocupar o espaço disponível da página 5.
+    // A quebra fixa antes do terceiro gráfico impedia esse ajuste e, com as
+    // linhas de 1 cm na tabela final, originava uma sétima página. Nos alunos,
+    // o quarto gráfico inicia a página final para equilibrar a composição.
     const startsSecondChartPage = (audience === "familias" && chartsSeen === 2)
       || (audience === "alunos" && chartsSeen === 3);
     if (audience === "familias" && chartsSeen >= 2) {
       // Compactação moderada apenas nos dois gráficos finais: preserva a
       // leitura e evita que o quadro de classificações seja dividido.
-      const heightFactor = chartsSeen === 3 ? 0.98 : 0.86;
+      // A tabela final passou a ter cinco linhas de 1 cm. Para conservar as
+      // seis páginas das famílias sem dividir a tabela, o gráfico vertical é
+      // mais compacto; o gráfico horizontal mantém maior altura para garantir
+      // a leitura das afirmações.
+      const heightFactor = chartsSeen === 3 ? 0.86 : 0.62;
       block = block.replace(/(<(?:wp|a):extent\b[^>]*\bcy=")(\d+)(")/g, (_match, start, value, end) => `${start}${Math.round(Number(value) * heightFactor)}${end}`);
     }
     chartsSeen += chartsInBlock;
@@ -373,8 +392,13 @@ function compactRatingTable(xml: string) {
   return xml.replace(/<w:tbl>[\s\S]*?<\/w:tbl>/g, (table) => {
     const plain = normalize(paragraphText(table));
     if (!plain.includes(normalize("Autoavaliação")) || !plain.includes(normalize("Prestação do serviço educativo")) || !plain.includes(normalize("Resultados"))) return table;
-    let row = 0;
-    const compacted = table.replace(/<w:trHeight\b[^>]*\/>/g, () => `<w:trHeight w:val="${row++ === 0 ? 220 : 260}"/>`);
+    // 1 cm = 567 twips. A regra "exact" garante a mesma altura em Word e
+    // LibreOffice e evita variações entre computadores.
+    const rowHeight = '<w:trHeight w:val="567" w:hRule="exact"/>';
+    const compacted = table.replace(/<w:tr(?:\s[^>]*)?>[\s\S]*?<\/w:tr>/g, (row) => {
+      if (/<w:trPr>/.test(row)) return row.replace(/<w:trPr>([\s\S]*?)<\/w:trPr>/, (_match, inner) => `<w:trPr>${inner.replace(/<w:trHeight\b[^>]*\/>/g, "")}${rowHeight}<w:cantSplit/></w:trPr>`);
+      return row.replace(/(<w:tr(?:\s[^>]*)?>)/, `$1<w:trPr>${rowHeight}<w:cantSplit/></w:trPr>`);
+    });
     // A tabela de classificações usa exatamente o mesmo corpo do texto.
     return setParagraphFontSize(compacted, BODY_FONT_HALF_POINTS);
   });
@@ -407,7 +431,7 @@ function closingBannerInDocumentFlow(xml: string) {
   // Separação curta e explícita entre a tabela de classificações e a faixa
   // final. Não se usa um parágrafo vazio do template, porque a sua altura
   // varia entre Word e LibreOffice e pode originar uma página adicional.
-  const separator = '<w:p><w:pPr><w:spacing w:before="0" w:after="100" w:line="20" w:lineRule="exact"/><w:rPr><w:sz w:val="2"/><w:szCs w:val="2"/></w:rPr></w:pPr></w:p>';
+  const separator = '<w:p><w:pPr><w:spacing w:before="0" w:after="20" w:line="20" w:lineRule="exact"/><w:rPr><w:sz w:val="2"/><w:szCs w:val="2"/></w:rPr></w:pPr></w:p>';
   return prefix + separator + suffix;
 }
 
@@ -466,10 +490,20 @@ function patchDocumentXml(xml: string, audience: Audience, school: string, conte
     const section = find(sectionTitle);
     const end = findIncludes(endMarker, section);
     if (section < 0 || end < 0) return;
-    if (normalize(sectionTitle) === normalize(audience === "alunos" ? "O que pode melhorar?" : "Áreas de melhoria")) {
-      custom.set(section, setPageBreakBefore);
+    const startsImprovementPage = normalize(sectionTitle) === normalize(audience === "alunos" ? "O que pode melhorar?" : "Áreas de melhoria");
+    if (startsImprovementPage) {
+      custom.set(section, clearPageBreakBefore);
+      const introductionBeforeSection = items.filter((item) => item.index < section && item.text.trim()).at(-1);
+      if (introductionBeforeSection) custom.set(introductionBeforeSection.index, (block) => setPageBreakBefore(setKeepNext(setBodyParagraph(block))));
     }
-    custom.set(end, (block) => setBodyParagraph(block));
+    // O parágrafo que anuncia a secção seguinte acompanha sempre o respetivo
+    // título/faixa. Quando se inicia a página das áreas de melhoria, a quebra
+    // é aplicada ao parágrafo introdutório e não ao título, para nunca os
+    // separar.
+    custom.set(end, (block) => {
+      const kept = setKeepNext(setBodyParagraph(block));
+      return kept;
+    });
     const headings = DOMAINS.map((domain, index) => ({ domain, index: findAfterAny(index === 1 ? ["Liderança e gestão", "Liderança e Gestão"] : index === 2 ? ["Prestação do serviço educativo", "Prestação do Serviço Educativo"] : [domain], section) }));
     headings.forEach((heading, index) => {
       if (heading.index < 0 || heading.index >= end) return;
@@ -501,7 +535,7 @@ function patchDocumentXml(xml: string, audience: Audience, school: string, conte
     if (introduction[index]) custom.set(target.index, (block) => setBodyParagraph(paragraphWithFragments(block, introduction[index])));
     else replacements.set(target.index, "");
   });
-  if (strengthIntro >= 0) custom.set(strengthIntro, (block) => setBodyParagraph(block));
+  if (strengthIntro >= 0) custom.set(strengthIntro, (block) => setKeepNext(setBodyParagraph(block)));
 
   patchDomains(audience === "alunos" ? "O que está a correr bem?" : "Pontos fortes", audience === "alunos" ? "Os avaliadores identificaram também" : "Foram identificadas as seguintes áreas", content.pontosFortes);
   patchDomains(audience === "alunos" ? "O que pode melhorar?" : "Áreas de melhoria", audience === "alunos" ? "O Agrupamento dinamiza diversos projetos" : "O Agrupamento dinamiza uma variedade", content.areasMelhoria);
@@ -518,13 +552,13 @@ function patchDocumentXml(xml: string, audience: Audience, school: string, conte
   // O template dos alunos já contém uma quebra estrutural antes dos gráficos.
   // Acrescentar outra ao parágrafo introdutório criava uma página totalmente
   // vazia depois de este parágrafo ser reposicionado no fluxo documental.
-  if (projectsEnd >= 0) custom.set(projectsEnd, (block) => setBodyParagraph(block, audience === "alunos" ? 120 : 60));
+  if (projectsEnd >= 0) custom.set(projectsEnd, (block) => setKeepNext(setBodyParagraph(block, audience === "alunos" ? 120 : 60)));
   if (audience === "familias") {
     const familyHeading = find("Valorização do papel dos pais na vida escolar");
     const familyEnd = findIncludes("Através dos questionários aplicados aos pais", familyHeading);
     if (familyHeading >= 0 && familyEnd > familyHeading) fillRange(familyHeading, familyEnd, content.papelFamilias || []);
     if (familyHeading >= 0) custom.set(familyHeading, (block) => setContentSpacing(block, 160, 80));
-    if (familyEnd >= 0) custom.set(familyEnd, (block) => setPageBreakBefore(setBodyParagraph(block, 120)));
+    if (familyEnd >= 0) custom.set(familyEnd, (block) => setPageBreakBefore(setKeepNext(setBodyParagraph(block, 120))));
   }
 
   const ratingIntro = findIncludes("Considerando uma escala de avaliação de cinco níveis");

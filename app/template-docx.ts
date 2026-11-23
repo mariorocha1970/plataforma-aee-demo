@@ -3,7 +3,7 @@ import path from "node:path";
 import JSZip from "jszip";
 import sharp from "sharp";
 
-const SIMPLIFIED_REPORT_VERSION = "2026.11.23-v38.2";
+const SIMPLIFIED_REPORT_VERSION = "2026.11.23-v38.3";
 
 type Audience = "alunos" | "familias";
 type ReportContent = {
@@ -46,7 +46,9 @@ function replaceParagraphText(block: string, value: string) {
     if (!first) return tag.replace(/>[^<]*<\/w:t>$/, "></w:t>");
     first = false;
     return tag.replace(/>[^<]*<\/w:t>$/, ` xml:space="preserve">${escapeXml(value)}</w:t>`).replace(/<w:t([^>]*)\s+xml:space="preserve"([^>]*)\s+xml:space="preserve">/, '<w:t$1 xml:space="preserve"$2>');
-  }).replace(/<w:(?:noBreakHyphen|softHyphen)\s*\/>/g, "");
+  })
+    .replace(/<w:(?:noBreakHyphen|softHyphen|tab)\s*\/>/g, "")
+    .replace(/<w:ptab\b[^>]*\/>/g, "");
 }
 
 function paragraphWithFragments(block: string, fragments: Array<{ text: string; color?: string }>) {
@@ -162,7 +164,14 @@ function alignListParagraph(block: string) {
 
 function setListSpacing(block: string, after: number) {
   const spacing = `<w:spacing w:before="0" w:after="${after}" w:line="276" w:lineRule="auto"/>`;
-  if (/<w:pPr>/.test(block)) return block.replace(/<w:pPr>([\s\S]*?)<\/w:pPr>/, (_match, inner) => `<w:pPr>${/<w:spacing\b[^>]*\/>/.test(inner) ? inner.replace(/<w:spacing\b[^>]*\/>/, spacing) : `${inner}${spacing}`}</w:pPr>`);
+  if (/<w:pPr>/.test(block)) return block.replace(/<w:pPr>([\s\S]*?)<\/w:pPr>/, (_match, inner) => {
+    const clean = inner
+      .replace(/<w:pStyle\b[^>]*\/>/g, "")
+      .replace(/<w:spacing\b[^>]*\/>/g, "")
+      .replace(/<w:tabs>[\s\S]*?<\/w:tabs>/g, "")
+      .replace(/<w:(?:contextualSpacing|pageBreakBefore|keepLines)\b[^>]*\/>/g, "");
+    return `<w:pPr>${clean}${spacing}</w:pPr>`;
+  });
   return block.replace(/(<w:p(?:\s[^>]*)?>)/, `$1<w:pPr>${spacing}</w:pPr>`);
 }
 
@@ -170,10 +179,20 @@ function setContentSpacing(block: string, before = 0, after = 120) {
   const spacing = `<w:spacing w:before="${before}" w:after="${after}" w:line="276" w:lineRule="auto"/>`;
   const pageBreakOverride = '<w:pageBreakBefore w:val="0"/>';
   if (/<w:pPr>/.test(block)) return block.replace(/<w:pPr>([\s\S]*?)<\/w:pPr>/, (_match, inner) => {
-    const withoutAutomaticSpacing = inner.replace(/<w:spacing\b[^>]*\/>/g, "").replace(/<w:pageBreakBefore\b[^>]*\/>/g, "");
+    const withoutAutomaticSpacing = inner
+      .replace(/<w:spacing\b[^>]*\/>/g, "")
+      .replace(/<w:pageBreakBefore\b[^>]*\/>/g, "")
+      .replace(/<w:tabs>[\s\S]*?<\/w:tabs>/g, "")
+      .replace(/<w:contextualSpacing\b[^>]*\/>/g, "");
     return `<w:pPr>${withoutAutomaticSpacing}${spacing}${pageBreakOverride}</w:pPr>`;
   });
   return block.replace(/(<w:p(?:\s[^>]*)?>)/, `$1<w:pPr>${spacing}${pageBreakOverride}</w:pPr>`);
+}
+
+function setPageBreakBefore(block: string) {
+  const marker = '<w:pageBreakBefore/>';
+  if (/<w:pPr>/.test(block)) return block.replace(/<w:pPr>([\s\S]*?)<\/w:pPr>/, (_match, inner) => `<w:pPr>${inner.replace(/<w:pageBreakBefore\b[^>]*\/>/g, "")}${marker}</w:pPr>`);
+  return block.replace(/(<w:p(?:\s[^>]*)?>)/, `$1<w:pPr>${marker}</w:pPr>`);
 }
 
 function setDomainHeadingSpacing(block: string) {
@@ -293,7 +312,9 @@ function patchDocumentXml(xml: string, audience: Audience, school: string, conte
   // quando o documento é gerado noutro computador ou aberto noutra versão.
   // O template das famílias já contém a quebra depois da capa. Acrescentar
   // outra cria uma página 2 vazia. O template dos alunos precisa dela.
-  if (greeting >= 0) custom.set(greeting, audience === "alunos" ? insertPageBreakBefore : (block) => setContentSpacing(block, 0, 180));
+  if (greeting >= 0) custom.set(greeting, audience === "alunos"
+    ? (block) => setPageBreakBefore(setContentSpacing(block, 0, 180))
+    : (block) => setContentSpacing(block, 0, 180));
   const brokenStrengthHeading = find("os fortes", greeting);
   if (brokenStrengthHeading >= 0) replacements.set(brokenStrengthHeading, "");
   const strengthIntro = audience === "alunos" ? findIncludes("A equipa de avaliação identificou os seguintes aspetos", greeting) : findIncludes("A equipa de avaliação identificou os seguintes pontos fortes", greeting);

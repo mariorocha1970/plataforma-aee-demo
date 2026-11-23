@@ -3,7 +3,7 @@ import path from "node:path";
 import JSZip from "jszip";
 import sharp from "sharp";
 
-const SIMPLIFIED_REPORT_VERSION = "2026.11.23-v38.6";
+const SIMPLIFIED_REPORT_VERSION = "2026.11.23-v38.7";
 
 type Audience = "alunos" | "familias";
 type ReportContent = {
@@ -214,7 +214,7 @@ function setDomainHeadingSpacing(block: string) {
   // O estilo Título 2 dos templates inclui "quebra de página antes".
   // Retira-se a associação ao estilo e preserva-se a formatação direta do
   // próprio parágrafo, evitando que o primeiro domínio salte para outra página.
-  return setContentSpacing(block, 160, 80)
+  return setContentSpacing(block, 100, 40)
     .replace(/<w:pStyle\b[^>]*\/>/g, "")
     .replace(/<w:pPr>([\s\S]*?)<\/w:pPr>/, (_match, inner) => `<w:pPr>${inner}<w:keepNext/></w:pPr>`);
 }
@@ -315,7 +315,7 @@ function chartsInDocumentFlow(xml: string, audience: Audience) {
     if (audience === "familias" && chartsSeen >= 2) {
       // Compactação moderada apenas nos dois gráficos finais: preserva a
       // leitura e evita que o quadro de classificações seja dividido.
-      block = block.replace(/(<(?:wp|a):extent\b[^>]*\bcy=")(\d+)(")/g, (_match, start, value, end) => `${start}${Math.round(Number(value) * 0.68)}${end}`);
+      block = block.replace(/(<(?:wp|a):extent\b[^>]*\bcy=")(\d+)(")/g, (_match, start, value, end) => `${start}${Math.round(Number(value) * 0.76)}${end}`);
     }
     chartsSeen += chartsInBlock;
     const before = chartsSeen > 2 ? 40 : 160;
@@ -335,7 +335,7 @@ function compactRatingTable(xml: string) {
     const plain = normalize(paragraphText(table));
     if (!plain.includes(normalize("Autoavaliação")) || !plain.includes(normalize("Prestação do serviço educativo")) || !plain.includes(normalize("Resultados"))) return table;
     let row = 0;
-    return table.replace(/<w:trHeight\b[^>]*\/>/g, () => `<w:trHeight w:val="${row++ === 0 ? 360 : 420}"/>`);
+    return table.replace(/<w:trHeight\b[^>]*\/>/g, () => `<w:trHeight w:val="${row++ === 0 ? 320 : 380}"/>`);
   });
 }
 
@@ -366,11 +366,11 @@ function patchDocumentXml(xml: string, audience: Audience, school: string, conte
     // tabelas, gráficos ou outros objetos.
     items.filter((item) => item.index > start && item.index < end && isStructurallyEmptyParagraph(item.block))
       .forEach((item) => custom.set(item.index, () => ""));
-    const clean = values.map((value) => String(value || "").replace(/^\s*[•·▪-]\s*/, "").trim()).filter(Boolean);
+    const clean = values.map((value) => String(value || "").replace(/^\s*[•·▪-]\s*/, "").replace(/\s+/g, " ").trim()).filter(Boolean);
     // Um único padrão para todos os itens: 1,15 linhas e 6 pt depois.
     // A paginação deve resultar do fluxo do texto, não de espaçamentos
     // diferentes calculados a partir do tamanho de cada lista.
-    const spacingAfter = 120;
+    const spacingAfter = 80;
     targets.forEach((target, index) => {
       replacements.set(target.index, index < clean.length ? clean[index] : "");
       if (index >= clean.length) custom.set(target.index, clearListMarker);
@@ -498,7 +498,7 @@ function patchChartXml(xml: string, items: Array<{ item: string; total: number }
     patched = patched.replace(/<c:max val="[^"]+"\/>/, `<c:max val="${maximum}"/>`);
     if (!/<c:max val=/.test(patched)) patched = patched.replace(/<c:scaling>/, `<c:scaling><c:max val="${maximum}"/>`);
     if (!/<c:min val=/.test(patched)) patched = patched.replace(/<c:scaling>/, '<c:scaling><c:min val="0"/>');
-    if (chartNumber === 4) patched = patched.replace(/<c:gapWidth val="[^"]+"\/>/, '<c:gapWidth val="92"/>');
+    if (chartNumber === 4) patched = patched.replace(/<c:gapWidth val="[^"]+"\/>/, '<c:gapWidth val="114"/>');
   }
   return patched;
 }

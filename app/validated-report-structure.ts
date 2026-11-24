@@ -40,31 +40,38 @@ export function parseValidatedReportPdf(pages: { words: PdfWord[]; rules: number
   }).join("");
   for (const { words, rules } of pages) {
     const titles = words.filter((word) => /^[2-5][.)]\s*(?:Quadro resumo|Pontos fortes|Áreas de melhoria|Juízos avaliativos)/iu.test(word.str.trim())).sort(readingOrder);
-    const pending = tables[1]?.length > 1 && tables[1].length < 5 && (!titles.length || Number(titles[0].str.trim()[0]) === 4);
+    const nextSection = titles.length ? Number(titles[0].str.trim()[0]) : 0;
+    const pending = [4, 3].find((section) => tables[section - 2]?.length > 1 && tables[section - 2].length < 5 && (!nextSection || nextSection === section + 1));
     for (let i = pending ? -1 : 0; i < titles.length; i++) {
-      const section = i < 0 ? 3 : Number(titles[i].str.trim()[0]);
+      const section = i < 0 ? pending! : Number(titles[i].str.trim()[0]);
       if (section === 5) break;
       const top = titles[i]?.transform[5] ?? Infinity;
       const end = titles[i + 1]?.transform[5] ?? 0;
       const pairs = rules.flatMap((left) => rules.filter((right) => Math.abs(right[1] - left[1]) < 0.25 && right[0] >= left[2] && right[0] - left[2] < 3).map((right) => ({ y: left[1], split: right[0] })))
         .filter((rule) => rule.y < top && rule.y > end).sort((a, b) => b.y - a.y);
       const continuation = i < 0;
-      const table = continuation ? tables[1].map((row) => [...row]) : [["Domínio", headings[section]]];
-      if (pairs.length < 2 || pairs.length > 5 || (section !== 3 && pairs.length !== 5) || pairs.some((rule) => Math.abs(rule.split - pairs[0].split) > 2)) continue;
+      const table = continuation ? tables[section - 2].map((row) => [...row]) : [["Domínio", headings[section]]];
+      if (pairs.length < 2 || pairs.length > 5 || (section === 2 && pairs.length !== 5) || pairs.some((rule) => Math.abs(rule.split - pairs[0].split) > 2)) continue;
       let valid = true;
       for (let j = 0; j < pairs.length - 1; j++) {
         const band = words.filter((word) => word.str.trim() && word.transform[5] < pairs[j].y && word.transform[5] > pairs[j + 1].y).sort(readingOrder);
-        const domain = canonicalReportDomain(join(band.filter((word) => word.transform[4] < pairs[j].split)));
+        const left = join(band.filter((word) => word.transform[4] < pairs[j].split));
+        const domain = canonicalReportDomain(left);
         const right = join(band.filter((word) => word.transform[4] >= pairs[j].split));
+        const items = right.split(/[▪•●■‣]/u).map((item) => item.trim().replace(/(\p{L}-)\s+(?=\p{Ll})/gu, "$1")).filter(Boolean);
+        if (continuation && j === 0 && !left && /^[▪•●■‣]/u.test(right) && items.length) {
+          table.at(-1)!.push(...items);
+          continue;
+        }
         if (!domain || table.some(([label]) => label === domain)) { valid = false; break; }
         if (section === 2 && /^(?:Excelente|Muito bom|Bom|Suficiente|Insuficiente)$/iu.test(right)) table.push([domain, right]);
-        else if (section > 2 && /^[▪•●■‣]/u.test(right)) table.push([domain, ...right.split(/[▪•●■‣]/u).map((item) => item.trim().replace(/(\p{L}-)\s+(?=\p{Ll})/gu, "$1")).filter(Boolean)]);
+        else if (section > 2 && /^[▪•●■‣]/u.test(right) && items.length) table.push([domain, ...items]);
         else { valid = false; break; }
       }
-      if (valid && (table.length === 5 || (section === 3 && table.length > 1 && table.length < 5))) tables[section - 2] = table;
+      if (valid && (table.length === 5 || (section > 2 && table.length > 1 && table.length < 5))) tables[section - 2] = table;
     }
   }
-  return parseValidatedReportTables(tables.filter(Boolean));
+  return parseValidatedReportTables(tables.filter((table) => table?.length === 5));
 }
 
 export type ValidatedReportStructure = {

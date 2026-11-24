@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import JSZip from "jszip";
 import sharp from "sharp";
+import { extractVisitedSchools, extractVisitScope } from "./validated-report-structure";
 
 const SIMPLIFIED_REPORT_VERSION = "2026.11.24-v39.4";
 const BODY_FONT_HALF_POINTS = 20;
@@ -20,7 +21,6 @@ type ReportContent = {
 
 type SchoolMeta = {
   dates: string;
-  schools: string[];
 };
 
 type ValidatedMeta = { school?: string; observationDates?: string; visitDates?: string; schools?: string[] };
@@ -109,18 +109,7 @@ function extractSchoolMeta(sourceReport: string): SchoolMeta {
   const lastDate = dates.at(-1);
   const formattedDates = lastDate ? `${lastDate[1]} e ${lastDate[2]} de ${lastDate[3].toLowerCase()} de ${lastDate[4]}` : "[datas da visita]";
 
-  const intro = source.split(/Escala de avaliação|2\.\s*Quadro resumo/i)[0];
-  const observationMatches = [...intro.matchAll(/(?:realizou|realizada|efetuada)[^.]{0,120}observa(?:ção|da)[^.]*?\b(?:na|no|nas|nos)\s+([^.]+)/gi)];
-  const observedList = observationMatches.at(-1)?.[1] || "";
-  const observedSchools = observedList
-    .split(/\s*(?:,\s*|\s+e\s+)(?:na|no|nas|nos)\s+/i)
-    .map((value) => value.trim().replace(/\s+/g, " "))
-    .filter((value) => /^(?:Escola|Jardim de Infância)\b/i.test(value));
-  const candidates = (observedSchools.length ? observedSchools : [...intro.matchAll(/\b(?:Escola|Jardim de Infância)\s+(?:Básica(?:\s+e\s+Secundária)?|Secundária)?\s*(?:de|do|da|dos|das)?\s*[^,.;:]+/gi)].map((match) => match[0]))
-    .map((value) => String(value).trim().replace(/\s+/g, " "))
-    .filter((value) => !/^Escolas\b/i.test(value) && !/Agrupamento/i.test(value));
-  const unique = candidates.filter((value, index) => candidates.findIndex((candidate) => normalize(candidate) === normalize(value)) === index);
-  return { dates: formattedDates, schools: unique.slice(-8) };
+  return { dates: formattedDates };
 }
 
 function naturalList(values: string[]) {
@@ -133,7 +122,7 @@ function fixedIntroduction(audience: Audience, school: string, sourceReport: str
   const meta = {
     visitDates: validatedMeta?.visitDates || extracted.dates,
     observationDates: validatedMeta?.observationDates || "",
-    schools: validatedMeta?.schools?.length ? validatedMeta.schools : extracted.schools,
+    schools: sourceReport.trim() ? extractVisitedSchools(sourceReport, school) : (validatedMeta?.schools || []).filter((name) => !/(?:^|\s)X+(?=\s|$)/iu.test(name)),
   };
   const establishments = naturalList(meta.schools);
   const count = meta.schools.length;
@@ -141,6 +130,9 @@ function fixedIntroduction(audience: Audience, school: string, sourceReport: str
   const unit = grouped ? "do Agrupamento" : "da Escola";
   const article = grouped ? "o" : "a";
   const visited = grouped && count > 1 ? ` e estiveram nas ${["", "", "duas", "três", "quatro", "cinco", "seis", "sete", "oito"][count] || count} escolas do Agrupamento: ${establishments}` : grouped && count === 1 ? ` e estiveram no estabelecimento ${establishments}` : "";
+  const scope = extractVisitScope(sourceReport);
+  const collective = grouped && /^(?:o jardim de infância e )?tod[oa]s?\s+(?:as|os)\s+(?:escolas(?: básicas)?|estabelecimentos) do agrupamento$/iu.test(scope);
+  const visitDetail = collective ? ` e visitaram ${scope}` : visited;
   const opening = `Entre os dias ${meta.visitDates}, uma equipa coordenada pela Inspeção-Geral da Educação e Ciência visitou ${article} `;
   if (audience === "alunos") {
     return [
@@ -148,13 +140,13 @@ function fixedIntroduction(audience: Audience, school: string, sourceReport: str
         { text: opening }, { text: school, color: "42AFB6" }, { text: ` para realizar a avaliação externa ${unit}.` },
       ],
       [
-        { text: `Durante a visita, os avaliadores falaram com vários membros da comunidade educativa, incluindo alunos e encarregados de educação${visited}. Também assistiram a algumas aulas e atividades, para conhecer melhor a forma como se trabalha e aprende ${grouped && count > 1 ? "em cada escola" : "na escola"}.` },
+        { text: `Durante a visita, os avaliadores falaram com vários membros da comunidade educativa, incluindo alunos e encarregados de educação${visitDetail}. Também assistiram a algumas aulas e atividades, para conhecer melhor a forma como se trabalha e aprende ${grouped && (collective || count > 1) ? "nos estabelecimentos observados" : "na escola"}.` },
       ],
     ];
   }
   return [[
     { text: opening }, { text: school, color: "31849B" },
-    { text: `, com o objetivo de proceder à respetiva avaliação externa. Durante a visita, conversámos com representantes da comunidade educativa, incluindo encarregados de educação e alunos${visited.replace("e estiveram", "e estivemos")}. Também observámos algumas atividades e aulas para conhecer melhor a dinâmica educativa${grouped && count ? " nos estabelecimentos observados" : " da escola"}.` },
+    { text: `, com o objetivo de proceder à respetiva avaliação externa. Durante a visita, conversámos com representantes da comunidade educativa, incluindo encarregados de educação e alunos${visitDetail.replace("e estiveram", "e estivemos").replace("e visitaram", "e visitámos")}. Também observámos algumas atividades e aulas para conhecer melhor a dinâmica educativa${grouped && (collective || count) ? " nos estabelecimentos observados" : " da escola"}.` },
   ], [
     { text: `A avaliação ${unit} incidiu em quatro grandes áreas: Autoavaliação (o que é que a escola faz para melhorar), Liderança e gestão (${grouped ? "como é liderado e gerido o Agrupamento" : "como é liderada e gerida a Escola"}), Prestação do serviço educativo (como se ensina, aprende e avalia) e Resultados (que resultados académicos e outros têm os alunos).` },
   ]];

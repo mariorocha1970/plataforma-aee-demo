@@ -1,4 +1,23 @@
 export const SIMPLIFIED_DOMAINS = ["Autoavaliação", "Liderança e Gestão", "Prestação do Serviço Educativo", "Resultados"] as const;
+export const SIMPLIFIED_REPORT_VERSION = "2026.11.23-v37";
+
+export function extractReportSchool(report: string, tableValues: string[] = []) {
+  const unit = /^(?:Agrupamento de Escolas|Escola)\s+\p{L}/iu;
+  const prose = report.replace(/\s+/g, " ");
+  const named = prose.match(/resultados da avaliação externa d[oa]\s+((?:Agrupamento de Escolas|Escola)\s+.+?)(?=,|[.;]|\s+realizad[ao]\b|$)/iu)?.[1];
+  return named?.trim() || tableValues.find((value) => unit.test(value.trim()))?.trim() || "";
+}
+
+export function extractVisitedSchools(report: string, school: string) {
+  const prose = report.replace(/\s+/g, " ");
+  const named = prose.match(/A equipa de avaliação externa visitou\s+(.+?),\s+tendo realizado/iu)?.[1];
+  if (named) return named.split(/,\s*(?=(?:EB|Escola|Jardim)\b)/iu).map((value) => value.trim()).filter(Boolean);
+  if (/^Escola\s/iu.test(school)) {
+    const visit = prose.match(/A equipa de avaliação externa visitou\s+([^.!?]+)/iu)?.[1];
+    if (visit?.toLocaleLowerCase("pt-PT").includes(school.toLocaleLowerCase("pt-PT"))) return [school];
+  }
+  return [];
+}
 
 export type ValidatedReportStructure = {
   classificacoes: Array<{ dominio: string; classificacao: string }>;

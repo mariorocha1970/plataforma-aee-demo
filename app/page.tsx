@@ -1143,7 +1143,16 @@ async function extractValidatedReportStructure(file: File, reportText: string): 
   const year = coreProperties.match(/<(?:dcterms:)?modified[^>]*>(20\d{2})-/i)?.[1]
     || coreProperties.match(/<(?:dcterms:)?created[^>]*>(20\d{2})-/i)?.[1]
     || "";
-  return addValidatedMetadata(structure, reportText, tables.flat(2), year);
+  const labels: string[] = [];
+  for (const part of Object.keys(zip.files).filter((name) => /^word\/(?:header|footer)\d+\.xml$/.test(name))) {
+    const content = await zip.file(part)?.async("string");
+    if (!content) continue;
+    const xml = new DOMParser().parseFromString(content, "application/xml");
+    for (const paragraph of Array.from(xml.getElementsByTagNameNS("*", "p"))) {
+      labels.push(Array.from(paragraph.getElementsByTagNameNS("*", "t")).map((node) => node.textContent || "").join(""));
+    }
+  }
+  return addValidatedMetadata(structure, reportText, [...tables.flat(2), ...labels], year);
 }
 
 function addValidatedMetadata(structure: ValidatedReportStructure, reportText: string, tableValues: string[] = [], year = "") {
@@ -3830,7 +3839,15 @@ export default function Home() {
           });
           pages.push({ words, rules });
         }
-        structure = addValidatedMetadata(parseValidatedReportPdf(pages), text);
+        const labels = pages.flatMap(({ words }) => {
+          const lines = new Map<number, string[]>();
+          for (const word of words) {
+            const y = Math.round(word.transform[5]);
+            lines.set(y, [...(lines.get(y) || []), word.str]);
+          }
+          return [...lines.values()].map((line) => line.join(" ").replace(/\s+/g, " ").trim());
+        });
+        structure = addValidatedMetadata(parseValidatedReportPdf(pages), text, labels);
         const page = await pdf.getPage(1);
         const ops = await page.getOperatorList();
         let matrix = [1, 0, 0, 1, 0, 0];

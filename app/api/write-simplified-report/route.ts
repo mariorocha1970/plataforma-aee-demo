@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { SIMPLIFIED_DOMAINS, validateGeneratedReport, type ValidatedReportStructure } from "../../validated-report-structure";
 
-const SIMPLIFIED_REPORT_VERSION = "2026.11.23-v39.3";
+const SIMPLIFIED_REPORT_VERSION = "2026.11.24-v39.4";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -77,10 +77,10 @@ ${JSON.stringify({ classificacoes: structure.classificacoes, pontosFortes: struc
 
 Reformule cada item dentro do domínio em que se encontra, preservando exatamente a quantidade e a ordem. Não transfira, una, divida ou omita itens. As classificações são decisões da equipa e não podem ser alteradas.`;
 
-    const students = `DESTINATÁRIOS: alunos entre os 10 e os 16 anos.
-Use frases curtas, diretas e voz ativa. Empregue vocabulário corrente, adequado a alunos entre os 10 e os 16 anos, sem tom infantil. Explique em linguagem comum qualquer conceito técnico indispensável.
+    const students = `DESTINATÁRIOS: alunos dos níveis efetivamente frequentados na escola avaliada, conforme o relatório. Nunca introduza níveis de ensino ou públicos que a fonte não atribua à escola.
+Use frases curtas, diretas e voz ativa. Empregue vocabulário corrente adequado ao público, sem tom infantil. Explique em linguagem comum qualquer conceito técnico indispensável.
 Comece preferencialmente por sujeitos concretos: «A escola», «Os professores», «Os alunos», «As famílias» ou o nome simples da prática. Evite começar por nomes abstratos como «consolidação», «robustecimento», «aprofundamento», «monitorização» ou «articulação».
-Cada bullet deve ser compreensível isoladamente por um aluno de 10 anos e não deve exceder, em regra, 160 caracteres.
+Cada bullet deve ser compreensível isoladamente e não deve exceder, em regra, 160 caracteres.
 Não use, sem explicação imediata em palavras comuns, expressões como «contratualização interna», «referenciais», «ecossistema digital», «monitorização sistemática», «mecanismos integrados», «paradigma de ensino», «supervisão pedagógica», «observação de pares», «metodologias ativas», «intencionalidade estratégica», «cocriação», «validação externa», «assimetrias» ou «resiliência».
 PONTOS FORTES: apresente como «O que está a correr bem», por domínio. Diga diretamente o que a escola faz bem e qual o efeito para os alunos.
 ÁREAS DE MELHORIA: apresente como «O que pode melhorar», por domínio. Diga claramente o que ainda não funciona bem ou precisa de ser reforçado, sem converter fragilidades em elogios nem escrever recomendações formais.

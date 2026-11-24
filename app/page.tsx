@@ -2,10 +2,10 @@
 
 import { ChangeEvent, useEffect, useMemo, useState } from "react";
 import { normalizeAcronyms } from "./text-normalization";
-import { parseValidatedReportTables, SIMPLIFIED_DOMAINS, type ValidatedReportStructure } from "./validated-report-structure";
+import { extractReportSchool, extractVisitedSchools, parseValidatedReportTables, SIMPLIFIED_DOMAINS, type ValidatedReportStructure } from "./validated-report-structure";
 
 const APP_BUILD = "2026.11.23-v38.4";
-const SIMPLIFIED_REPORT_VERSION = "2026.11.23-v39.3";
+const SIMPLIFIED_REPORT_VERSION = "2026.11.24-v39.4";
 const ANALYSIS_ENGINE_VERSION = 19;
 const MAIN_STORAGE_KEY = "aee-piloto-v2";
 const RECOVERY_DB_NAME = "plataforma-aee-recovery";
@@ -1140,16 +1140,14 @@ async function extractValidatedReportStructure(file: File, reportText: string): 
   );
   const structure = parseValidatedReportTables(tables);
   const normalizedText = reportText.replace(/\s+/g, " ");
-  const school = normalizedText.match(/resultados da avaliação externa d[oa]\s+(Agrupamento de Escolas[^,.;]+)/i)?.[1]?.trim()
-    || tables.flat(2).find((value) => /^Agrupamento de Escolas\b/i.test(value))?.trim() || "";
+  const school = extractReportSchool(reportText, tables.flat(2));
   const coreProperties = await zip.file("docProps/core.xml")?.async("string") || "";
   const year = coreProperties.match(/<(?:dcterms:)?modified[^>]*>(20\d{2})-/i)?.[1]
     || coreProperties.match(/<(?:dcterms:)?created[^>]*>(20\d{2})-/i)?.[1]
     || "";
   const observation = normalizedText.match(/observação da prática educativa e letiva[^.!?]{0,100}?dias?\s+(\d{1,2})\s+e\s+(\d{1,2})\s+de\s+([\p{L}]+)/iu);
   const visits = normalizedText.match(/visita às instalações e entrevistas[^.!?]{0,140}?entre os dias\s+(\d{1,2})\s+e\s+(\d{1,2})\s+de\s+([\p{L}]+)/iu);
-  const visitedSentence = normalizedText.match(/A equipa de avaliação externa visitou\s+(.+?),\s+tendo realizado/iu)?.[1] || "";
-  const schools = visitedSentence.split(/,\s*(?=(?:EB|Escola|Jardim)\b)/i).map((value) => value.trim()).filter(Boolean);
+  const schools = extractVisitedSchools(reportText, school);
   structure.metadata = {
     school,
     observationDates: observation ? `${observation[1]} e ${observation[2]} de ${observation[3]}${year ? ` de ${year}` : ""}` : "",
@@ -1158,7 +1156,6 @@ async function extractValidatedReportStructure(file: File, reportText: string): 
   };
   if (!school) structure.warnings.push("Não foi possível confirmar a identificação da unidade orgânica.");
   if (!visits) structure.warnings.push("Não foi possível confirmar as datas das visitas e entrevistas.");
-  if (!schools.length) structure.warnings.push("Não foi possível confirmar os estabelecimentos visitados.");
   structure.complete = structure.warnings.length === 0;
   return structure;
 }
@@ -3887,7 +3884,6 @@ export default function Home() {
       setValidatedReportName(file.name);
       setValidatedReportText(text);
       setValidatedReportStructure(structure);
-      if (structure.metadata?.school) setSchoolName(structure.metadata.school);
       if (validatedReportCoverPreview) URL.revokeObjectURL(validatedReportCoverPreview);
       setValidatedReportCover(cover);
       setValidatedReportCoverPreview(cover ? URL.createObjectURL(cover.file) : "");
@@ -4071,7 +4067,9 @@ export default function Home() {
       const graphs = (graphsOverride ?? simplifiedGraphs).filter((graph) => !graph.audience || graph.audience === audience);
       const form = new FormData();
       form.append("audience", audience);
-      form.append("school", schoolName);
+      const reportSchool = validatedReportStructure?.metadata?.school;
+      if (!reportSchool) throw new Error("Volte a carregar o relatório técnico para confirmar a identificação da escola.");
+      form.append("school", reportSchool);
       form.append("content", JSON.stringify(content));
       form.append("questionnaireAnalysis", JSON.stringify(analysis));
       form.append("sourceReport", validatedReportText);
@@ -4089,7 +4087,7 @@ export default function Home() {
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
-      link.download = `${schoolName}-${audience}.docx`.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9_.-]+/g, "-");
+      link.download = `${reportSchool}-${audience}.docx`.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9_.-]+/g, "-");
       link.click();
       URL.revokeObjectURL(url);
       setSimplifiedStatus("Documento Word exportado. Confirme a paginação final e a legibilidade dos gráficos.");
@@ -4568,7 +4566,7 @@ export default function Home() {
               </> : <div className="empty-analysis"><strong>Nenhum relatório validado carregado.</strong><p>A geração das versões simplificadas permanece bloqueada.</p></div>}
             </section>
             <section className="simplified-source-card">
-              <div className="section-heading"><div><p className="eyebrow">2 · Questionários e elementos gráficos</p><h3>Resultados a integrar nas duas versões</h3><p>Carregue Q1 e Q2 para o relatório dos alunos e Q5 e Q6 para o relatório das famílias. A plataforma lê as tabelas, valida as percentagens e atualiza diretamente os gráficos dos templates, sem usar IA nos cálculos.</p></div><div className="action-row"><label className="button secondary file-button">Inserir gráficos manualmente<input type="file" multiple accept="image/png,image/jpeg" onChange={loadSimplifiedGraphs} hidden /></label><label className="button secondary file-button">Inserir PDF dos questionários<input type="file" multiple accept=".pdf,application/pdf" onChange={loadSimplifiedQuestionnaires} hidden /></label><button className="button secondary" disabled={!simplifiedQuestionnaireText || simplifiedWorking} onClick={analyzeSimplifiedQuestionnaires}>Validar Q1, Q2, Q5 e Q6 · sem IA</button></div></div>
+              <div className="section-heading"><div><p className="eyebrow">2 · Questionários e elementos gráficos</p><h3>Resultados a integrar nas duas versões</h3><p>Carregue apenas os questionários aplicáveis: Q1 ou Q2 para alunos e Q5 ou Q6 para famílias. A plataforma lê as tabelas, valida as percentagens e atualiza diretamente os gráficos dos templates, sem usar IA nos cálculos.</p></div><div className="action-row"><label className="button secondary file-button">Inserir gráficos manualmente<input type="file" multiple accept="image/png,image/jpeg" onChange={loadSimplifiedGraphs} hidden /></label><label className="button secondary file-button">Inserir PDF dos questionários<input type="file" multiple accept=".pdf,application/pdf" onChange={loadSimplifiedQuestionnaires} hidden /></label><button className="button secondary" disabled={!simplifiedQuestionnaireText || simplifiedWorking} onClick={analyzeSimplifiedQuestionnaires}>Validar questionários · sem IA</button></div></div>
               {simplifiedQuestionnaireFiles.length > 0 && <div className="file-chips">{simplifiedQuestionnaireFiles.map((name) => <span className="badge" key={name}>{name}</span>)}</div>}
               {Array.isArray(simplifiedQuestionnaireAnalysis?.grupos) && simplifiedQuestionnaireAnalysis.grupos.length > 0 && <div className="questionnaire-analysis-preview">{simplifiedQuestionnaireAnalysis.grupos.map((group: any) => <article key={group.grupo}><strong>{group.grupo}</strong><span>{group.maiorConcordancia?.length ?? 0} itens de maior concordância · {group.menorConcordancia?.length ?? 0} itens de menor concordância</span><details><summary>Confirmar afirmações e valores</summary><b>Maior concordância</b><ul>{(group.maiorConcordancia || []).map((item: any) => <li key={`pos-${item.numero}`}>{item.numero} · {item.total}% — {item.item}</li>)}</ul><b>Maior discordância</b><ul>{(group.menorConcordancia || []).map((item: any) => <li key={`neg-${item.numero}`}>{item.numero} · {item.total}% — {item.item}</li>)}</ul></details></article>)}</div>}
               {simplifiedGraphs.length > 0 && <div className="simplified-graph-grid">{simplifiedGraphs.map((graph) => <article key={graph.id}><img src={graph.preview} alt={graph.name} /><label>Legenda<input value={graph.name} onChange={(event) => setSimplifiedGraphs((current) => current.map((item) => item.id === graph.id ? { ...item, name: event.target.value } : item))} /></label><button className="text-button danger-text" onClick={() => { URL.revokeObjectURL(graph.preview); setSimplifiedGraphs((current) => current.filter((item) => item.id !== graph.id)); }}>Remover</button></article>)}</div>}
@@ -4580,7 +4578,7 @@ export default function Home() {
             {simplifiedStatus && <div className="statistics-status" role="status">{simplifiedStatus}</div>}
             <section className="simplified-editor-card">
               <div className="simplified-tabs"><button className={simplifiedAudience === "alunos" ? "selected" : ""} onClick={() => setSimplifiedAudience("alunos")}>Relatório — Alunos</button><button className={simplifiedAudience === "familias" ? "selected family" : "family"} onClick={() => setSimplifiedAudience("familias")}>Relatório — Famílias</button></div>
-              <div className="section-heading"><div><p className="eyebrow">3 · Redação e validação</p><h3>{simplifiedAudience === "alunos" ? "Versão para alunos dos 10 aos 16 anos" : "Versão para pais e encarregados de educação"}</h3><p>{simplifiedAudience === "alunos" ? "Linguagem clara, não infantilizada, com o que está a correr bem, o que pode melhorar e projetos interessantes." : "Linguagem acessível, com pontos fortes, áreas de melhoria, projetos e valorização do papel das famílias."}</p></div><div className="action-row"><button className="button primary" disabled={!validatedReportConfirmed || !validatedReportStructure?.complete || simplifiedWorking} onClick={() => generateSimplifiedReport(simplifiedAudience)}>{simplifiedWorking ? "A processar…" : content ? "Rever novamente com IA · 1 chamada" : "Gerar com validação institucional · 1 chamada"}</button><button className="button secondary" disabled={!content || content.generation?.version !== SIMPLIFIED_REPORT_VERSION || simplifiedWorking} onClick={() => exportSimplifiedReport(simplifiedAudience)}>Guardar Word com template</button></div></div>
+              <div className="section-heading"><div><p className="eyebrow">3 · Redação e validação</p><h3>{simplifiedAudience === "alunos" ? "Versão para alunos" : "Versão para pais e encarregados de educação"}</h3><p>{simplifiedAudience === "alunos" ? "Linguagem clara, não infantilizada, com o que está a correr bem, o que pode melhorar e projetos interessantes." : "Linguagem acessível, com pontos fortes, áreas de melhoria, projetos e valorização do papel das famílias."}</p></div><div className="action-row"><button className="button primary" disabled={!validatedReportConfirmed || !validatedReportStructure?.complete || simplifiedWorking} onClick={() => generateSimplifiedReport(simplifiedAudience)}>{simplifiedWorking ? "A processar…" : content ? "Rever novamente com IA · 1 chamada" : "Gerar com validação institucional · 1 chamada"}</button><button className="button secondary" disabled={!content || content.generation?.version !== SIMPLIFIED_REPORT_VERSION || simplifiedWorking} onClick={() => exportSimplifiedReport(simplifiedAudience)}>Guardar Word com template</button></div></div>
               {content && content.generation?.version !== SIMPLIFIED_REPORT_VERSION && <div className="statistics-status"><strong>Exportação bloqueada:</strong> este conteúdo foi criado por um motor anterior ou pelo antigo rascunho local. Gere novamente com a versão atual.</div>}
               {simplifiedStatus && <div className="statistics-status" role="status">{simplifiedStatus}</div>}
               {!content ? <div className="empty-analysis"><strong>Esta versão ainda não foi produzida.</strong><p>O relatório para alunos e o relatório para famílias são gerados e validados separadamente.</p></div> : <div className="simplified-content-editor">

@@ -5,16 +5,22 @@ export function extractReportSchool(report: string, tableValues: string[] = []) 
   const unit = /^(?:Agrupamento de Escolas|Escola)\s+\p{L}/iu;
   const prose = report.replace(/\s+/g, " ");
   const named = prose.match(/resultados da avaliação externa d[oa]\s+((?:Agrupamento de Escolas|Escola)\s+.+?)(?=,|[.;]|\s+realizad[ao]\b|$)/iu)?.[1];
-  return named?.trim() || tableValues.find((value) => unit.test(value.trim()))?.trim() || "";
+  const base = named?.trim() || tableValues.find((value) => unit.test(value.trim()))?.trim() || "";
+  if (!base) return "";
+  const escaped = base.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+");
+  const withMunicipality = new RegExp(`^\\s*${escaped}\\s+[–—-]\\s+[\\p{L}][\\p{L} .’'()-]{0,65}$`, "iu");
+  return [...tableValues, ...report.split(/\r?\n/)].map((line) => line.trim().replace(/[ \t]+/g, " "))
+    .find((line) => withMunicipality.test(line)) || base;
 }
 
 export function extractVisitedSchools(report: string, school: string) {
   const prose = report.replace(/\s+/g, " ");
   const named = prose.match(/A equipa de avaliação externa visitou\s+(.+?),\s+tendo realizado/iu)?.[1];
-  if (named) return named.split(/,\s*(?=(?:EB|Escola|Jardim)\b)/iu).map((value) => value.trim()).filter(Boolean);
+  if (named) return named.replace(/^(?:a|o|as|os)\s+/iu, "").split(/(?:,\s*|\s+e\s+)(?:a\s+|o\s+)?(?=(?:EB|Escola|Jardim)\b)/iu).map((value) => value.trim()).filter(Boolean);
   if (/^Escola\s/iu.test(school)) {
     const visit = prose.match(/A equipa de avaliação externa visitou\s+([^.!?]+)/iu)?.[1];
-    if (visit?.toLocaleLowerCase("pt-PT").includes(school.toLocaleLowerCase("pt-PT"))) return [school];
+    const base = school.split(/\s+[–—-]\s+/u)[0];
+    if (visit?.toLocaleLowerCase("pt-PT").includes(base.toLocaleLowerCase("pt-PT"))) return [base];
   }
   return [];
 }

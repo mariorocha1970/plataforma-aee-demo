@@ -706,12 +706,6 @@ export async function buildTemplateReport(args: { audience: Audience; school: st
       });
     }
   }
-  let chartLabel = 0;
-  filledDocument = filledDocument.replace(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g, (block) => {
-    if (!/<c:chart\b/.test(block)) return block;
-    const label = `Gráfico ${++chartLabel} — Respostas ao questionário ${args.audience === "alunos" ? "dos alunos" : "das famílias"}`;
-    return `<w:p><w:pPr><w:keepNext/><w:keepLines/><w:spacing w:after="40"/><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:sz w:val="20"/></w:rPr><w:t>${escapeXml(label)}</w:t></w:r></w:p>${block}`;
-  });
   if (!/<c:chart\b/.test(filledDocument)) filledDocument = filledDocument.replace(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g, (block) => /^(?:Através dos questionários|Na apresentação dos resultados|Na apresentação dos gráficos)/i.test(paragraphText(block).trim()) ? "" : block);
   zip.file(documentPath, filledDocument);
 

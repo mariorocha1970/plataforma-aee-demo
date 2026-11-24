@@ -726,8 +726,10 @@ export async function buildTemplateReport(args: { audience: Audience; school: st
   if (!/<c:chart\b/.test(filledDocument)) filledDocument = filledDocument.replace(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g, (block) => /^(?:Através dos questionários|Na apresentação dos resultados|Na apresentação dos gráficos)/i.test(paragraphText(block).trim()) ? "" : block);
   zip.file(documentPath, filledDocument);
 
-  if (args.cover && /^image\/(?:png|jpeg)$/.test(args.cover.type)) {
-    const coverImage = await exactCoverImage(args.cover);
+  {
+    const coverImage = args.cover && /^image\/(?:png|jpeg)$/.test(args.cover.type)
+      ? await exactCoverImage(args.cover)
+      : await sharp({ create: { width: 20, height: 20, channels: 3, background: "#ffffff" } }).jpeg().toBuffer();
     if (args.audience === "alunos") {
       zip.file("word/media/image2.jpeg", coverImage);
       zip.file("word/media/image3.jpeg", coverImage);

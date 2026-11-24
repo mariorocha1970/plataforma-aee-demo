@@ -61,7 +61,7 @@ export async function POST(request: NextRequest) {
 - Não acrescente factos, interpretações, conclusões, recomendações ou projetos que não constem do relatório.
 - Preserve integralmente o sentido, a graduação e os limites dos juízos da equipa de avaliação.
 - Inclua todos os pontos fortes do ponto 3 e todas as áreas de melhoria do ponto 4, sem os fundir de modo a perder ideias.
-- Use os quatro domínios, mesmo quando não existam elementos específicos; nesse caso declare expressamente a ausência.
+- Use os quatro domínios. Se a lista validada de um domínio estiver vazia, devolva uma lista vazia, sem inventar um item para declarar a ausência.
 - Cada item de origem corresponde obrigatoriamente a um único bullet de destino, no mesmo domínio e na mesma posição.
 - Cada projeto, iniciativa, clube, parceria, atividade ou oferta formativa explicitamente referido nos pontos 2, 3, 4 ou 5 corresponde a um bullet de destino. Não selecione apenas uma amostra, não funda projetos distintos e não omita projetos por razões de síntese.
 - Preserve todas as componentes essenciais do juízo de origem, incluindo práticas, destinatários, efeitos, reservas e dimensões como equidade, autonomia ou avaliação formativa. Simplificar a linguagem não autoriza reduzir o alcance do juízo.

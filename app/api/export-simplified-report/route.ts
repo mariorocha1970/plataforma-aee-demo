@@ -1,6 +1,6 @@
 import { buildTemplateReport } from "../../template-docx";
 
-const SIMPLIFIED_REPORT_VERSION = "2026.11.23-v39.3";
+const SIMPLIFIED_REPORT_VERSION = "2026.11.24-v39.4";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";

@@ -2,7 +2,7 @@
 
 import { ChangeEvent, useEffect, useMemo, useState } from "react";
 import { normalizeAcronyms } from "./text-normalization";
-import { extractReportSchool, extractVisitedSchools, parseValidatedReportTables, SIMPLIFIED_DOMAINS, type ValidatedReportStructure } from "./validated-report-structure";
+import { extractReportSchool, extractVisitedSchools, parseValidatedReportPdf, parseValidatedReportTables, SIMPLIFIED_DOMAINS, type ValidatedReportStructure } from "./validated-report-structure";
 
 const APP_BUILD = "2026.11.23-v38.4";
 const SIMPLIFIED_REPORT_VERSION = "2026.11.24-v39.4";
@@ -1139,19 +1139,23 @@ async function extractValidatedReportStructure(file: File, reportText: string): 
     )
   );
   const structure = parseValidatedReportTables(tables);
-  const normalizedText = reportText.replace(/\s+/g, " ");
-  const school = extractReportSchool(reportText, tables.flat(2));
   const coreProperties = await zip.file("docProps/core.xml")?.async("string") || "";
   const year = coreProperties.match(/<(?:dcterms:)?modified[^>]*>(20\d{2})-/i)?.[1]
     || coreProperties.match(/<(?:dcterms:)?created[^>]*>(20\d{2})-/i)?.[1]
     || "";
-  const observation = normalizedText.match(/observação da prática educativa e letiva[^.!?]{0,100}?dias?\s+(\d{1,2})\s+e\s+(\d{1,2})\s+de\s+([\p{L}]+)/iu);
-  const visits = normalizedText.match(/visita às instalações e entrevistas[^.!?]{0,140}?entre os dias\s+(\d{1,2})\s+e\s+(\d{1,2})\s+de\s+([\p{L}]+)/iu);
+  return addValidatedMetadata(structure, reportText, tables.flat(2), year);
+}
+
+function addValidatedMetadata(structure: ValidatedReportStructure, reportText: string, tableValues: string[] = [], year = "") {
+  const normalizedText = reportText.replace(/\s+/g, " ");
+  const school = extractReportSchool(reportText, tableValues);
+  const observation = normalizedText.match(/observação da prática educativa e letiva[^.!?]{0,100}?dias?\s+(\d{1,2})(?:\s+e\s+(\d{1,2}))?\s+de\s+([\p{L}]+)(?:\s+de\s+(20\d{2}))?/iu);
+  const visits = normalizedText.match(/visita às instalações e entrevistas[^.!?]{0,140}?entre os dias\s+(\d{1,2})\s+e\s+(\d{1,2})\s+de\s+([\p{L}]+)(?:\s+de\s+(20\d{2}))?/iu);
   const schools = extractVisitedSchools(reportText, school);
   structure.metadata = {
     school,
-    observationDates: observation ? `${observation[1]} e ${observation[2]} de ${observation[3]}${year ? ` de ${year}` : ""}` : "",
-    visitDates: visits ? `${visits[1]} a ${visits[2]} de ${visits[3]}${year ? ` de ${year}` : ""}` : "",
+    observationDates: observation ? [observation[1] + (observation[2] ? ` e ${observation[2]}` : ""), observation[3], observation[4] || year].filter(Boolean).join(" de ") : "",
+    visitDates: visits ? [`${visits[1]} a ${visits[2]}`, visits[3], visits[4] || year].filter(Boolean).join(" de ") : "",
     schools,
   };
   if (!school) structure.warnings.push("Não foi possível confirmar a identificação da unidade orgânica.");
@@ -3806,22 +3810,65 @@ export default function Home() {
       const chunks = await extractFile(file);
       const text = chunks.map((item) => item.text).join("\n\n").trim();
       if (text.length < 500) throw new Error("O documento não contém texto suficiente ou necessita de OCR.");
-      const structure = await extractValidatedReportStructure(file, text);
+      const isPdf = /\.pdf$/i.test(file.name);
+      let structure = isPdf ? undefined : await extractValidatedReportStructure(file, text);
       let cover: { file: File; width: number; height: number } | null = null;
-      if (file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")) {
+      if (isPdf) {
         const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
         pdfjs.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/legacy/build/pdf.worker.min.mjs", import.meta.url).toString();
-        const pdf = await pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
+        const loadingTask = pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()) });
+        try {
+        const pdf = await loadingTask.promise;
+        const pages = [];
+        for (let i = 1; i <= Math.min(pdf.numPages, 15); i++) {
+          const current = await pdf.getPage(i);
+          const words = (await current.getTextContent()).items.filter((item) => "str" in item);
+          const operators = await current.getOperatorList();
+          const rules = operators.argsArray.flatMap((args, index) => {
+            const bounds = operators.fnArray[index] === pdfjs.OPS.constructPath ? args?.[2] : undefined;
+            return bounds?.length === 4 && bounds[3] - bounds[1] < 3 && bounds[2] - bounds[0] > 65 ? [Array.from(bounds as ArrayLike<number>)] : [];
+          });
+          pages.push({ words, rules });
+        }
+        structure = addValidatedMetadata(parseValidatedReportPdf(pages), text);
         const page = await pdf.getPage(1);
-        const viewport = page.getViewport({ scale: 1.65 });
+        const ops = await page.getOperatorList();
+        let matrix = [1, 0, 0, 1, 0, 0];
+        const stack: number[][] = [];
+        let best: { area: number; rect: number[] } | undefined;
+        for (let i = 0; i < ops.fnArray.length; i++) {
+          const op = ops.fnArray[i];
+          if (op === pdfjs.OPS.save) stack.push(matrix);
+          else if (op === pdfjs.OPS.restore) matrix = stack.pop() || matrix;
+          else if (op === pdfjs.OPS.transform) matrix = pdfjs.Util.transform(matrix, ops.argsArray[i]);
+          else if (op === pdfjs.OPS.paintImageXObject) {
+            const [a,b,c,d,x,y] = matrix;
+            const width = Math.abs(a) + Math.abs(c), height = Math.abs(b) + Math.abs(d);
+            const area = width * height;
+            const [, , pageWidth, pageHeight] = page.view;
+            if (width >= 70 && height >= 70 && width / height < 4 && height / width < 4 && area < pageWidth * pageHeight * 0.75 && (!best || area > best.area)) {
+              best = { area, rect: [x + Math.min(0,a) + Math.min(0,c), y + Math.min(0,b) + Math.min(0,d), x + Math.max(0,a) + Math.max(0,c), y + Math.max(0,b) + Math.max(0,d)] };
+            }
+          }
+        }
+        if (best) {
+        const viewport = page.getViewport({ scale: 2.8 });
+        const [va, vb, vc, vd, vx, vy] = viewport.transform;
+        const [left, bottom, right, top] = best.rect;
+        const [x1, y1] = [va * left + vc * bottom + vx, vb * left + vd * bottom + vy];
+        const [x2, y2] = [va * right + vc * top + vx, vb * right + vd * top + vy];
         const canvas = document.createElement("canvas");
-        canvas.width = Math.ceil(viewport.width);
-        canvas.height = Math.ceil(viewport.height);
+        canvas.width = Math.ceil(Math.abs(x2 - x1));
+        canvas.height = Math.ceil(Math.abs(y2 - y1));
         const context = canvas.getContext("2d");
         if (context) {
-          await page.render({ canvas, canvasContext: context, viewport }).promise;
+          await page.render({ canvas, canvasContext: context, viewport, transform: [1, 0, 0, 1, -Math.min(x1,x2), -Math.min(y1,y2)] }).promise;
           const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
-          if (blob) cover = { file: new File([blob], "capa-relatorio-validado.png", { type: "image/png" }), width: canvas.width, height: canvas.height };
+          if (blob) cover = { file: new File([blob], "fotografia-relatorio-validado.png", { type: "image/png" }), width: canvas.width, height: canvas.height };
+        }
+        }
+        } finally {
+          await loadingTask.destroy();
         }
       } else if (file.name.toLowerCase().endsWith(".docx")) {
         const JSZip = (await import("jszip")).default;
@@ -3881,6 +3928,7 @@ export default function Home() {
           cover = { file: dimensions.cropped || imageFile, width: dimensions.width, height: dimensions.height };
         }
       }
+      if (!structure) throw new Error("Não foi possível ler a estrutura do relatório.");
       setValidatedReportName(file.name);
       setValidatedReportText(text);
       setValidatedReportStructure(structure);

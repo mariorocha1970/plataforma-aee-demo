@@ -160,13 +160,12 @@ function replaceCoverSchool(block: string, school: string, audience: Audience) {
   const [, organisation, separator, locality] = school.match(/^(.*)(\s[–—-]\s)([^–—]+)$/u) || ["", school, "", ""];
   let index = 0;
   const last = [...block.matchAll(/<w:t(?:\s[^>]*)?>[\s\S]*?<\/w:t>/g)].length - 1;
-  const resized = block.replace(/<w:sz(Cs)? w:val="48"\/>/g, '<w:sz$1 w:val="40"/>');
-  return resized.replace(/<w:r(?:\s[^>]*)?>[\s\S]*?<\/w:r>/g, (run) => {
+  return block.replace(/<w:r(?:\s[^>]*)?>[\s\S]*?<\/w:r>/g, (run) => {
     if (!/<w:t(?:\s[^>]*)?>/.test(run)) return run;
     const position = index++;
     const value = position === 0 ? organisation : position === last ? locality : position === last - 1 ? separator : "";
     const styled = position === last ? run.replace(/<w:color\b[^>]*\/>/g, `<w:color w:val="${audience === "alunos" ? "92D050" : "CB1B4A"}"/>`) : run;
-    return styled.replace(/<w:t(?:\s[^>]*)?>[\s\S]*?<\/w:t>/, `<w:t xml:space="preserve">${escapeXml(value)}</w:t>`);
+    return styled.replace(/<w:sz(Cs)?\b[^>]*\/>/g, '<w:sz$1 w:val="48"/>').replace(/<w:t(?:\s[^>]*)?>[\s\S]*?<\/w:t>/, `<w:t xml:space="preserve">${escapeXml(value)}</w:t>`);
   });
 }
 
@@ -365,8 +364,6 @@ function chartsInDocumentFlow(xml: string, audience: Audience) {
     // A quebra fixa antes do terceiro gráfico impedia esse ajuste e, com as
     // linhas de 1 cm na tabela final, originava uma sétima página. Nos alunos,
     // o quarto gráfico inicia a página final para equilibrar a composição.
-    const startsSecondChartPage = (audience === "familias" && (chartsSeen === 1 || chartsSeen === 3))
-      || (audience === "alunos" && chartsSeen === 3);
     if (audience === "familias") {
       // Os três primeiros gráficos ocupam a página 5. O penúltimo conserva
       // altura suficiente para leitura e o último inicia a página 6, onde fica
@@ -380,7 +377,7 @@ function chartsInDocumentFlow(xml: string, audience: Audience) {
     chartsSeen += chartsInBlock;
     const before = chartsSeen > 2 ? 20 : 160;
     const after = chartsSeen > 2 ? 20 : 200;
-    const spacing = `<w:spacing w:before="${before}" w:after="${after}" w:line="240" w:lineRule="auto"/><w:jc w:val="center"/>${startsSecondChartPage ? '<w:pageBreakBefore/>' : ''}`;
+    const spacing = `<w:spacing w:before="${before}" w:after="${after}" w:line="240" w:lineRule="auto"/><w:jc w:val="center"/><w:pageBreakBefore w:val="0"/><w:keepLines/>`;
     if (/<w:pPr>/.test(block)) return block.replace(/<w:pPr>([\s\S]*?)<\/w:pPr>/, (_match, inner) => `<w:pPr>${inner
       .replace(/<w:spacing\b[^>]*\/>/g, "")
       .replace(/<w:tabs>[\s\S]*?<\/w:tabs>/g, "")
@@ -402,7 +399,8 @@ function compactRatingTable(xml: string) {
       return row.replace(/(<w:tr(?:\s[^>]*)?>)/, `$1<w:trPr>${rowHeight}<w:cantSplit/></w:trPr>`);
     });
     // A tabela de classificações usa exatamente o mesmo corpo do texto.
-    return setParagraphFontSize(compacted
+    const kept = compacted.replace(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g, setKeepNext);
+    return setParagraphFontSize(kept
       .replace(/<w:tblPr>([\s\S]*?)<\/w:tblPr>/, (_match, properties) => `<w:tblPr><w:tblW w:w="9638" w:type="dxa"/><w:jc w:val="center"/><w:tblLayout w:type="fixed"/>${properties.replace(/<w:(?:tblpPr|tblInd|tblW|jc|tblLayout)\b[^>]*\/>/g, "")}</w:tblPr>`)
       .replace(/<w:tblGrid>[\s\S]*?<\/w:tblGrid>/, '<w:tblGrid><w:gridCol w:w="4819"/><w:gridCol w:w="4819"/></w:tblGrid>')
       .replace(/<w:tcW\b[^>]*\/>/g, '<w:tcW w:w="4819" w:type="dxa"/>'), BODY_FONT_HALF_POINTS);
@@ -439,7 +437,7 @@ function closingBannerInDocumentFlow(xml: string) {
   // Separação curta e explícita entre a tabela de classificações e a faixa
   // final. Não se usa um parágrafo vazio do template, porque a sua altura
   // varia entre Word e LibreOffice e pode originar uma página adicional.
-  const separator = '<w:p><w:pPr><w:spacing w:before="0" w:after="100" w:line="20" w:lineRule="exact"/><w:rPr><w:sz w:val="2"/><w:szCs w:val="2"/></w:rPr></w:pPr></w:p>';
+  const separator = '<w:p><w:pPr><w:keepNext/><w:spacing w:before="0" w:after="100" w:line="20" w:lineRule="exact"/><w:rPr><w:sz w:val="2"/><w:szCs w:val="2"/></w:rPr></w:pPr></w:p>';
   return prefix + separator + suffix;
 }
 
@@ -708,6 +706,12 @@ export async function buildTemplateReport(args: { audience: Audience; school: st
       });
     }
   }
+  let chartLabel = 0;
+  filledDocument = filledDocument.replace(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g, (block) => {
+    if (!/<c:chart\b/.test(block)) return block;
+    const label = `Gráfico ${++chartLabel} — Respostas ao questionário ${args.audience === "alunos" ? "dos alunos" : "das famílias"}`;
+    return `<w:p><w:pPr><w:keepNext/><w:keepLines/><w:spacing w:after="40"/><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:sz w:val="20"/></w:rPr><w:t>${escapeXml(label)}</w:t></w:r></w:p>${block}`;
+  });
   if (!/<c:chart\b/.test(filledDocument)) filledDocument = filledDocument.replace(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g, (block) => /^(?:Através dos questionários|Na apresentação dos resultados|Na apresentação dos gráficos)/i.test(paragraphText(block).trim()) ? "" : block);
   zip.file(documentPath, filledDocument);
 

@@ -3857,6 +3857,12 @@ export default function Home() {
           const op = ops.fnArray[i];
           if (op === pdfjs.OPS.save) stack.push(matrix);
           else if (op === pdfjs.OPS.restore) matrix = stack.pop() || matrix;
+          else if (op === pdfjs.OPS.paintFormXObjectBegin) {
+            stack.push(matrix);
+            const formMatrix = ops.argsArray[i]?.[0];
+            if (formMatrix?.length === 6) matrix = pdfjs.Util.transform(matrix, Array.from(formMatrix));
+          }
+          else if (op === pdfjs.OPS.paintFormXObjectEnd) matrix = stack.pop() || matrix;
           else if (op === pdfjs.OPS.transform) matrix = pdfjs.Util.transform(matrix, ops.argsArray[i]);
           else if (op === pdfjs.OPS.paintImageXObject) {
             const [a,b,c,d,x,y] = matrix;

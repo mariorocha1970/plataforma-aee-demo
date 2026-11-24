@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 120;
 
 const DOMAINS = SIMPLIFIED_DOMAINS;
-const domainMap = { type: "object", additionalProperties: false, properties: Object.fromEntries(DOMAINS.map((domain) => [domain, { type: "array", items: { type: "string", maxLength: 170 } }])), required: DOMAINS };
+const domainMap = { type: "object", additionalProperties: false, properties: Object.fromEntries(DOMAINS.map((domain) => [domain, { type: "array", items: { type: "string" } }])), required: DOMAINS };
 const reportSchema = {
   type: "object", additionalProperties: false,
   properties: {
@@ -57,7 +57,7 @@ REGRAS COMUNS DOS DOIS RELATÓRIOS:
 - Organize sempre pelos quatro domínios. Se não houver elementos, declare a ausência.
 - Cada item de origem corresponde obrigatoriamente a um único bullet de destino, no mesmo domínio e na mesma posição.
 - Preserve todas as componentes essenciais do juízo de origem, incluindo práticas, destinatários, efeitos, reservas e dimensões como equidade, autonomia ou avaliação formativa. Simplificar a linguagem não autoriza reduzir o alcance do juízo.
-- Um bullet contém o juízo completo numa frase curta e não ultrapassa 160 caracteres para alunos ou 170 para famílias. Preserve a prática e o efeito essenciais, eliminando explicações secundárias.
+- Use uma frase direta por item, de preferência até 160 caracteres para alunos ou 170 para famílias. Esses valores são orientações, não limites: use uma segunda frase curta se necessário para preservar o juízo, a prática, o efeito, os destinatários ou uma ressalva relevante. Corte apenas redundâncias e detalhes secundários.
 - Reformule; não copie períodos completos.
 - Extraia as classificações apenas quando constem explicitamente do ponto 2.
 - Escreva em português europeu.

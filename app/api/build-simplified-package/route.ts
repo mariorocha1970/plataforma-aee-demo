@@ -54,7 +54,7 @@ REGRAS COMUNS DOS DOIS RELATÓRIOS:
 - Não acrescente factos, interpretações, conclusões, recomendações ou projetos inexistentes.
 - Preserve o sentido, a graduação e os limites dos juízos da equipa.
 - Inclua todos os pontos fortes do ponto 3 e todas as áreas de melhoria do ponto 4.
-- Organize sempre pelos quatro domínios. Se não houver elementos, declare a ausência.
+- Organize pelos quatro domínios. Se a lista validada de um domínio estiver vazia, devolva uma lista vazia, sem inventar um item para declarar a ausência.
 - Cada item de origem corresponde obrigatoriamente a um único bullet de destino, no mesmo domínio e na mesma posição.
 - Preserve todas as componentes essenciais do juízo de origem, incluindo práticas, destinatários, efeitos, reservas e dimensões como equidade, autonomia ou avaliação formativa. Simplificar a linguagem não autoriza reduzir o alcance do juízo.
 - Use uma frase direta por item, de preferência até 160 caracteres para alunos ou 170 para famílias. Esses valores são orientações, não limites: use uma segunda frase curta se necessário para preservar o juízo, a prática, o efeito, os destinatários ou uma ressalva relevante. Corte apenas redundâncias e detalhes secundários.

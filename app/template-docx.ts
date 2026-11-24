@@ -67,8 +67,8 @@ function paragraphWithFragments(block: string, fragments: Array<{ text: string; 
       rPr = rPr.replace(/<w:color\b[^>]*\/>/g, "");
     }
     if (italic !== undefined) {
-      const properties = `<w:i w:val="${italic ? 1 : 0}"/><w:iCs w:val="${italic ? 1 : 0}"/>`;
-      rPr = rPr.replace(/<w:i(?:Cs)?\b[^>]*\/>/g, "").replace(/<\/w:rPr>/, `${properties}</w:rPr>`).replace("<w:rPr/>", `<w:rPr>${properties}</w:rPr>`);
+      const properties = `<w:i w:val="${italic ? 1 : 0}"/><w:iCs w:val="${italic ? 1 : 0}"/><w:caps w:val="0"/><w:smallCaps w:val="0"/>`;
+      rPr = rPr.replace(/<w:(?:i(?:Cs)?|caps|smallCaps)\b[^>]*\/>/g, "").replace(/<\/w:rPr>/, `${properties}</w:rPr>`).replace("<w:rPr/>", `<w:rPr>${properties}</w:rPr>`);
     }
     return `<w:r>${rPr}<w:t xml:space="preserve">${escapeXml(text)}</w:t></w:r>`;
   };

@@ -54,10 +54,10 @@ function replaceParagraphText(block: string, value: string) {
     .replace(/<w:ptab\b[^>]*\/>/g, "");
 }
 
-function paragraphWithFragments(block: string, fragments: Array<{ text: string; color?: string }>) {
+function paragraphWithFragments(block: string, fragments: Array<{ text: string; color?: string; italic?: boolean }>) {
   const pPr = block.match(/<w:pPr>[\s\S]*?<\/w:pPr>/)?.[0] || "";
   const firstRPr = block.match(/<w:rPr>[\s\S]*?<\/w:rPr>/)?.[0] || "<w:rPr/>";
-  const run = (text: string, color?: string) => {
+  const run = (text: string, color?: string, italic?: boolean) => {
     let rPr = firstRPr;
     if (color) {
       rPr = /<w:color\b[^>]*\/>/.test(rPr)
@@ -66,9 +66,13 @@ function paragraphWithFragments(block: string, fragments: Array<{ text: string; 
     } else {
       rPr = rPr.replace(/<w:color\b[^>]*\/>/g, "");
     }
+    if (italic !== undefined) {
+      const properties = `<w:i w:val="${italic ? 1 : 0}"/><w:iCs w:val="${italic ? 1 : 0}"/>`;
+      rPr = rPr.replace(/<w:i(?:Cs)?\b[^>]*\/>/g, "").replace(/<\/w:rPr>/, `${properties}</w:rPr>`).replace("<w:rPr/>", `<w:rPr>${properties}</w:rPr>`);
+    }
     return `<w:r>${rPr}<w:t xml:space="preserve">${escapeXml(text)}</w:t></w:r>`;
   };
-  return block.replace(/(<w:p(?:\s[^>]*)?>)[\s\S]*?(<\/w:p>)/, `$1${pPr}${fragments.map((fragment) => run(fragment.text, fragment.color)).join("")}$2`);
+  return block.replace(/(<w:p(?:\s[^>]*)?>)[\s\S]*?(<\/w:p>)/, (_match, start, end) => `${start}${pPr}${fragments.map((fragment) => run(fragment.text, fragment.color, fragment.italic)).join("")}${end}`);
 }
 
 function paragraphWithIgecLink(block: string, relationshipId: string) {
@@ -548,8 +552,18 @@ function patchDocumentXml(xml: string, audience: Audience, school: string, conte
 
   const questionnaireIntro = audience === "alunos" ? findIncludes("Através dos questionários respondidos pelos alunos") : findIncludes("Através dos questionários aplicados aos pais");
   if (questionnaireIntro >= 0) custom.set(questionnaireIntro, bodyTextKeptWithFollowingVisual);
-  const questionnaireNote = audience === "familias" ? findIncludes("Na apresentação dos gráficos", questionnaireIntro) : -1;
-  if (questionnaireNote >= 0) custom.set(questionnaireNote, (block) => setKeepNext(setBodyParagraph(block, 0, 40)));
+  const questionnaireNote = items.find((item) => item.index > questionnaireIntro && /^Na apresentação dos (?:gráficos|resultados)/i.test(item.text.trim()))?.index ?? -1;
+  if (questionnaireNote >= 0) custom.set(questionnaireNote, (block) => setKeepNext(setBodyParagraph(paragraphWithFragments(block, [
+    { text: "Na apresentação dos resultados, as respostas “", italic: false },
+    { text: "concordo totalmente", italic: true },
+    { text: "” e “", italic: false },
+    { text: "concordo", italic: true },
+    { text: "” foram consideradas em conjunto, bem como as respostas “", italic: false },
+    { text: "discordo", italic: true },
+    { text: "” e “", italic: false },
+    { text: "discordo totalmente", italic: true },
+    { text: "”.", italic: false },
+  ]), 0, 40)));
 
   const projectsHeading = find(audience === "alunos" ? "Projetos interessantes" : "Projetos");
   const projectsEnd = audience === "alunos" ? findIncludes("Através dos questionários respondidos pelos alunos", projectsHeading) : findIncludes("O Agrupamento reconhece e valoriza", projectsHeading);
@@ -566,7 +580,10 @@ function patchDocumentXml(xml: string, audience: Audience, school: string, conte
   if (audience === "familias") {
     const familyHeading = find("Valorização do papel dos pais na vida escolar");
     const familyEnd = findIncludes("Através dos questionários aplicados aos pais", familyHeading);
-    if (familyHeading >= 0 && familyEnd > familyHeading) fillRange(familyHeading, familyEnd, content.papelFamilias || []);
+    if (familyHeading >= 0 && familyEnd > familyHeading) fillRange(familyHeading, familyEnd, (content.papelFamilias || [])
+      .map((item) => item.trim().replace(/^[•▪–-]\s*/, "").replace(/^Pais(?=\s)/i, "Os pais"))
+      .filter(Boolean)
+      .map((item) => /[.!?…]$/.test(item) ? item : item.replace(/[,;:]$/, "") + "."));
     if (familyHeading >= 0) custom.set(familyHeading, (block) => setContentSpacing(block, 160, 80));
     // Aproveita o espaço livre depois dos projetos e da participação das
     // famílias. Assim, a introdução e o primeiro gráfico podem começar nesta

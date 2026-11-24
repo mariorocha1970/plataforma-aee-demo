@@ -1159,7 +1159,7 @@ function addValidatedMetadata(structure: ValidatedReportStructure, reportText: s
   const normalizedText = reportText.replace(/\s+/g, " ");
   const school = extractReportSchool(reportText, tableValues);
   const observation = normalizedText.match(/observação da prática educativa e letiva[^.!?]{0,100}?dias?\s+(\d{1,2})(?:\s+e\s+(\d{1,2}))?\s+de\s+([\p{L}]+)(?:\s+de\s+(20\d{2}))?/iu);
-  const visits = normalizedText.match(/visita às instalações e entrevistas[^.!?]{0,140}?entre os dias\s+(\d{1,2})\s+e\s+(\d{1,2})\s+de\s+([\p{L}]+)(?:\s+de\s+(20\d{2}))?/iu);
+  const visits = normalizedText.match(/visita às instalações e entrevistas[^.!?]{0,180}?(?:entre\s+os\s+dias|nos\s+dias|\bde)\s+(\d{1,2})\s*(?:e|a|até|[-–—])\s*(\d{1,2})\s+de\s+([\p{L}]+)(?:\s+de\s+(20\d{2}))?/iu);
   const schools = extractVisitedSchools(reportText, school);
   structure.metadata = {
     school,

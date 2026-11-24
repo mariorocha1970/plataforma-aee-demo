@@ -84,8 +84,6 @@ export function parseQuestionnaires(text: string) {
   const byCode = new Map(groups.map((group) => [questionnaireCode(group.grupo), group]));
   const ordered = ["Q1", "Q2", "Q5", "Q6"].flatMap((code) => byCode.get(code) ? [byCode.get(code)!] : []);
   if (!ordered.length) throw new Error("Não foram reconhecidos questionários Q1, Q2, Q5 ou Q6.");
-  const missing = ["Q1", "Q2", "Q5", "Q6"].filter((code) => !byCode.has(code));
-  if (missing.length) throw new Error(`Faltam os questionários ${missing.join(", ")}. A geração dos gráficos foi bloqueada para evitar cruzar grupos ou reutilizar valores de outro ficheiro.`);
   const numericalWarnings = ordered.flatMap((group) => group.avisos);
   if (numericalWarnings.length) throw new Error(`A validação numérica detetou inconsistências e bloqueou os gráficos: ${numericalWarnings.slice(0, 4).join(" ")}`);
   return { grupos: ordered };

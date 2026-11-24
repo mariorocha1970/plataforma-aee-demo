@@ -11,7 +11,7 @@ const DOMAINS = SIMPLIFIED_DOMAINS;
 const domainMap = {
   type: "object",
   additionalProperties: false,
-  properties: Object.fromEntries(DOMAINS.map((domain) => [domain, { type: "array", items: { type: "string", maxLength: 170 } }])),
+  properties: Object.fromEntries(DOMAINS.map((domain) => [domain, { type: "array", items: { type: "string" } }])),
   required: DOMAINS,
 };
 const SCHEMA = {
@@ -66,7 +66,7 @@ export async function POST(request: NextRequest) {
 - Cada projeto, iniciativa, clube, parceria, atividade ou oferta formativa explicitamente referido nos pontos 2, 3, 4 ou 5 corresponde a um bullet de destino. Não selecione apenas uma amostra, não funda projetos distintos e não omita projetos por razões de síntese.
 - Preserve todas as componentes essenciais do juízo de origem, incluindo práticas, destinatários, efeitos, reservas e dimensões como equidade, autonomia ou avaliação formativa. Simplificar a linguagem não autoriza reduzir o alcance do juízo.
 - Um bullet contém o juízo completo em uma ou, quando indispensável, duas frases curtas.
-- Redija bullets fortes e precisos. Cada bullet deve ter no máximo 160 caracteres para alunos e 170 para famílias. Preserve a ideia central, a prática e o efeito essencial.
+- Procure ficar abaixo de 160 caracteres para alunos ou 170 para famílias, sem limite rígido: use uma segunda frase curta se for necessária para preservar a prática, o efeito, os destinatários ou uma ressalva relevante.
 - Elimine enumerações secundárias, explicações redundantes e fórmulas introdutórias. Preserve a ideia avaliativa central, a prática e o efeito essencial.
 - Não copie períodos completos do original; reformule.
 - Extraia as classificações apenas se estiverem explicitamente indicadas no ponto 2.

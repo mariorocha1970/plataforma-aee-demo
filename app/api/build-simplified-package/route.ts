@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { parseQuestionnaires } from "../../questionnaire-parser";
 import { SIMPLIFIED_DOMAINS, validateGeneratedReport, type ValidatedReportStructure } from "../../validated-report-structure";
 
-const SIMPLIFIED_REPORT_VERSION = "2026.11.23-v39.3";
+const SIMPLIFIED_REPORT_VERSION = "2026.11.24-v39.4";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -68,7 +68,7 @@ ${JSON.stringify({ classificacoes: structure.classificacoes, pontosFortes: struc
 Nos dois relatórios, reformule cada item dentro do domínio em que se encontra, preservando exatamente a quantidade e a ordem. Não transfira, una, divida ou omita itens. As classificações são decisões da equipa e não podem ser alteradas.
 
 RELATÓRIO PARA ALUNOS:
-- Destinatários entre 10 e 16 anos. Frases curtas, diretas, voz ativa e vocabulário simples, sem infantilizar.
+- Destinatários: alunos dos níveis efetivamente frequentados na escola avaliada, conforme o relatório. Não introduza níveis ou públicos que a fonte não atribua à escola. Use frases curtas e vocabulário simples, sem infantilizar.
 - Comece preferencialmente por sujeitos concretos como «A escola», «Os professores», «Os alunos» ou «As famílias». Evite nomes abstratos e linguagem administrativa.
 - Explique em linguagem comum conceitos técnicos indispensáveis.
 - Não use, sem explicação imediata em palavras comuns, expressões como «contratualização interna», «referenciais», «ecossistema digital», «monitorização sistemática», «mecanismos integrados», «paradigma de ensino», «supervisão pedagógica», «observação de pares», «metodologias ativas», «intencionalidade estratégica», «cocriação», «validação externa», «assimetrias» ou «resiliência».

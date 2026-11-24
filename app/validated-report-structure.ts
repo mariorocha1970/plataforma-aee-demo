@@ -13,14 +13,18 @@ export function extractReportSchool(report: string, tableValues: string[] = []) 
     .find((line) => withMunicipality.test(line)) || base;
 }
 
+export function extractVisitScope(report: string) {
+  return report.replace(/\s+/g, " ")
+    .match(/\b(?:a\s+)?equipa de avaliação(?: externa)? visitou\s+(.+?)(?=,?\s+tendo realizado\b|[!?]|\.(?=\s+(?:[A-ZÀ-Ü]|$)|$)|$)/iu)?.[1]?.trim() || "";
+}
+
 export function extractVisitedSchools(report: string, school: string) {
-  const prose = report.replace(/\s+/g, " ");
-  const named = prose.match(/A equipa de avaliação externa visitou\s+(.+?),\s+tendo realizado/iu)?.[1];
-  if (named) return named.replace(/^(?:a|o|as|os)\s+/iu, "").split(/(?:,\s*|\s+e\s+)(?:a\s+|o\s+)?(?=(?:EB|Escola|Jardim)\b)/iu).map((value) => value.trim()).filter(Boolean);
+  const named = extractVisitScope(report);
+  const entries = named.replace(/^(?:a|o|as|os)\s+/iu, "").split(/(?:,\s*|\s+e\s+)(?:a\s+|o\s+)?(?=(?:EB|Escola|Jardim)\b)/iu).map((value) => value.trim());
+  if (entries.every((value) => /^(?:EB|Escola|Jardim de Infância)\s+\p{L}/iu.test(value) && !/(?:^|\s)X+(?=\s|$)|\btod[oa]s?\b/iu.test(value))) return entries;
   if (/^Escola\s/iu.test(school)) {
-    const visit = prose.match(/A equipa de avaliação externa visitou\s+([^.!?]+)/iu)?.[1];
     const base = school.split(/\s+[–—-]\s+/u)[0];
-    if (visit?.toLocaleLowerCase("pt-PT").includes(base.toLocaleLowerCase("pt-PT"))) return [base];
+    if (named.toLocaleLowerCase("pt-PT").includes(base.toLocaleLowerCase("pt-PT"))) return [base];
   }
   return [];
 }

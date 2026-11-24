@@ -3,7 +3,7 @@ import path from "node:path";
 import JSZip from "jszip";
 import sharp from "sharp";
 
-const SIMPLIFIED_REPORT_VERSION = "2026.11.23-v39.3";
+const SIMPLIFIED_REPORT_VERSION = "2026.11.24-v39.4";
 const BODY_FONT_HALF_POINTS = 20;
 const BODY_LINE_TWIPS = 276;
 const BODY_PARAGRAPH_AFTER_TWIPS = 60;
@@ -133,6 +133,14 @@ function fixedIntroduction(audience: Audience, school: string, sourceReport: str
   };
   const establishments = naturalList(meta.schools);
   const count = meta.schools.length;
+  if (!/^Agrupamento\b/i.test(school) || !count) {
+    const visit = [
+      { text: meta.visitDates ? `Entre os dias ${meta.visitDates}, uma equipa coordenada pela Inspeção-Geral da Educação e Ciência visitou ` : "Uma equipa coordenada pela Inspeção-Geral da Educação e Ciência visitou " },
+      { text: /^Escola\b/i.test(school) ? `a ${school}` : `o ${school}`, color: "31849B" },
+      { text: " para realizar a avaliação externa. A equipa ouviu membros da comunidade educativa e observou aulas." },
+    ];
+    return [visit];
+  }
   if (audience === "alunos") {
     return [
       [
@@ -670,7 +678,9 @@ export async function buildTemplateReport(args: { audience: Audience; school: st
     documentRels = documentRels.replace("</Relationships>", `<Relationship Id="${igecRelationshipId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="${escapeXml(igecUrl)}" TargetMode="External"/></Relationships>`);
     zip.file(relPath, documentRels);
   }
-  zip.file(documentPath, closingBannerInDocumentFlow(compactRatingTable(chartsInDocumentFlow(patchDocumentXml(documentXml, args.audience, args.school, args.content, args.sourceReport || "", igecRelationshipId, args.metadata), args.audience))));
+  let filledDocument = closingBannerInDocumentFlow(compactRatingTable(chartsInDocumentFlow(patchDocumentXml(documentXml, args.audience, args.school, args.content, args.sourceReport || "", igecRelationshipId, args.metadata), args.audience)));
+  if (/^Escola\b/i.test(args.school)) filledDocument = filledDocument.replace(/(<w:t\b[^>]*>)([^<]*)(<\/w:t>)/g, (_match, start, value, end) => start + value
+    .replace(/\bdo Agrupamento\b/g, "da Escola").replace(/\bno Agrupamento\b/g, "na Escola").replace(/\bO Agrupamento\b/g, "A Escola").replace(/\btrabalho do Agrupamento\b/g, "trabalho da Escola") + end);
   for (const name of Object.keys(zip.files).filter((value) => /^word\/(?:header|footer)\d+\.xml$/i.test(value))) {
     const file = zip.file(name);
     if (file) zip.file(name, patchSchoolReferences(await file.async("string"), args.school));
@@ -684,7 +694,7 @@ export async function buildTemplateReport(args: { audience: Audience; school: st
     const group: any = groups.get(code);
     const chartPath = `word/charts/chart${chartNumber}.xml`;
     const chart = zip.file(chartPath);
-    if (chart && Array.isArray(group?.[field])) {
+    if (chart && Array.isArray(group?.[field]) && group[field].length) {
       zip.file(chartPath, patchChartXml(await chart.async("string"), group[field], chartNumber));
       const chartRelsPath = `word/charts/_rels/chart${chartNumber}.xml.rels`;
       const chartRels = zip.file(chartRelsPath);
@@ -692,8 +702,17 @@ export async function buildTemplateReport(args: { audience: Audience; school: st
         const relationships = await chartRels.async("string");
         zip.file(chartRelsPath, relationships.replace(/<Relationship\b(?=[^>]*Type="[^"]*\/oleObject")(?=[^>]*TargetMode="External")[^>]*\/>/g, ""));
       }
+    } else {
+      const chartId = Array.from(documentRels.matchAll(/<Relationship\b[^>]*>/g)).find(([line]) => line.includes(`Target="charts/chart${chartNumber}.xml"`))?.[0].match(/\bId="([^"]+)"/)?.[1];
+      if (chartId) filledDocument = filledDocument.replace(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g, (block) => {
+        if (!block.includes(`r:id="${chartId}"`)) return block;
+        const remaining = block.replace(/<w:drawing\b[\s\S]*?<\/w:drawing>/g, (drawing) => drawing.includes(`r:id="${chartId}"`) ? "" : drawing);
+        return /<c:chart\b/.test(remaining) ? remaining : "";
+      });
     }
   }
+  if (!/<c:chart\b/.test(filledDocument)) filledDocument = filledDocument.replace(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g, (block) => /^(?:Através dos questionários|Na apresentação dos resultados|Na apresentação dos gráficos)/i.test(paragraphText(block).trim()) ? "" : block);
+  zip.file(documentPath, filledDocument);
 
   if (args.cover && /^image\/(?:png|jpeg)$/.test(args.cover.type)) {
     const coverImage = await exactCoverImage(args.cover);

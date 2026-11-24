@@ -40,24 +40,28 @@ export function parseValidatedReportPdf(pages: { words: PdfWord[]; rules: number
   }).join("");
   for (const { words, rules } of pages) {
     const titles = words.filter((word) => /^[2-5][.)]\s*(?:Quadro resumo|Pontos fortes|Áreas de melhoria|Juízos avaliativos)/iu.test(word.str.trim())).sort(readingOrder);
-    for (let i = 0; i < titles.length; i++) {
-      const section = Number(titles[i].str.trim()[0]);
+    const pending = tables[1]?.length > 1 && tables[1].length < 5 && (!titles.length || Number(titles[0].str.trim()[0]) === 4);
+    for (let i = pending ? -1 : 0; i < titles.length; i++) {
+      const section = i < 0 ? 3 : Number(titles[i].str.trim()[0]);
       if (section === 5) break;
-      const top = titles[i].transform[5];
+      const top = titles[i]?.transform[5] ?? Infinity;
       const end = titles[i + 1]?.transform[5] ?? 0;
       const pairs = rules.flatMap((left) => rules.filter((right) => Math.abs(right[1] - left[1]) < 0.25 && right[0] >= left[2] && right[0] - left[2] < 3).map((right) => ({ y: left[1], split: right[0] })))
         .filter((rule) => rule.y < top && rule.y > end).sort((a, b) => b.y - a.y);
-      if (pairs.length !== 5 || pairs.some((rule) => Math.abs(rule.split - pairs[0].split) > 2)) continue;
-      const table = [["Domínio", headings[section]]];
-      for (let j = 0; j < 4; j++) {
+      const continuation = i < 0;
+      const table = continuation ? tables[1].map((row) => [...row]) : [["Domínio", headings[section]]];
+      if (pairs.length < 2 || pairs.length > 5 || (section !== 3 && pairs.length !== 5) || pairs.some((rule) => Math.abs(rule.split - pairs[0].split) > 2)) continue;
+      let valid = true;
+      for (let j = 0; j < pairs.length - 1; j++) {
         const band = words.filter((word) => word.str.trim() && word.transform[5] < pairs[j].y && word.transform[5] > pairs[j + 1].y).sort(readingOrder);
         const domain = canonicalReportDomain(join(band.filter((word) => word.transform[4] < pairs[j].split)));
         const right = join(band.filter((word) => word.transform[4] >= pairs[j].split));
-        if (!domain) continue;
+        if (!domain || table.some(([label]) => label === domain)) { valid = false; break; }
         if (section === 2 && /^(?:Excelente|Muito bom|Bom|Suficiente|Insuficiente)$/iu.test(right)) table.push([domain, right]);
-        if (section > 2 && /^[▪•●■‣]/u.test(right)) table.push([domain, ...right.split(/[▪•●■‣]/u).map((item) => item.trim().replace(/(\p{L}-)\s+(?=\p{Ll})/gu, "$1")).filter(Boolean)]);
+        else if (section > 2 && /^[▪•●■‣]/u.test(right)) table.push([domain, ...right.split(/[▪•●■‣]/u).map((item) => item.trim().replace(/(\p{L}-)\s+(?=\p{Ll})/gu, "$1")).filter(Boolean)]);
+        else { valid = false; break; }
       }
-      if (table.length === 5 && new Set(table.slice(1).map(([domain]) => domain)).size === 4) tables[section - 2] = table;
+      if (valid && (table.length === 5 || (section === 3 && table.length > 1 && table.length < 5))) tables[section - 2] = table;
     }
   }
   return parseValidatedReportTables(tables.filter(Boolean));
@@ -86,13 +90,14 @@ export function canonicalReportDomain(value: string): string | null {
 }
 
 function cleanItems(values: string[]) {
-  return values.map((item) => item.replace(/^[\s•·▪‣◦–—-]+/, "").replace(/\s+/g, " ").trim()).filter((item) => item.length > 8);
+  return values.map((item) => item.replace(/^[\s•·▪‣◦–—-]+/, "").replace(/\s+/g, " ").trim()).filter((item) => item.length > 8 && /\p{L}/u.test(item));
 }
 
 export function parseValidatedReportTables(tables: string[][][]): ValidatedReportStructure {
   const pontosFortes = Object.fromEntries(SIMPLIFIED_DOMAINS.map((domain) => [domain, [] as string[]]));
   const areasMelhoria = Object.fromEntries(SIMPLIFIED_DOMAINS.map((domain) => [domain, [] as string[]]));
   const ratings = new Map<string, string>();
+  const explicitEmptyImprovements = new Set<string>();
 
   for (const table of tables) {
     const heading = normalized((table[0] || []).join(" | "));
@@ -109,6 +114,7 @@ export function parseValidatedReportTables(tables: string[][][]): ValidatedRepor
         }
       } else {
         const items = cleanItems(row.slice(1));
+        if (kind === "improvement" && !items.length && /^(?:[\s•·▪‣◦]*[_–—-]){2,}[\s•·▪‣◦]*$/u.test(row.slice(1).join(" ").trim())) explicitEmptyImprovements.add(domain);
         const target = kind === "strength" ? pontosFortes[domain] : areasMelhoria[domain];
         for (const item of items) if (!target.some((existing) => normalized(existing) === normalized(item))) target.push(item);
       }
@@ -120,7 +126,7 @@ export function parseValidatedReportTables(tables: string[][][]): ValidatedRepor
   for (const domain of SIMPLIFIED_DOMAINS) {
     if (!ratings.get(domain)) warnings.push(`Falta a classificação de ${domain}.`);
     if (!pontosFortes[domain].length) warnings.push(`Não foram encontrados pontos fortes de ${domain}.`);
-    if (!areasMelhoria[domain].length) warnings.push(`Não foram encontradas áreas de melhoria de ${domain}.`);
+    if (!areasMelhoria[domain].length && !explicitEmptyImprovements.has(domain)) warnings.push(`Não foram encontradas áreas de melhoria de ${domain}.`);
   }
   return { classificacoes, pontosFortes, areasMelhoria, complete: warnings.length === 0, warnings };
 }

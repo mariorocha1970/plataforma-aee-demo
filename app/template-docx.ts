@@ -133,47 +133,41 @@ function fixedIntroduction(audience: Audience, school: string, sourceReport: str
   };
   const establishments = naturalList(meta.schools);
   const count = meta.schools.length;
-  if (!/^Agrupamento\b/i.test(school) || !count) {
-    const visit = [
-      { text: meta.visitDates ? `Entre os dias ${meta.visitDates}, uma equipa coordenada pela Inspeção-Geral da Educação e Ciência visitou ` : "Uma equipa coordenada pela Inspeção-Geral da Educação e Ciência visitou " },
-      { text: /^Escola\b/i.test(school) ? `a ${school}` : `o ${school}`, color: "31849B" },
-      { text: " para realizar a avaliação externa. A equipa ouviu membros da comunidade educativa e observou aulas." },
-    ];
-    return [visit];
-  }
+  const grouped = /^Agrupamento\b/i.test(school);
+  const unit = grouped ? "do Agrupamento" : "da Escola";
+  const article = grouped ? "o" : "a";
+  const visited = grouped && count > 1 ? ` e estiveram nas ${["", "", "duas", "três", "quatro", "cinco", "seis", "sete", "oito"][count] || count} escolas do Agrupamento: ${establishments}` : grouped && count === 1 ? ` e estiveram no estabelecimento ${establishments}` : "";
+  const opening = `Entre os dias ${meta.visitDates}, uma equipa coordenada pela Inspeção-Geral da Educação e Ciência visitou ${article} `;
   if (audience === "alunos") {
     return [
       [
-        { text: "Entre os dias " }, { text: meta.visitDates, color: "42AFB6" },
-        { text: ", uma equipa coordenada pela Inspeção‑Geral da Educação e Ciência visitou o " }, { text: school, color: "42AFB6" },
-        { text: " para realizar a avaliação externa do " }, { text: "Agrupamento", color: "42AFB6" }, { text: "." },
+        { text: opening }, { text: school, color: "42AFB6" }, { text: ` para realizar a avaliação externa ${unit}.` },
       ],
       [
-        { text: "Durante a visita, os avaliadores falaram com vários membros da comunidade educativa, incluindo alunos e encarregados de educação, e estiveram nas " },
-        { text: `${count || "várias"} escolas do Agrupamento: ${establishments}`, color: "42AFB6" },
-        { text: meta.observationDates ? `. Nos dias ${meta.observationDates}, também assistiram a algumas aulas e atividades, para conhecer melhor a forma como se trabalha e aprende nas escolas observadas.` : ". Também assistiram a algumas aulas e atividades, para conhecer melhor a forma como se trabalha e aprende nas escolas observadas." },
+        { text: `Durante a visita, os avaliadores falaram com vários membros da comunidade educativa, incluindo alunos e encarregados de educação${visited}. Também assistiram a algumas aulas e atividades, para conhecer melhor a forma como se trabalha e aprende ${grouped && count > 1 ? "em cada escola" : "na escola"}.` },
       ],
     ];
   }
   return [[
-    { text: "Entre os dias " }, { text: meta.visitDates, color: "31849B" },
-    { text: ", uma equipa coordenada pela Inspeção-Geral da Educação e Ciência visitou o " }, { text: school, color: "31849B" },
-    { text: ", com o objetivo de proceder à respetiva avaliação externa. Durante a visita, conversámos com representantes da comunidade educativa, incluindo encarregados de educação e alunos e estivemos nas " },
-    { text: establishments, color: "31849B" },
-    { text: meta.observationDates ? `. Nos dias ${meta.observationDates}, também observámos algumas atividades e aulas para conhecer melhor a dinâmica educativa nas escolas observadas.` : ". Também observámos algumas atividades e aulas para conhecer melhor a dinâmica educativa nas escolas observadas." },
+    { text: opening }, { text: school, color: "31849B" },
+    { text: `, com o objetivo de proceder à respetiva avaliação externa. Durante a visita, conversámos com representantes da comunidade educativa, incluindo encarregados de educação e alunos${visited.replace("e estiveram", "e estivemos")}. Também observámos algumas atividades e aulas para conhecer melhor a dinâmica educativa${grouped && count ? " nos estabelecimentos observados" : " da escola"}.` },
   ], [
-    { text: "A avaliação do Agrupamento incidiu em quatro grandes áreas: Autoavaliação (o que é que a escola faz para melhorar), Liderança e gestão (como é liderado e gerido o Agrupamento), Prestação do serviço educativo (como se ensina, aprende e avalia) e Resultados (que resultados académicos e outros têm os alunos)." },
+    { text: `A avaliação ${unit} incidiu em quatro grandes áreas: Autoavaliação (o que é que a escola faz para melhorar), Liderança e gestão (${grouped ? "como é liderado e gerido o Agrupamento" : "como é liderada e gerida a Escola"}), Prestação do serviço educativo (como se ensina, aprende e avalia) e Resultados (que resultados académicos e outros têm os alunos).` },
   ]];
 }
 
-function replaceCoverSchool(block: string, school: string) {
-  const parts = school.split(/\s*[,–-]\s*/).map((value) => value.trim()).filter(Boolean);
-  const organisation = (parts.shift() || school).toUpperCase();
-  const locality = parts.join(" - ").toUpperCase();
+function replaceCoverSchool(block: string, school: string, audience: Audience) {
+  const [, organisation, separator, locality] = school.match(/^(.*)(\s[–—-]\s)([^–—]+)$/u) || ["", school, "", ""];
   let index = 0;
-  const values = [organisation, " ", locality];
+  const last = [...block.matchAll(/<w:t(?:\s[^>]*)?>[\s\S]*?<\/w:t>/g)].length - 1;
   const resized = block.replace(/<w:sz(Cs)? w:val="48"\/>/g, '<w:sz$1 w:val="40"/>');
-  return resized.replace(/<w:t(?:\s[^>]*)?>[\s\S]*?<\/w:t>/g, (tag) => tag.replace(/>[^<]*<\/w:t>$/, ` xml:space="preserve">${escapeXml(values[index++] || "")}</w:t>`).replace(/<w:t([^>]*)\s+xml:space="preserve"([^>]*)\s+xml:space="preserve">/, '<w:t$1 xml:space="preserve"$2>'));
+  return resized.replace(/<w:r(?:\s[^>]*)?>[\s\S]*?<\/w:r>/g, (run) => {
+    if (!/<w:t(?:\s[^>]*)?>/.test(run)) return run;
+    const position = index++;
+    const value = position === 0 ? organisation : position === last ? locality : position === last - 1 ? separator : "";
+    const styled = position === last ? run.replace(/<w:color\b[^>]*\/>/g, `<w:color w:val="${audience === "alunos" ? "92D050" : "CB1B4A"}"/>`) : run;
+    return styled.replace(/<w:t(?:\s[^>]*)?>[\s\S]*?<\/w:t>/, `<w:t xml:space="preserve">${escapeXml(value)}</w:t>`);
+  });
 }
 
 function clearListMarker(block: string) {
@@ -408,7 +402,10 @@ function compactRatingTable(xml: string) {
       return row.replace(/(<w:tr(?:\s[^>]*)?>)/, `$1<w:trPr>${rowHeight}<w:cantSplit/></w:trPr>`);
     });
     // A tabela de classificações usa exatamente o mesmo corpo do texto.
-    return setParagraphFontSize(compacted, BODY_FONT_HALF_POINTS);
+    return setParagraphFontSize(compacted
+      .replace(/<w:tblPr>([\s\S]*?)<\/w:tblPr>/, (_match, properties) => `<w:tblPr><w:tblW w:w="9638" w:type="dxa"/><w:jc w:val="center"/><w:tblLayout w:type="fixed"/>${properties.replace(/<w:(?:tblpPr|tblInd|tblW|jc|tblLayout)\b[^>]*\/>/g, "")}</w:tblPr>`)
+      .replace(/<w:tblGrid>[\s\S]*?<\/w:tblGrid>/, '<w:tblGrid><w:gridCol w:w="4819"/><w:gridCol w:w="4819"/></w:tblGrid>')
+      .replace(/<w:tcW\b[^>]*\/>/g, '<w:tcW w:w="4819" w:type="dxa"/>'), BODY_FONT_HALF_POINTS);
   });
 }
 
@@ -525,7 +522,7 @@ function patchDocumentXml(xml: string, audience: Audience, school: string, conte
   };
 
   // Capa: conserva todos os objetos gráficos e altera apenas os campos variáveis.
-  items.filter((item) => item.normalized === normalize("AGRUPAMENTO DE ESCOLAS DE CRISTELO PAREDES")).forEach((item) => custom.set(item.index, (block) => replaceCoverSchool(block, school)));
+  items.filter((item) => item.normalized === normalize("AGRUPAMENTO DE ESCOLAS DE CRISTELO PAREDES")).forEach((item) => custom.set(item.index, (block) => replaceCoverSchool(block, school, audience)));
   items.filter((item) => item.normalized === normalize("RELATÓRIO para pais")).forEach((item) => replacements.set(item.index, "RELATÓRIO"));
 
   const greeting = audience === "alunos" ? find("Caros alunos") : find("Caros Pais e Encarregados de Educação");

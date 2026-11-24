@@ -19,6 +19,44 @@ export function extractVisitedSchools(report: string, school: string) {
   return [];
 }
 
+type PdfWord = { str: string; transform: number[]; width: number };
+
+// Read the ruled cells geometrically: PDF storage order can differ from the
+// visual order when the domain label is centred across multiple bullets.
+export function parseValidatedReportPdf(pages: { words: PdfWord[]; rules: number[][] }[]) {
+  const tables: string[][][] = [];
+  const headings = ["", "", "Classificação", "Pontos fortes", "Áreas de melhoria"];
+  const readingOrder = (a: PdfWord, b: PdfWord) => Math.abs(a.transform[5] - b.transform[5]) < 1.5 ? a.transform[4] - b.transform[4] : b.transform[5] - a.transform[5];
+  const join = (words: PdfWord[]) => words.map((word, i) => {
+    const previous = words[i - 1];
+    const gap = previous && Math.abs(previous.transform[5] - word.transform[5]) < 1.5 ? word.transform[4] - previous.transform[4] - previous.width : Infinity;
+    return (i && gap > 0.65 ? " " : "") + word.str.trim();
+  }).join("");
+  for (const { words, rules } of pages) {
+    const titles = words.filter((word) => /^[2-5][.)]\s*(?:Quadro resumo|Pontos fortes|Áreas de melhoria|Juízos avaliativos)/iu.test(word.str.trim())).sort(readingOrder);
+    for (let i = 0; i < titles.length; i++) {
+      const section = Number(titles[i].str.trim()[0]);
+      if (section === 5) break;
+      const top = titles[i].transform[5];
+      const end = titles[i + 1]?.transform[5] ?? 0;
+      const pairs = rules.flatMap((left) => rules.filter((right) => Math.abs(right[1] - left[1]) < 0.25 && right[0] >= left[2] && right[0] - left[2] < 3).map((right) => ({ y: left[1], split: right[0] })))
+        .filter((rule) => rule.y < top && rule.y > end).sort((a, b) => b.y - a.y);
+      if (pairs.length !== 5 || pairs.some((rule) => Math.abs(rule.split - pairs[0].split) > 2)) continue;
+      const table = [["Domínio", headings[section]]];
+      for (let j = 0; j < 4; j++) {
+        const band = words.filter((word) => word.str.trim() && word.transform[5] < pairs[j].y && word.transform[5] > pairs[j + 1].y).sort(readingOrder);
+        const domain = canonicalReportDomain(join(band.filter((word) => word.transform[4] < pairs[j].split)));
+        const right = join(band.filter((word) => word.transform[4] >= pairs[j].split));
+        if (!domain) continue;
+        if (section === 2 && /^(?:Excelente|Muito bom|Bom|Suficiente|Insuficiente)$/iu.test(right)) table.push([domain, right]);
+        if (section > 2 && /^[▪•●■‣]/u.test(right)) table.push([domain, ...right.split(/[▪•●■‣]/u).map((item) => item.trim().replace(/(\p{L}-)\s+(?=\p{Ll})/gu, "$1")).filter(Boolean)]);
+      }
+      if (table.length === 5 && new Set(table.slice(1).map(([domain]) => domain)).size === 4) tables[section - 2] = table;
+    }
+  }
+  return parseValidatedReportTables(tables.filter(Boolean));
+}
+
 export type ValidatedReportStructure = {
   classificacoes: Array<{ dominio: string; classificacao: string }>;
   pontosFortes: Record<string, string[]>;

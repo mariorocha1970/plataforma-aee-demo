@@ -196,15 +196,16 @@ function clearListMarker(block: string) {
   return block.replace(/<w:numPr>[\s\S]*?<\/w:numPr>/g, "");
 }
 
-function alignListParagraph(block: string) {
+function alignListParagraph(block: string, justified: boolean) {
   const indentation = '<w:ind w:left="420" w:hanging="260"/>';
+  const alignment = justified ? '<w:jc w:val="both"/>' : '<w:jc w:val="left"/>';
   if (/<w:pPr>/.test(block)) {
     return block.replace(/<w:pPr>([\s\S]*?)<\/w:pPr>/, (_match, inner) => {
       const aligned = inner.replace(/<w:jc\b[^>]*\/>/g, "");
-      return `<w:pPr>${/<w:ind\b[^>]*\/>/.test(aligned) ? aligned.replace(/<w:ind\b[^>]*\/>/, indentation) : `${aligned}${indentation}`}<w:jc w:val="left"/></w:pPr>`;
+      return `<w:pPr>${/<w:ind\b[^>]*\/>/.test(aligned) ? aligned.replace(/<w:ind\b[^>]*\/>/, indentation) : `${aligned}${indentation}`}${alignment}</w:pPr>`;
     });
   }
-  return block.replace(/(<w:p(?:\s[^>]*)?>)/, `$1<w:pPr>${indentation}<w:jc w:val="left"/></w:pPr>`);
+  return block.replace(/(<w:p(?:\s[^>]*)?>)/, `$1<w:pPr>${indentation}${alignment}</w:pPr>`);
 }
 
 function setParagraphFontSize(block: string, halfPoints: number) {
@@ -277,12 +278,12 @@ function isStructurallyEmptyParagraph(block: string) {
     && !/<(?:w:drawing|w:pict|w:object|c:chart|v:shape|wp:anchor|wp:inline)\b/.test(block);
 }
 
-function explicitBulletParagraph(block: string, value: string, spacingAfter: number) {
+function explicitBulletParagraph(block: string, value: string, spacingAfter: number, justified: boolean) {
   // O conteúdo das listas é sempre apresentado em redondo. Alguns itens do
   // template original tinham itálico por formatação direta e transmitiam essa
   // formatação, indevidamente, ao texto gerado para outras escolas.
   return setParagraphFontSize(
-    setListSpacing(alignListParagraph(clearListMarker(replaceParagraphText(block, `• ${value}`))), spacingAfter)
+    setListSpacing(alignListParagraph(clearListMarker(replaceParagraphText(block, `• ${value}`)), justified), spacingAfter)
       .replace(/<w:i(?:Cs)?\b[^>]*\/>/g, ""),
     BODY_FONT_HALF_POINTS,
   );
@@ -487,7 +488,7 @@ function patchDocumentXml(xml: string, audience: Audience, school: string, conte
   const find = (text: string, after = -1) => items.find((item) => item.index > after && item.normalized === normalize(text))?.index ?? -1;
   const findIncludes = (text: string, after = -1) => items.find((item) => item.index > after && item.normalized.includes(normalize(text)))?.index ?? -1;
   const nonEmptyBetween = (start: number, end: number) => items.filter((item) => item.index > start && item.index < end && item.text.trim());
-  const fillRange = (start: number, end: number, values: string[]) => {
+  const fillRange = (start: number, end: number, values: string[], justified = false) => {
     const targets = nonEmptyBetween(start, end);
     // Os templates contêm parágrafos vazios usados como espaçadores manuais.
     // Depois de preencher listas com dimensão variável, esses parágrafos criam
@@ -495,7 +496,8 @@ function patchDocumentXml(xml: string, audience: Audience, school: string, conte
     // tabelas, gráficos ou outros objetos.
     items.filter((item) => item.index > start && item.index < end && isStructurallyEmptyParagraph(item.block))
       .forEach((item) => custom.set(item.index, () => ""));
-    const clean = values.map((value) => String(value || "").replace(/^\s*[•·▪-]\s*/, "").replace(/\s+/g, " ").trim()).filter(Boolean);
+    const clean = values.map((value) => String(value || "").replace(/^\s*[•·▪-]\s*/, "").replace(/\s+/g, " ").trim()
+      .replace(/\bPerfil de Sa[íi]da dos alunos\b/giu, "Perfil dos Alunos à Saída da Escolaridade Obrigatória")).filter(Boolean);
     // Um único padrão para todos os itens: 1,15 linhas e 6 pt depois.
     // A paginação deve resultar do fluxo do texto, não de espaçamentos
     // diferentes calculados a partir do tamanho de cada lista.
@@ -506,12 +508,12 @@ function patchDocumentXml(xml: string, audience: Audience, school: string, conte
       // parágrafo inteiro. Deixar um parágrafo sem texto conserva a altura e
       // produz os espaçamentos irregulares observados entre domínios.
       if (index >= clean.length) custom.set(target.index, () => "");
-      else custom.set(target.index, (block) => explicitBulletParagraph(block, clean[index], spacingAfter));
+      else custom.set(target.index, (block) => explicitBulletParagraph(block, clean[index], spacingAfter, justified));
     });
     if (clean.length > targets.length && targets.length) {
       const last = targets.at(-1)!;
       replacements.set(last.index, clean[targets.length - 1]);
-      custom.set(last.index, (block) => clean.slice(targets.length - 1).map((value) => explicitBulletParagraph(block, value, spacingAfter)).join(""));
+      custom.set(last.index, (block) => clean.slice(targets.length - 1).map((value) => explicitBulletParagraph(block, value, spacingAfter, justified)).join(""));
     }
   };
   const findAfterAny = (variants: string[], after: number) => {
@@ -545,7 +547,7 @@ function patchDocumentXml(xml: string, audience: Audience, school: string, conte
       const values = domainValues(source, heading.domain);
       fillRange(heading.index, next, startsImprovementPage && !values.some((value) => value.trim())
         ? ["Não foram identificadas áreas de melhoria específicas para este domínio."]
-        : values);
+        : values, true);
     });
   };
 

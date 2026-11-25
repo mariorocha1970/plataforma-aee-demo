@@ -48,6 +48,7 @@ type PdfWord = { str: string; transform: number[]; width: number };
 // visual order when the domain label is centred across multiple bullets.
 export function parseValidatedReportPdf(pages: { words: PdfWord[]; rules: number[][] }[]) {
   const tables: string[][][] = [];
+  const openRows = new Set<number>();
   const headings = ["", "", "Classificação", "Pontos fortes", "Áreas de melhoria"];
   const readingOrder = (a: PdfWord, b: PdfWord) => Math.abs(a.transform[5] - b.transform[5]) < 1.5 ? a.transform[4] - b.transform[4] : b.transform[5] - a.transform[5];
   const join = (words: PdfWord[]) => words.map((word, i) => {
@@ -55,19 +56,37 @@ export function parseValidatedReportPdf(pages: { words: PdfWord[]; rules: number
     const gap = previous && Math.abs(previous.transform[5] - word.transform[5]) < 1.5 ? word.transform[4] - previous.transform[4] - previous.width : Infinity;
     return (i && gap > 0.65 ? " " : "") + word.str.trim();
   }).join("");
-  for (const { words, rules } of pages) {
+  for (const [pageIndex, { words, rules }] of pages.entries()) {
     const titles = words.filter((word) => /^[2-5][.)]\s*(?:Quadro resumo|Pontos fortes|Áreas de melhoria|Juízos avaliativos)/iu.test(word.str.trim())).sort(readingOrder);
     const nextSection = titles.length ? Number(titles[0].str.trim()[0]) : 0;
-    const pending = [4, 3].find((section) => tables[section - 2]?.length > 1 && tables[section - 2].length < 5 && (!nextSection || nextSection === section + 1));
+    const pending = [4, 3].find((section) => tables[section - 2]?.length > 1 && (tables[section - 2].length < 5 || openRows.has(section)) && (!nextSection || nextSection === section + 1));
     for (let i = pending ? -1 : 0; i < titles.length; i++) {
       const section = i < 0 ? pending! : Number(titles[i].str.trim()[0]);
       if (section === 5) break;
       const top = titles[i]?.transform[5] ?? Infinity;
       const end = titles[i + 1]?.transform[5] ?? 0;
-      const pairs = rules.flatMap((left) => rules.filter((right) => Math.abs(right[1] - left[1]) < 0.25 && right[0] >= left[2] && right[0] - left[2] < 3).map((right) => ({ y: left[1], split: right[0] })))
+      const pairs = rules.flatMap((left) => rules.filter((right) => Math.abs(right[1] - left[1]) < 0.25 && right[0] >= left[2] && right[0] - left[2] < 3).map((right) => ({ y: left[1], split: right[0], left: left[0], right: right[2] })))
         .filter((rule) => rule.y < top && rule.y > end).sort((a, b) => b.y - a.y);
       const continuation = i < 0;
       const table = continuation ? tables[section - 2].map((row) => [...row]) : [["Domínio", headings[section]]];
+      // A table can end the page inside a row, without a closing border.
+      const lastRule = pairs.at(-1);
+      let openRow = false;
+      if (section > 2 && end === 0 && lastRule && pageIndex + 1 < pages.length && pairs.length < 5) {
+        const trailing = words.filter((word) => word.str.trim() && word.transform[5] < lastRule.y && word.transform[4] >= lastRule.left && word.transform[4] < lastRule.right).sort(readingOrder);
+        const chunk: PdfWord[] = [];
+        for (const word of trailing) {
+          const previous = chunk.at(-1);
+          if (previous && previous.transform[5] - word.transform[5] > 30) break;
+          chunk.push(word);
+        }
+        const left = join(chunk.filter((word) => word.transform[4] < lastRule.split));
+        const right = join(chunk.filter((word) => word.transform[4] >= lastRule.split));
+        if (canonicalReportDomain(left) && /^[▪•●■‣]/u.test(right)) {
+          pairs.push({ ...lastRule, y: Math.min(...chunk.map((word) => word.transform[5])) - 0.01 });
+          openRow = true;
+        }
+      }
       if (pairs.length < 2 || pairs.length > 5 || (section === 2 && pairs.length !== 5) || pairs.some((rule) => Math.abs(rule.split - pairs[0].split) > 2)) continue;
       let valid = true;
       for (let j = 0; j < pairs.length - 1; j++) {
@@ -76,8 +95,13 @@ export function parseValidatedReportPdf(pages: { words: PdfWord[]; rules: number
         const domain = canonicalReportDomain(left);
         const right = join(band.filter((word) => word.transform[4] >= pairs[j].split));
         const items = right.split(/[▪•●■‣]/u).map((item) => item.trim().replace(/(\p{L}-)\s+(?=\p{Ll})/gu, "$1")).filter(Boolean);
-        if (continuation && j === 0 && !left && /^[▪•●■‣]/u.test(right) && items.length) {
-          table.at(-1)!.push(...items);
+        if (continuation && j === 0 && !left && right && items.length) {
+          const previousRow = table.at(-1)!;
+          if (!/^[▪•●■‣]/u.test(right)) {
+            if (previousRow.length < 2 || isEmptyImprovement(previousRow.at(-1)!)) { valid = false; break; }
+            previousRow[previousRow.length - 1] += " " + items.shift();
+          }
+          previousRow.push(...items);
           continue;
         }
         if (!domain || table.some(([label]) => label === domain)) { valid = false; break; }
@@ -86,10 +110,14 @@ export function parseValidatedReportPdf(pages: { words: PdfWord[]; rules: number
         else if (section > 2 && /^[▪•●■‣]/u.test(right) && items.length) table.push([domain, ...items]);
         else { valid = false; break; }
       }
-      if (valid && (table.length === 5 || (section > 2 && table.length > 1 && table.length < 5))) tables[section - 2] = table;
+      if (valid && (table.length === 5 || (section > 2 && table.length > 1 && table.length < 5))) {
+        tables[section - 2] = table;
+        if (openRow) openRows.add(section);
+        else openRows.delete(section);
+      }
     }
   }
-  return parseValidatedReportTables(tables.filter((table) => table?.length === 5));
+  return parseValidatedReportTables(tables.filter((table, index) => table?.length === 5 && !openRows.has(index + 2)));
 }
 
 export type ValidatedReportStructure = {

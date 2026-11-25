@@ -8,6 +8,7 @@ const SIMPLIFIED_REPORT_VERSION = "2026.11.24-v39.4";
 const BODY_FONT_HALF_POINTS = 20;
 const BODY_LINE_TWIPS = 276;
 const BODY_PARAGRAPH_AFTER_TWIPS = 60;
+const reportWidth = (audience: Audience) => audience === "alunos" ? 9026 : 9638;
 
 type Audience = "alunos" | "familias";
 type ReportContent = {
@@ -386,7 +387,7 @@ function chartsInDocumentFlow(xml: string, audience: Audience) {
     }
     // Gráficos, tabela de classificações e faixa final partilham a mesma
     // largura útil (9638 twips = 6 120 130 EMU), garantindo alinhamento.
-    block = block.replace(/(<(?:wp|a):extent\b[^>]*\bcx=")(\d+)(")/g, (_match, start, _value, end) => `${start}6120130${end}`);
+    block = block.replace(/(<(?:wp|a):extent\b[^>]*\bcx=")(\d+)(")/g, (_match, start, _value, end) => `${start}${reportWidth(audience) * 635}${end}`);
     chartsSeen += chartsInBlock;
     const before = chartsSeen > 2 ? 20 : 160;
     const after = chartsSeen > 2 ? 20 : 200;
@@ -395,12 +396,15 @@ function chartsInDocumentFlow(xml: string, audience: Audience) {
       .replace(/<w:spacing\b[^>]*\/>/g, "")
       .replace(/<w:tabs>[\s\S]*?<\/w:tabs>/g, "")
       .replace(/<w:jc\b[^>]*\/>/g, "")
+      .replace(/<w:ind\b[^>]*\/>/g, "")
       .replace(/<w:(?:pageBreakBefore|keepNext|keepLines|contextualSpacing)\b[^>]*\/>/g, "")}${spacing}</w:pPr>`);
     return block.replace(/(<w:p(?:\s[^>]*)?>)/, `$1<w:pPr>${spacing}</w:pPr>`);
   });
 }
 
-function compactRatingTable(xml: string) {
+function compactRatingTable(xml: string, audience: Audience) {
+  const width = reportWidth(audience);
+  const column = width / 2;
   return xml.replace(/<w:tbl>[\s\S]*?<\/w:tbl>/g, (table) => {
     const plain = normalize(paragraphText(table));
     if (!plain.includes(normalize("Autoavaliação")) || !plain.includes(normalize("Prestação do serviço educativo")) || !plain.includes(normalize("Resultados"))) return table;
@@ -414,9 +418,9 @@ function compactRatingTable(xml: string) {
     // A tabela de classificações usa exatamente o mesmo corpo do texto.
     const kept = compacted.replace(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g, setKeepNext);
     return setParagraphFontSize(kept
-      .replace(/<w:tblPr>([\s\S]*?)<\/w:tblPr>/, (_match, properties) => `<w:tblPr><w:tblW w:w="9638" w:type="dxa"/><w:jc w:val="center"/><w:tblLayout w:type="fixed"/>${properties.replace(/<w:(?:tblpPr|tblInd|tblW|jc|tblLayout)\b[^>]*\/>/g, "")}</w:tblPr>`)
-      .replace(/<w:tblGrid>[\s\S]*?<\/w:tblGrid>/, '<w:tblGrid><w:gridCol w:w="4819"/><w:gridCol w:w="4819"/></w:tblGrid>')
-      .replace(/<w:tcW\b[^>]*\/>/g, '<w:tcW w:w="4819" w:type="dxa"/>'), BODY_FONT_HALF_POINTS);
+      .replace(/<w:tblPr>([\s\S]*?)<\/w:tblPr>/, (_match, properties) => `<w:tblPr><w:tblW w:w="${width}" w:type="dxa"/><w:jc w:val="center"/><w:tblLayout w:type="fixed"/>${properties.replace(/<w:(?:tblpPr|tblInd|tblW|jc|tblLayout)\b[^>]*\/>/g, "")}</w:tblPr>`)
+      .replace(/<w:tblGrid>[\s\S]*?<\/w:tblGrid>/, `<w:tblGrid><w:gridCol w:w="${column}"/><w:gridCol w:w="${column}"/></w:tblGrid>`)
+      .replace(/<w:tcW\b[^>]*\/>/g, `<w:tcW w:w="${column}" w:type="dxa"/>`), BODY_FONT_HALF_POINTS);
   });
 }
 
@@ -653,6 +657,9 @@ function cachePoints(values: Array<string | number>, numeric: boolean) {
 }
 
 function patchChartXml(xml: string, items: Array<{ item: string; total: number }>, chartNumber: number) {
+  const horizontal = /<c:barDir val="bar"\/>/.test(xml);
+  const longest = Math.max(...items.map(({ item }) => item.trim().length));
+  const fontSize = longest > 95 || (!horizontal && items.length >= 5 && longest > 70) ? 800 : longest > 55 ? 850 : 950;
   const categories = cachePoints(items.map((item) => item.item), false);
   const values = `<c:formatCode>0.0</c:formatCode>${cachePoints(items.map((item) => item.total), true)}`;
   let patched = xml
@@ -660,6 +667,9 @@ function patchChartXml(xml: string, items: Array<{ item: string; total: number }
     .replace(/(<c:val>[\s\S]*?<c:numCache>)[\s\S]*?(<\/c:numCache>[\s\S]*?<\/c:val>)/, `$1${values}$2`)
     .replace(/<c:f>[\s\S]*?<\/c:f>/g, "")
     .replace(/<c:externalData\b[\s\S]*?<\/c:externalData>/g, "");
+  patched = patched.replace(/<c:catAx>[\s\S]*?<\/c:catAx>/g, (axis) => axis.replace(/<c:txPr>[\s\S]*?<\/c:txPr>/, (text) => text
+    .replace(/<a:defRPr\b([^>]*?)(\/?)>/g, (_match, props, close) => `<a:defRPr${props.replace(/\s+sz="[^"]*"/g, "")} sz="${fontSize}"${close}>`)
+    .replace(/<a:bodyPr\b([^>]*?)(\/?)>/g, (_match, props, close) => `<a:bodyPr${props.replace(/\s+(?:rot|vertOverflow|wrap)="[^"]*"/g, "")} rot="0" wrap="square"${close}>`)));
   if (/<c:barDir val="bar"\/>/.test(patched)) {
     const maximum = Math.min(100, Math.max(10, Math.ceil(Math.max(...items.map((item) => Number(item.total) || 0)) / 10) * 10));
     patched = patched.replace(/<c:max val="[^"]+"\/>/, `<c:max val="${maximum}"/>`);
@@ -702,7 +712,20 @@ export async function buildTemplateReport(args: { audience: Audience; school: st
     documentRels = documentRels.replace("</Relationships>", `<Relationship Id="${igecRelationshipId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="${escapeXml(igecUrl)}" TargetMode="External"/></Relationships>`);
     zip.file(relPath, documentRels);
   }
-  let filledDocument = closingBannerInDocumentFlow(compactRatingTable(chartsInDocumentFlow(patchDocumentXml(documentXml, args.audience, args.school, args.content, args.sourceReport || "", igecRelationshipId, args.metadata), args.audience)));
+  let filledDocument = closingBannerInDocumentFlow(compactRatingTable(chartsInDocumentFlow(patchDocumentXml(documentXml, args.audience, args.school, args.content, args.sourceReport || "", igecRelationshipId, args.metadata), args.audience), args.audience));
+  if (args.audience === "alunos" && !/<w:footerReference\b/.test(filledDocument)) {
+    const footerId = "rIdStudentFooter";
+    const footerPath = "footer-alunos.xml";
+    const w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+    const style = '<w:rPr><w:color w:val="31849B"/><w:sz w:val="21"/></w:rPr>';
+    const paragraph = '<w:pPr><w:spacing w:before="0" w:after="0"/><w:jc w:val="center"/></w:pPr>';
+    zip.file(`word/${footerPath}`, `<w:ftr xmlns:w="${w}"><w:p>${paragraph}<w:r>${style}<w:t>${escapeXml(args.school)}</w:t></w:r></w:p><w:p>${paragraph}<w:fldSimple w:instr="PAGE"><w:r>${style}<w:t>1</w:t></w:r></w:fldSimple></w:p></w:ftr>`);
+    const types = await zip.file("[Content_Types].xml")!.async("string");
+    zip.file("[Content_Types].xml", types.replace("</Types>", `<Override PartName="/word/${footerPath}" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml"/></Types>`));
+    documentRels = documentRels.replace("</Relationships>", `<Relationship Id="${footerId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer" Target="${footerPath}"/></Relationships>`);
+    zip.file(relPath, documentRels);
+    filledDocument = filledDocument.replace(/(<w:sectPr(?:\s[^>]*)?>)/, `$1<w:footerReference w:type="default" r:id="${footerId}"/>`);
+  }
   if (/^Escola\b/i.test(args.school)) filledDocument = filledDocument.replace(/(<w:t\b[^>]*>)([^<]*)(<\/w:t>)/g, (_match, start, value, end) => start + value
     .replace(/\bdo Agrupamento\b/g, "da Escola").replace(/\bno Agrupamento\b/g, "na Escola").replace(/\bO Agrupamento\b/g, "A Escola").replace(/\btrabalho do Agrupamento\b/g, "trabalho da Escola") + end);
   for (const name of Object.keys(zip.files).filter((value) => /^word\/(?:header|footer)\d+\.xml$/i.test(value))) {

@@ -29,6 +29,19 @@ export function extractVisitedSchools(report: string, school: string) {
   return [];
 }
 
+export function extractObservedSchools(report: string) {
+  const prose = report.replace(/\s+/g, " ");
+  const scope = prose.match(/\b(?:realizou(?:-se)?\s+a\s+observação\s+d[ae]\s+prática(?:\s+educativa)?(?:\s+e)?\s+letiva|(?:foram\s+)?observad[ao]s?\s+(?:aulas|atividades|a prática letiva))\s+(?:em|n[oa]s?)\s+(.+?)(?=[.!?](?:\s|$)|$)/iu)?.[1];
+  if (!scope) return [];
+  const sharedPrefix = scope.match(/^escolas\s+(básicas|secundárias)\s+de\s+/iu)?.[1];
+  const expanded = sharedPrefix
+    ? scope.replace(/^escolas\s+(?:básicas|secundárias)\s+de\s+/iu, "").split(/,\s*|\s+e\s+(?=de\s+)|\s+e\s+(?!.*\s+e\s+)/iu)
+        .map((part) => `Escola ${/^b/iu.test(sharedPrefix) ? "Básica" : "Secundária"} de ${part.replace(/^de\s+/iu, "")}`).join(", ")
+    : scope;
+  const entries = expanded.split(/(?:,\s*|\s+e\s+)(?:(?:na|no|a|o)\s+)?(?=(?:Escola|Jardim)\b)/iu);
+  return entries.map((entry) => entry.trim()).filter((entry) => /^(?:Escola|Jardim de Infância)\s+\p{L}/iu.test(entry) && !/(?:^|\s)X+(?=\s|$)/u.test(entry));
+}
+
 type PdfWord = { str: string; transform: number[]; width: number };
 
 // Read the ruled cells geometrically: PDF storage order can differ from the
@@ -69,6 +82,7 @@ export function parseValidatedReportPdf(pages: { words: PdfWord[]; rules: number
         }
         if (!domain || table.some(([label]) => label === domain)) { valid = false; break; }
         if (section === 2 && /^(?:Excelente|Muito bom|Bom|Suficiente|Insuficiente)$/iu.test(right)) table.push([domain, right]);
+        else if (section === 4 && isEmptyImprovement(right)) table.push([domain, right]);
         else if (section > 2 && /^[▪•●■‣]/u.test(right) && items.length) table.push([domain, ...items]);
         else { valid = false; break; }
       }
@@ -104,6 +118,11 @@ function cleanItems(values: string[]) {
   return values.map((item) => item.replace(/^[\s•·▪‣◦–—-]+/, "").replace(/\s+/g, " ").trim()).filter((item) => item.length > 8 && /\p{L}/u.test(item));
 }
 
+function isEmptyImprovement(value: string) {
+  const key = normalized(value.replace(/^[\s▪•●■‣]+/u, ""));
+  return /^[\s_–—-]*$/u.test(key) || /^(?:nao foram identificadas areas de melhoria(?: especificas)?(?: (?:para este|neste) dominio)?|sem areas de melhoria)\.?$/u.test(key);
+}
+
 export function parseValidatedReportTables(tables: string[][][]): ValidatedReportStructure {
   const pontosFortes = Object.fromEntries(SIMPLIFIED_DOMAINS.map((domain) => [domain, [] as string[]]));
   const areasMelhoria = Object.fromEntries(SIMPLIFIED_DOMAINS.map((domain) => [domain, [] as string[]]));
@@ -124,8 +143,9 @@ export function parseValidatedReportTables(tables: string[][][]): ValidatedRepor
           ratings.set(domain, canonicalRatings[normalized(value)] || value);
         }
       } else {
-        const items = cleanItems(row.slice(1));
-        if (kind === "improvement" && !items.length && /^(?:[\s•·▪‣◦]*[_–—-]){2,}[\s•·▪‣◦]*$/u.test(row.slice(1).join(" ").trim())) explicitEmptyImprovements.add(domain);
+        const empty = kind === "improvement" && isEmptyImprovement(row.slice(1).join(" "));
+        const items = empty ? [] : cleanItems(row.slice(1));
+        if (empty) explicitEmptyImprovements.add(domain);
         const target = kind === "strength" ? pontosFortes[domain] : areasMelhoria[domain];
         for (const item of items) if (!target.some((existing) => normalized(existing) === normalized(item))) target.push(item);
       }

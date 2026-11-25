@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import JSZip from "jszip";
 import sharp from "sharp";
-import { extractVisitedSchools, extractVisitScope } from "./validated-report-structure";
+import { extractObservedSchools, extractVisitedSchools, extractVisitScope } from "./validated-report-structure";
 
 const SIMPLIFIED_REPORT_VERSION = "2026.11.24-v39.4";
 const BODY_FONT_HALF_POINTS = 20;
@@ -124,15 +124,32 @@ function fixedIntroduction(audience: Audience, school: string, sourceReport: str
     observationDates: validatedMeta?.observationDates || "",
     schools: sourceReport.trim() ? extractVisitedSchools(sourceReport, school) : (validatedMeta?.schools || []).filter((name) => !/(?:^|\s)X+(?=\s|$)/iu.test(name)),
   };
-  const establishments = naturalList(meta.schools);
-  const count = meta.schools.length;
   const grouped = /^Agrupamento\b/i.test(school);
   const unit = grouped ? "do Agrupamento" : "da Escola";
   const article = grouped ? "o" : "a";
-  const visited = grouped && count > 1 ? ` e estiveram nas ${["", "", "duas", "três", "quatro", "cinco", "seis", "sete", "oito"][count] || count} escolas do Agrupamento: ${establishments}` : grouped && count === 1 ? ` e estiveram no estabelecimento ${establishments}` : "";
   const scope = extractVisitScope(sourceReport);
   const collective = grouped && /^(?:o jardim de infância e )?tod[oa]s?\s+(?:as|os)\s+(?:escolas(?: básicas)?|estabelecimentos) do agrupamento$/iu.test(scope);
-  const visitDetail = collective ? ` e visitaram ${scope}` : visited;
+  const key = (name: string) => normalize(name).replace(/^eb\s+/u, "escola basica ");
+  const unique = (names: string[]) => [...new Map(names.map((name) => [key(name), name])).values()];
+  const openingSchool = key(school.split(/\s+[–—-]\s+/u)[0]);
+  const visited = unique(meta.schools).filter((name) => key(name) !== openingSchool);
+  const observed = unique(extractObservedSchools(sourceReport));
+  const observedKeys = new Set(observed.map(key));
+  const visitedKeys = new Set(visited.map(key));
+  const both = visited.filter((name) => observedKeys.has(key(name)));
+  const visitOnly = visited.filter((name) => !observedKeys.has(key(name)));
+  const observedOnly = observed.filter((name) => key(name) !== openingSchool && !visitedKeys.has(key(name)));
+  const students = audience === "alunos";
+  const visitVerb = students ? "visitaram" : "visitámos";
+  const observeVerb = students ? "assistiram a aulas e atividades" : "observámos aulas e atividades";
+  const visitDetail = collective ? ` e ${visitVerb} ${scope}` : "";
+  const details = [
+    both.length ? `Também ${visitVerb} ${both.length === 1 ? "um estabelecimento" : "os seguintes estabelecimentos"}, onde ${observeVerb}: ${naturalList(both)}.` : "",
+    visitOnly.length ? `${both.length ? "A visita incluiu ainda" : "A visita incluiu"} ${visitOnly.length === 1 ? "um estabelecimento" : "os seguintes estabelecimentos"}: ${naturalList(visitOnly)}.` : "",
+    observedOnly.length ? `${both.length ? "Além disso" : "Também"} ${observeVerb} ${observedOnly.length === 1 ? "num estabelecimento" : "nos seguintes estabelecimentos"}: ${naturalList(observedOnly)}.` : "",
+    observedKeys.has(openingSchool) ? `Também ${observeVerb} na escola.` : "",
+  ].filter(Boolean).join(" ");
+  const followUp = details ? ` ${details}` : !grouped && !visited.length && /\bobservação da prática(?: educativa e)? letiva\b/iu.test(sourceReport) ? ` Também ${observeVerb} na escola.` : "";
   const opening = `Entre os dias ${meta.visitDates}, uma equipa coordenada pela Inspeção-Geral da Educação e Ciência visitou ${article} `;
   if (audience === "alunos") {
     return [
@@ -140,13 +157,13 @@ function fixedIntroduction(audience: Audience, school: string, sourceReport: str
         { text: opening }, { text: school, color: "42AFB6" }, { text: ` para realizar a avaliação externa ${unit}.` },
       ],
       [
-        { text: `Durante a visita, os avaliadores falaram com vários membros da comunidade educativa, incluindo alunos e encarregados de educação${visitDetail}. Também assistiram a algumas aulas e atividades, para conhecer melhor a forma como se trabalha e aprende ${grouped && (collective || count > 1) ? "nos estabelecimentos observados" : "na escola"}.` },
+        { text: `Durante a visita, os avaliadores falaram com vários membros da comunidade educativa, incluindo alunos e encarregados de educação${visitDetail}.${followUp}` },
       ],
     ];
   }
   return [[
     { text: opening }, { text: school, color: "31849B" },
-    { text: `, com o objetivo de proceder à respetiva avaliação externa. Durante a visita, conversámos com representantes da comunidade educativa, incluindo encarregados de educação e alunos${visitDetail.replace("e estiveram", "e estivemos").replace("e visitaram", "e visitámos")}. Também observámos algumas atividades e aulas para conhecer melhor a dinâmica educativa${grouped && (collective || count) ? " nos estabelecimentos observados" : " da escola"}.` },
+    { text: `, com o objetivo de proceder à respetiva avaliação externa. Durante a visita, conversámos com representantes da comunidade educativa, incluindo encarregados de educação e alunos${visitDetail}.${followUp}` },
   ], [
     { text: `A avaliação ${unit} incidiu em quatro grandes áreas: Autoavaliação (o que é que a escola faz para melhorar), Liderança e gestão (${grouped ? "como é liderado e gerido o Agrupamento" : "como é liderada e gerida a Escola"}), Prestação do serviço educativo (como se ensina, aprende e avalia) e Resultados (que resultados académicos e outros têm os alunos).` },
   ]];
@@ -511,7 +528,10 @@ function patchDocumentXml(xml: string, audience: Audience, school: string, conte
       if (heading.index < 0 || heading.index >= end) return;
       custom.set(heading.index, setDomainHeadingSpacing);
       const next = headings.slice(index + 1).find((candidate) => candidate.index > heading.index && candidate.index < end)?.index ?? end;
-      fillRange(heading.index, next, domainValues(source, heading.domain));
+      const values = domainValues(source, heading.domain);
+      fillRange(heading.index, next, startsImprovementPage && !values.some((value) => value.trim())
+        ? ["Não foram identificadas áreas de melhoria específicas para este domínio."]
+        : values);
     });
   };
 

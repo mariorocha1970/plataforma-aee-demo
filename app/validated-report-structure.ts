@@ -1,7 +1,7 @@
 export const SIMPLIFIED_DOMAINS = ["Autoavaliação", "Liderança e Gestão", "Prestação do Serviço Educativo", "Resultados"] as const;
 export const SIMPLIFIED_REPORT_VERSION = "2026.11.23-v37";
 // Identificador público da atualização; independente da compatibilidade dos relatórios guardados.
-export const SIMPLIFIED_MOTOR_RELEASE = "2026.11.25-v39.5";
+export const SIMPLIFIED_MOTOR_RELEASE = "2026.11.25-v39.6";
 
 export function extractReportSchool(report: string, tableValues: string[] = []) {
   const unit = /^(?:Agrupamento de Escolas|Escola)\s+\p{L}/iu;
@@ -33,8 +33,8 @@ export function extractVisitScope(report: string) {
 
 export function extractVisitedSchools(report: string, school: string) {
   const named = extractVisitScope(report);
-  const entries = named.replace(/^(?:a|o|as|os)\s+/iu, "").split(/(?:,\s*|\s+e\s+)(?:a\s+|o\s+)?(?=(?:EB|Escola|Jardim)\b)/iu).map((value) => value.trim());
-  if (entries.every((value) => /^(?:EB|Escola|Jardim de Infância)\s+\p{L}/iu.test(value) && !/(?:^|\s)X+(?=\s|$)|\btod[oa]s?\b/iu.test(value))) return entries;
+  const entries = parseSchoolScope(named);
+  if (entries.length) return entries;
   if (/^Escola\s/iu.test(school)) {
     const base = school.split(/\s+[–—-]\s+/u)[0];
     if (named.toLocaleLowerCase("pt-PT").includes(base.toLocaleLowerCase("pt-PT"))) return [base];
@@ -47,15 +47,33 @@ export function extractObservationScope(report: string) {
 }
 
 export function extractObservedSchools(report: string) {
-  const scope = extractJointVisitScope(report) || extractObservationScope(report);
-  if (!scope) return [];
-  const sharedPrefix = scope.match(/^escolas\s+(básicas|secundárias)\s+de\s+/iu)?.[1];
-  const expanded = sharedPrefix
-    ? scope.replace(/^escolas\s+(?:básicas|secundárias)\s+de\s+/iu, "").split(/,\s*|\s+e\s+(?=de\s+)|\s+e\s+(?!.*\s+e\s+)/iu)
-        .map((part) => `Escola ${/^b/iu.test(sharedPrefix) ? "Básica" : "Secundária"} de ${part.replace(/^de\s+/iu, "")}`).join(", ")
-    : scope;
-  const entries = expanded.split(/(?:,\s*|\s+e\s+)(?:(?:na|no|a|o)\s+)?(?=(?:Escola|Jardim)\b)/iu);
-  return entries.map((entry) => entry.trim()).filter((entry) => /^(?:Escola|Jardim de Infância)\s+\p{L}/iu.test(entry) && !/(?:^|\s)X+(?=\s|$)/u.test(entry));
+  return parseSchoolScope(extractJointVisitScope(report) || extractObservationScope(report));
+}
+
+function parseSchoolScope(scope: string) {
+  const entries: string[] = [];
+  let prefix = "";
+  for (const segment of scope.split(/[,;]\s*|\s+e\s+(?=(?:(?:a|o|as|os|na|no|nas|nos)\s+)?(?:escolas?|jardins?|EB)\b)/iu)) {
+    const value = segment.trim().replace(/^(?:a|o|as|os|na|no|nas|nos)\s+/iu, "");
+    const group = value.match(/^(jardins de infância|escolas básicas|escolas secundárias)\s+(.+)$/iu);
+    let names = value;
+    if (group) {
+      prefix = /^jardins/iu.test(group[1]) ? "Jardim de Infância" : /básicas/iu.test(group[1]) ? "Escola Básica" : "Escola Secundária";
+      names = group[2];
+    } else if (/^(?:Escola|Jardim de Infância|EB)\s+\p{L}/iu.test(value)) {
+      prefix = "";
+      if (!/(?:^|\s)X+(?=\s|$)|\btod[oa]s?\b/iu.test(value)) entries.push(value);
+      continue;
+    }
+    if (!prefix) continue;
+    for (const name of names.split(/\s+e\s+(?=(?:d[aeo]s?\s+)?\p{Lu})/u)) {
+      const place = name.trim();
+      if (/^(?:d[aeo]s?\s+)?\p{Lu}[\p{L}\p{M}\d .ºª'’()-]*$/u.test(place) && !/(?:^|\s)X+(?=\s|$)/u.test(place)) {
+        entries.push(prefix + " " + (/^d[aeo]s?\s/iu.test(place) ? place : "de " + place));
+      }
+    }
+  }
+  return entries;
 }
 
 type PdfWord = { str: string; transform: number[]; width: number };

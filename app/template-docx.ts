@@ -155,6 +155,11 @@ function fixedIntroduction(audience: Audience, school: string, sourceReport: str
     observedKeys.has(openingSchool) ? `Também ${observeVerb} na escola.` : "",
   ].filter(Boolean).join(" ");
   const followUp = details ? ` ${details}` : /\bobservação da prática(?: educativa e)? letiva\b/iu.test(sourceReport) ? ` Também ${observeVerb}${grouped ? "" : " na escola"}.` : "";
+  const names = unique([...visited, ...observed]).sort((a, b) => b.length - a.length);
+  const namePattern = names.map((name) => name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
+  const visitFragments = (text: string) => namePattern
+    ? text.split(new RegExp(`(${namePattern})`, "gu")).filter(Boolean).map((part) => ({ text: part, color: names.includes(part) ? "31849B" : undefined }))
+    : [{ text }];
   const opening = `Entre os dias ${meta.visitDates}, uma equipa coordenada pela Inspeção-Geral da Educação e Ciência visitou ${article} `;
   if (audience === "alunos") {
     return [
@@ -162,13 +167,13 @@ function fixedIntroduction(audience: Audience, school: string, sourceReport: str
         { text: opening }, { text: school, color: "42AFB6" }, { text: ` para realizar a avaliação externa ${unit}.` },
       ],
       [
-        { text: `Durante a visita, os avaliadores falaram com vários membros da comunidade educativa, incluindo alunos e encarregados de educação${visitDetail}.${followUp}` },
+        ...visitFragments(`Durante a visita, os avaliadores falaram com vários membros da comunidade educativa, incluindo alunos e encarregados de educação${visitDetail}.${followUp}`),
       ],
     ];
   }
   return [[
     { text: opening }, { text: school, color: "31849B" },
-    { text: `, com o objetivo de proceder à respetiva avaliação externa. Durante a visita, conversámos com representantes da comunidade educativa, incluindo encarregados de educação e alunos${visitDetail}.${followUp}` },
+    ...visitFragments(`, com o objetivo de proceder à respetiva avaliação externa. Durante a visita, conversámos com representantes da comunidade educativa, incluindo encarregados de educação e alunos${visitDetail}.${followUp}`),
   ], [
     { text: `A avaliação ${unit} incidiu em quatro grandes áreas: Autoavaliação (o que é que a escola faz para melhorar), Liderança e gestão (${grouped ? "como é liderado e gerido o Agrupamento" : "como é liderada e gerida a Escola"}), Prestação do serviço educativo (como se ensina, aprende e avalia) e Resultados (que resultados académicos e outros têm os alunos).` },
   ]];
@@ -428,7 +433,7 @@ function compactRatingTable(xml: string, audience: Audience) {
   });
 }
 
-function closingBannerInDocumentFlow(xml: string) {
+function closingBannerInDocumentFlow(xml: string, width: number) {
   let closingTable = "";
   let converted = xml.replace(/<w:tbl>[\s\S]*?<\/w:tbl>/g, (table) => {
     const plain = normalize(paragraphText(table));
@@ -437,10 +442,11 @@ function closingBannerInDocumentFlow(xml: string) {
     // Em documentos mais densos o Word empurrava-a isoladamente para uma nova
     // página. Em fluxo normal ocupa apenas o espaço real imediatamente após o
     // quadro de classificações.
-    closingTable = table.replace(/<w:tblpPr\b[^>]*\/>/g, "")
-      .replace(/<w:tblW\b[^>]*\/>/, '<w:tblW w:w="9638" w:type="dxa"/>')
-      .replace(/<w:gridCol\b[^>]*\/>/g, '<w:gridCol w:w="9638"/>')
-      .replace(/<w:tcW\b[^>]*\/>/g, '<w:tcW w:w="9638" w:type="dxa"/>');
+    closingTable = table.replace(/<w:tblPr>([\s\S]*?)<\/w:tblPr>/, (_match, props) =>
+      '<w:tblPr><w:tblW w:w="' + width + '" w:type="dxa"/><w:jc w:val="center"/><w:tblLayout w:type="fixed"/>' +
+      props.replace(/<w:(?:tblpPr|tblInd|tblW|jc|tblLayout)\b[^>]*\/>/g, "") + '</w:tblPr>')
+      .replace(/<w:gridCol\b[^>]*\/>/g, '<w:gridCol w:w="' + width + '"/>')
+      .replace(/<w:tcW\b[^>]*\/>/g, '<w:tcW w:w="' + width + '" w:type="dxa"/>');
     return closingTable;
   });
   if (!closingTable) return converted;
@@ -458,7 +464,7 @@ function closingBannerInDocumentFlow(xml: string) {
   // Separação curta e explícita entre a tabela de classificações e a faixa
   // final. Não se usa um parágrafo vazio do template, porque a sua altura
   // varia entre Word e LibreOffice e pode originar uma página adicional.
-  const separator = '<w:p><w:pPr><w:keepNext/><w:spacing w:before="0" w:after="100" w:line="20" w:lineRule="exact"/><w:rPr><w:sz w:val="2"/><w:szCs w:val="2"/></w:rPr></w:pPr></w:p>';
+  const separator = '<w:p><w:pPr><w:keepNext/><w:spacing w:before="0" w:after="0" w:line="180" w:lineRule="exact"/></w:pPr></w:p>';
   return prefix + separator + suffix;
 }
 
@@ -716,7 +722,7 @@ export async function buildTemplateReport(args: { audience: Audience; school: st
     documentRels = documentRels.replace("</Relationships>", `<Relationship Id="${igecRelationshipId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="${escapeXml(igecUrl)}" TargetMode="External"/></Relationships>`);
     zip.file(relPath, documentRels);
   }
-  let filledDocument = closingBannerInDocumentFlow(compactRatingTable(chartsInDocumentFlow(patchDocumentXml(documentXml, args.audience, args.school, args.content, args.sourceReport || "", igecRelationshipId, args.metadata), args.audience), args.audience));
+  let filledDocument = closingBannerInDocumentFlow(compactRatingTable(chartsInDocumentFlow(patchDocumentXml(documentXml, args.audience, args.school, args.content, args.sourceReport || "", igecRelationshipId, args.metadata), args.audience), args.audience), reportWidth(args.audience));
   if (args.audience === "alunos" && !/<w:footerReference\b/.test(filledDocument)) {
     const footerId = "rIdStudentFooter";
     const footerPath = "footer-alunos.xml";

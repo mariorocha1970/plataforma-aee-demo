@@ -1,12 +1,12 @@
 export const SIMPLIFIED_DOMAINS = ["Autoavaliação", "Liderança e Gestão", "Prestação do Serviço Educativo", "Resultados"] as const;
 export const SIMPLIFIED_REPORT_VERSION = "2026.11.23-v37";
 // Identificador público da atualização; independente da compatibilidade dos relatórios guardados.
-export const SIMPLIFIED_MOTOR_RELEASE = "2026.11.25-v39.8";
+export const SIMPLIFIED_MOTOR_RELEASE = "2026.11.25-v39.9";
 
 export function extractReportSchool(report: string, tableValues: string[] = []) {
   const unit = /^(?:Agrupamento de Escolas|Escola)\s+\p{L}/iu;
   const prose = report.replace(/\s+/g, " ");
-  const named = prose.match(/resultados da avaliação externa d[oa]\s+((?:Agrupamento de Escolas|Escola)\s+.+?)(?=,|[.;]|\s+realizad[ao]\b|$)/iu)?.[1];
+  const named = prose.match(/resultados da avaliação externa d[oa]\s+((?:Agrupamento de Escolas|Escola)\s+.+?)(?=,|;|(?<!\b(?:dr|dra|prof|profa|sr|sra))\.|\s+realizad[ao]\b|$)/iu)?.[1];
   const base = named?.trim() || tableValues.find((value) => unit.test(value.trim()))?.trim() || "";
   if (!base) return "";
   const escaped = base.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+");
@@ -17,7 +17,7 @@ export function extractReportSchool(report: string, tableValues: string[] = []) 
 
 export function extractJointVisitScope(report: string) {
   return report.replace(/\s+/g, " ")
-    .match(/\bequipa de avaliação(?: externa)? visitou\s+e\s+(?:realizou|efetuou)\s+a\s+observação\s+da\s+prática(?:\s+educativa\s+e)?\s+letiva\s+(?:em|nos|nas)\s+(.+?)(?=[.!?](?:\s|$)|$)/iu)?.[1]?.trim() || "";
+    .match(/\bequipa de avaliação(?: externa)? visitou\s+e\s+(?:realizou|efetuou)\s+a\s+observação\s+da\s+prática(?:\s+educativa\s+e)?\s+letiva,?\s+(?:em|nos|nas)\s+(.+?)(?=(?:[!?]|(?<!\b(?:dr|dra|prof|profa|sr|sra))\.)(?:\s|$)|$)/iu)?.[1]?.trim() || "";
 }
 
 export function isCollectiveVisitScope(scope: string) {
@@ -28,7 +28,7 @@ export function extractVisitScope(report: string) {
   const joint = extractJointVisitScope(report);
   if (joint) return joint;
   return report.replace(/\s+/g, " ")
-    .match(/\b(?:a\s+)?equipa de avaliação(?: externa)? visitou\s+(.+?)(?=,?\s+tendo realizado\b|[!?]|\.(?=\s+(?:[A-ZÀ-Ü]|$)|$)|$)/iu)?.[1]?.trim() || "";
+    .match(/\b(?:a\s+)?equipa de avaliação(?: externa)? visitou\s+(.+?)(?=,?\s+tendo realizado\b|[!?]|(?<!\b(?:dr|dra|prof|profa|sr|sra))\.(?=\s+(?:[A-ZÀ-Ü]|$)|$)|$)/iu)?.[1]?.trim() || "";
 }
 
 export function extractVisitedSchools(report: string, school: string) {
@@ -43,7 +43,7 @@ export function extractVisitedSchools(report: string, school: string) {
 }
 
 export function extractObservationScope(report: string) {
-  return report.replace(/\s+/g, " ").match(/\b(?:realizou(?:-se)?\s+a\s+observação\s+d[ae]\s+prática(?:\s+educativa)?(?:\s+e)?\s+letiva|(?:foram\s+)?observad[ao]s?\s+(?:aulas|atividades|a prática letiva))\s+(?:em|n[oa]s?)\s+(.+?)(?=[.!?](?:\s|$)|$)/iu)?.[1]?.trim() || "";
+  return report.replace(/\s+/g, " ").match(/\b(?:realizou(?:-se)?\s+a\s+observação\s+d[ae]\s+prática(?:\s+educativa)?(?:\s+e)?\s+letiva|(?:foram\s+)?observad[ao]s?\s+(?:aulas|atividades|a prática letiva)),?\s+(?:em|n[oa]s?)\s+(.+?)(?=(?:[!?]|(?<!\b(?:dr|dra|prof|profa|sr|sra))\.)(?:\s|$)|$)/iu)?.[1]?.trim() || "";
 }
 
 export function extractObservedSchools(report: string) {
@@ -69,7 +69,7 @@ function parseSchoolScope(scope: string) {
     for (const name of names.split(/\s+e\s+(?=(?:d[aeo]s?\s+)?\p{Lu})/u)) {
       const place = name.trim();
       if (/^(?:d[aeo]s?\s+)?\p{Lu}[\p{L}\p{M}\d .ºª'’()-]*$/u.test(place) && !/(?:^|\s)X+(?=\s|$)/u.test(place)) {
-        entries.push(prefix + " " + (/^d[aeo]s?\s/iu.test(place) ? place : "de " + place));
+        entries.push(prefix + " " + (/^(?:d[aeo]s?\s|(?:dr|dra|prof|profa)\.\s)/iu.test(place) ? place : "de " + place));
       }
     }
   }

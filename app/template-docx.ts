@@ -173,7 +173,9 @@ function fixedIntroduction(audience: Audience, school: string, sourceReport: str
   }
   return [[
     { text: opening }, { text: school, color: "31849B" },
-    ...visitFragments(`, com o objetivo de proceder à respetiva avaliação externa. Durante a visita, conversámos com representantes da comunidade educativa, incluindo encarregados de educação e alunos${visitDetail}.${followUp}`),
+    { text: ", com o objetivo de proceder à respetiva avaliação externa." },
+  ], [
+    ...visitFragments(`Durante a visita, conversámos com representantes da comunidade educativa, incluindo encarregados de educação e alunos${visitDetail}.${followUp}`),
   ], [
     { text: `A avaliação ${unit} incidiu em quatro grandes áreas: Autoavaliação (o que é que a escola faz para melhorar), Liderança e gestão (${grouped ? "como é liderado e gerido o Agrupamento" : "como é liderada e gerida a Escola"}), Prestação do serviço educativo (como se ensina, aprende e avalia) e Resultados (que resultados académicos e outros têm os alunos).` },
   ]];
@@ -570,7 +572,8 @@ function patchDocumentXml(xml: string, audience: Audience, school: string, conte
   const introductionTargets = nonEmptyBetween(greeting, strengthIntro);
   const introduction = fixedIntroduction(audience, school, sourceReport, validatedMeta);
   introductionTargets.forEach((target, index) => {
-    if (introduction[index]) custom.set(target.index, (block) => setBodyParagraph(paragraphWithFragments(block, introduction[index])));
+    const fragments = index === introductionTargets.length - 1 ? introduction.slice(index) : introduction.slice(index, index + 1);
+    if (fragments.length) custom.set(target.index, (block) => fragments.map((part) => setBodyParagraph(paragraphWithFragments(block, part))).join(""));
     else replacements.set(target.index, "");
   });
   if (strengthIntro >= 0) custom.set(strengthIntro, (block) => setKeepNext(setBodyParagraph(block)));

@@ -2,7 +2,7 @@
 
 import { ChangeEvent, useEffect, useMemo, useState } from "react";
 import { normalizeAcronyms } from "./text-normalization";
-import { extractReportSchool, extractVisitedSchools, parseValidatedReportPdf, parseValidatedReportTables, SIMPLIFIED_DOMAINS, type ValidatedReportStructure } from "./validated-report-structure";
+import { extractReportSchool, extractVisitedSchools, parseValidatedReportPdf, parseValidatedReportTables, SIMPLIFIED_DOMAINS, SIMPLIFIED_MOTOR_RELEASE, type ValidatedReportStructure } from "./validated-report-structure";
 
 const APP_BUILD = "2026.11.23-v38.4";
 const SIMPLIFIED_REPORT_VERSION = "2026.11.24-v39.4";
@@ -4628,7 +4628,7 @@ export default function Home() {
           const content = simplifiedReports[simplifiedAudience];
           const simplifiedDomains = ["Autoavaliação", "Liderança e Gestão", "Prestação do Serviço Educativo", "Resultados"];
           return <section className="view simplified-reports-view">
-            <div className="page-heading"><div><p className="eyebrow">Agente 9 · Comunicação dos resultados</p><h2>Relatórios simplificados</h2><p>Produza, valide e exporte as versões destinadas aos alunos e às famílias. A exportação exige redação validada pelo motor institucional atual.</p></div><span className="badge">Motor {SIMPLIFIED_REPORT_VERSION}</span></div>
+            <div className="page-heading"><div><p className="eyebrow">Agente 9 · Comunicação dos resultados</p><h2>Relatórios simplificados</h2><p>Produza, valide e exporte as versões destinadas aos alunos e às famílias. A exportação exige redação validada pelo motor institucional atual.</p></div><span className="badge">Motor {SIMPLIFIED_MOTOR_RELEASE}</span></div>
             <div className="narrative-guidance"><strong>Condição de utilização</strong><span>O documento carregado deve ser a versão final validada pela equipa. A IA simplifica a linguagem; não reabre a avaliação nem pode alterar o sentido dos juízos.</span></div>
             <section className="simplified-source-card">
               <div className="section-heading"><div><p className="eyebrow">1 · Fonte obrigatória</p><h3>Relatório técnico validado</h3><p>Formatos aceites: Word, PDF e texto. O conteúdo substitui qualquer minuta ainda existente na plataforma.</p></div><label className="button secondary file-button">Carregar relatório<input type="file" accept=".docx,.pdf,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain" onChange={loadValidatedReport} hidden /></label></div>

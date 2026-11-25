@@ -1,5 +1,7 @@
 export const SIMPLIFIED_DOMAINS = ["Autoavaliação", "Liderança e Gestão", "Prestação do Serviço Educativo", "Resultados"] as const;
 export const SIMPLIFIED_REPORT_VERSION = "2026.11.23-v37";
+// Identificador público da atualização; independente da compatibilidade dos relatórios guardados.
+export const SIMPLIFIED_MOTOR_RELEASE = "2026.11.25-v39.5";
 
 export function extractReportSchool(report: string, tableValues: string[] = []) {
   const unit = /^(?:Agrupamento de Escolas|Escola)\s+\p{L}/iu;
@@ -13,7 +15,18 @@ export function extractReportSchool(report: string, tableValues: string[] = []) 
     .find((line) => withMunicipality.test(line)) || base;
 }
 
+export function extractJointVisitScope(report: string) {
+  return report.replace(/\s+/g, " ")
+    .match(/\bequipa de avaliação(?: externa)? visitou\s+e\s+(?:realizou|efetuou)\s+a\s+observação\s+da\s+prática(?:\s+educativa\s+e)?\s+letiva\s+(?:em|nos|nas)\s+(.+?)(?=[.!?](?:\s|$)|$)/iu)?.[1]?.trim() || "";
+}
+
+export function isCollectiveVisitScope(scope: string) {
+  return /^(?:o jardim de infância e )?tod[oa]s?\s+(?:as|os)\s+(?:escolas(?: básicas)?|estabelecimentos(?: de educação e ensino)?) do agrupamento$/iu.test(scope);
+}
+
 export function extractVisitScope(report: string) {
+  const joint = extractJointVisitScope(report);
+  if (joint) return joint;
   return report.replace(/\s+/g, " ")
     .match(/\b(?:a\s+)?equipa de avaliação(?: externa)? visitou\s+(.+?)(?=,?\s+tendo realizado\b|[!?]|\.(?=\s+(?:[A-ZÀ-Ü]|$)|$)|$)/iu)?.[1]?.trim() || "";
 }
@@ -29,9 +42,12 @@ export function extractVisitedSchools(report: string, school: string) {
   return [];
 }
 
+export function extractObservationScope(report: string) {
+  return report.replace(/\s+/g, " ").match(/\b(?:realizou(?:-se)?\s+a\s+observação\s+d[ae]\s+prática(?:\s+educativa)?(?:\s+e)?\s+letiva|(?:foram\s+)?observad[ao]s?\s+(?:aulas|atividades|a prática letiva))\s+(?:em|n[oa]s?)\s+(.+?)(?=[.!?](?:\s|$)|$)/iu)?.[1]?.trim() || "";
+}
+
 export function extractObservedSchools(report: string) {
-  const prose = report.replace(/\s+/g, " ");
-  const scope = prose.match(/\b(?:realizou(?:-se)?\s+a\s+observação\s+d[ae]\s+prática(?:\s+educativa)?(?:\s+e)?\s+letiva|(?:foram\s+)?observad[ao]s?\s+(?:aulas|atividades|a prática letiva))\s+(?:em|n[oa]s?)\s+(.+?)(?=[.!?](?:\s|$)|$)/iu)?.[1];
+  const scope = extractJointVisitScope(report) || extractObservationScope(report);
   if (!scope) return [];
   const sharedPrefix = scope.match(/^escolas\s+(básicas|secundárias)\s+de\s+/iu)?.[1];
   const expanded = sharedPrefix

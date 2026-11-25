@@ -2,9 +2,8 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import JSZip from "jszip";
 import sharp from "sharp";
-import { extractObservedSchools, extractVisitedSchools, extractVisitScope } from "./validated-report-structure";
+import { extractJointVisitScope, extractObservationScope, extractObservedSchools, extractVisitedSchools, extractVisitScope, isCollectiveVisitScope, SIMPLIFIED_MOTOR_RELEASE } from "./validated-report-structure";
 
-const SIMPLIFIED_REPORT_VERSION = "2026.11.24-v39.4";
 const BODY_FONT_HALF_POINTS = 20;
 const BODY_LINE_TWIPS = 276;
 const BODY_PARAGRAPH_AFTER_TWIPS = 60;
@@ -129,7 +128,9 @@ function fixedIntroduction(audience: Audience, school: string, sourceReport: str
   const unit = grouped ? "do Agrupamento" : "da Escola";
   const article = grouped ? "o" : "a";
   const scope = extractVisitScope(sourceReport);
-  const collective = grouped && /^(?:o jardim de infância e )?tod[oa]s?\s+(?:as|os)\s+(?:escolas(?: básicas)?|estabelecimentos) do agrupamento$/iu.test(scope);
+  const collective = grouped && isCollectiveVisitScope(scope);
+  const joint = extractJointVisitScope(sourceReport);
+  const collectiveObservation = grouped && isCollectiveVisitScope(joint || extractObservationScope(sourceReport));
   const key = (name: string) => normalize(name).replace(/^eb\s+/u, "escola basica ");
   const unique = (names: string[]) => [...new Map(names.map((name) => [key(name), name])).values()];
   const openingSchool = key(school.split(/\s+[–—-]\s+/u)[0]);
@@ -143,14 +144,17 @@ function fixedIntroduction(audience: Audience, school: string, sourceReport: str
   const students = audience === "alunos";
   const visitVerb = students ? "visitaram" : "visitámos";
   const observeVerb = students ? "assistiram a aulas e atividades" : "observámos aulas e atividades";
-  const visitDetail = collective ? ` e ${visitVerb} ${scope}` : "";
+  const sharedCollective = collective && collectiveObservation && normalize(scope) === normalize(joint || extractObservationScope(sourceReport));
+  const visitDetail = collective && !sharedCollective ? ` e ${visitVerb} ${scope}` : "";
   const details = [
+    sharedCollective ? `Também ${visitVerb} ${scope} e ${observeVerb} em todos eles.` : "",
+    collectiveObservation && !sharedCollective ? `Também ${observeVerb} em ${extractObservationScope(sourceReport)}.` : "",
     both.length ? `Também ${visitVerb} ${both.length === 1 ? "um estabelecimento" : "os seguintes estabelecimentos"}, onde ${observeVerb}: ${naturalList(both)}.` : "",
     visitOnly.length ? `${both.length ? "A visita incluiu ainda" : "A visita incluiu"} ${visitOnly.length === 1 ? "um estabelecimento" : "os seguintes estabelecimentos"}: ${naturalList(visitOnly)}.` : "",
     observedOnly.length ? `${both.length ? "Além disso" : "Também"} ${observeVerb} ${observedOnly.length === 1 ? "num estabelecimento" : "nos seguintes estabelecimentos"}: ${naturalList(observedOnly)}.` : "",
     observedKeys.has(openingSchool) ? `Também ${observeVerb} na escola.` : "",
   ].filter(Boolean).join(" ");
-  const followUp = details ? ` ${details}` : !grouped && !visited.length && /\bobservação da prática(?: educativa e)? letiva\b/iu.test(sourceReport) ? ` Também ${observeVerb} na escola.` : "";
+  const followUp = details ? ` ${details}` : /\bobservação da prática(?: educativa e)? letiva\b/iu.test(sourceReport) ? ` Também ${observeVerb}${grouped ? "" : " na escola"}.` : "";
   const opening = `Entre os dias ${meta.visitDates}, uma equipa coordenada pela Inspeção-Geral da Educação e Ciência visitou ${article} `;
   if (audience === "alunos") {
     return [
@@ -697,7 +701,7 @@ export async function buildTemplateReport(args: { audience: Audience; school: st
   const core = zip.file(corePath);
   if (core) {
     let coreXml = await core.async("string");
-    const provenance = escapeXml(`Plataforma AEE · Relatórios simplificados · ${SIMPLIFIED_REPORT_VERSION}`);
+    const provenance = escapeXml(`Plataforma AEE · Relatórios simplificados · ${SIMPLIFIED_MOTOR_RELEASE}`);
     if (/<dc:description\b[^>]*>[\s\S]*?<\/dc:description>/i.test(coreXml)) coreXml = coreXml.replace(/<dc:description\b[^>]*>[\s\S]*?<\/dc:description>/i, `<dc:description>${provenance}</dc:description>`);
     else coreXml = coreXml.replace("</cp:coreProperties>", `<dc:description>${provenance}</dc:description></cp:coreProperties>`);
     zip.file(corePath, coreXml);

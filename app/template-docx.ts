@@ -497,7 +497,7 @@ function patchDocumentXml(xml: string, audience: Audience, school: string, conte
     items.filter((item) => item.index > start && item.index < end && isStructurallyEmptyParagraph(item.block))
       .forEach((item) => custom.set(item.index, () => ""));
     const clean = values.map((value) => String(value || "").replace(/^\s*[•·▪-]\s*/, "").replace(/\s+/g, " ").trim()
-      .replace(/\bPerfil de Sa[íi]da dos alunos\b/giu, "Perfil dos Alunos à Saída da Escolaridade Obrigatória")).filter(Boolean);
+      .replace(/\bPerfil(?: de Sa[íi]da dos alunos| dos alunos(?: [àa] Sa[íi]da(?: da Escolaridade Obrigat[óo]ria| Obrigat[óo]ria)?)?)\b/giu, "Perfil dos Alunos à Saída da Escolaridade Obrigatória")).filter(Boolean);
     // Um único padrão para todos os itens: 1,15 linhas e 6 pt depois.
     // A paginação deve resultar do fluxo do texto, não de espaçamentos
     // diferentes calculados a partir do tamanho de cada lista.

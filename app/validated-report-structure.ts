@@ -1,7 +1,7 @@
 export const SIMPLIFIED_DOMAINS = ["Autoavaliação", "Liderança e Gestão", "Prestação do Serviço Educativo", "Resultados"] as const;
 export const SIMPLIFIED_REPORT_VERSION = "2026.11.23-v37";
 // Identificador público da atualização; independente da compatibilidade dos relatórios guardados.
-export const SIMPLIFIED_MOTOR_RELEASE = "2026.11.25-v39.7";
+export const SIMPLIFIED_MOTOR_RELEASE = "2026.11.25-v39.8";
 
 export function extractReportSchool(report: string, tableValues: string[] = []) {
   const unit = /^(?:Agrupamento de Escolas|Escola)\s+\p{L}/iu;
